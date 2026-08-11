@@ -9,10 +9,9 @@ A PR description is not a changelog — the diff already records every change.
 It exists for a reviewer deciding in under a minute: what is this trying to
 do, is it safe, and which few lines deserve real attention?
 
-Sort the diff into three buckets: the point (the change the PR exists to
-make), supporting changes (what the point required), and noise (mechanical
-churn of any kind). Write almost entirely about the point; supporting
-changes get a line, noise one aggregate clause or nothing.
+Sort the diff into three buckets — the point (the change the PR exists to
+make), supporting changes, and noise (mechanical churn). The point gets
+nearly everything; supporting changes a line each; noise one clause or none.
 
 A mostly-mechanical diff can hide one real behavioral change; that buried
 change IS the point — put it in the title or first sentence, plainly, never
