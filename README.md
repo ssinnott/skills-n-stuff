@@ -61,6 +61,10 @@ Notes on cross-harness behavior:
 
 - **Skill**: `skills/<name>/SKILL.md` with `name` + `description` frontmatter.
   The description should read as trigger guidance ("Use when ...").
+- **Skill evals**: `skills/<name>/evals/evals.json` (the skill-creator
+  convention — test prompts with optional expected output and assertions).
+  Run output lands in a sibling `<name>-workspace/` directory, which is
+  gitignored; only the eval set itself is committed.
 - **Agent**: `agents/<name>.md` with `name` + `description` frontmatter and the
   system prompt as the body.
 - **Command**: `commands/<name>.md` with a `description` frontmatter line.
