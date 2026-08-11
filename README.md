@@ -40,9 +40,9 @@ skills-n-stuff`.
 pi install https://github.com/ssinnott/skills-n-stuff
 ```
 
-Pi reads the `pi` key in `package.json`: skills come from `skills/` and the
-files in `commands/` are registered as prompt templates (`/drawer`, etc.).
-Update with `pi update`, remove with `pi remove`.
+Pi reads the `pi` key in `package.json`: skills come from `skills/`, the files
+in `commands/` are registered as prompt templates, and extensions load from
+`extensions/`. Update with `pi update`, remove with `pi remove`.
 
 Notes on cross-harness behavior:
 
@@ -70,6 +70,3 @@ Notes on cross-harness behavior:
   `package.json`/lockfile next to the extension.
 - **Plugin**: its own directory under `plugins/` plus an entry in
   `.claude-plugin/marketplace.json` — see `plugins/README.md`.
-
-`skills/example-skill`, `agents/example-agent.md`, and `commands/drawer.md` are
-working examples that double as templates.
