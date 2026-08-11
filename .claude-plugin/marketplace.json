@@ -1,0 +1,15 @@
+{
+  "name": "skills-n-stuff",
+  "description": "A junk drawer of skills, agents, and plugins.",
+  "owner": {
+    "name": "ssinnott",
+    "email": "ssinnott747@gmail.com"
+  },
+  "plugins": [
+    {
+      "name": "grab-bag",
+      "source": "./",
+      "description": "Everything in the drawer: all top-level skills, agents, and commands from this repo."
+    }
+  ]
+}
