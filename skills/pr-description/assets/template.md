@@ -1,23 +1,16 @@
 <!-- Title: imperative, ≤ 70 chars, names the point of the PR -->
 # {title}
 
-<!-- 2–4 sentences. Why the change exists, then what it does — behavior,
-     not implementation. This is the only required section. -->
+<!-- One or two short paragraphs of plain prose: why the change exists, then
+     what it does — effect, not mechanism. This is usually the WHOLE
+     description. Judgment calls a reviewer might question get one plain
+     sentence here. If most of the diff is churn, end with one sentence
+     saying which few files are worth reading. No bold callouts — put the
+     sentence that matters first instead of labeling it. -->
 {summary}
 
-<!-- OPTIONAL — omit unless there are real judgment calls a reviewer might
-     question (a chosen default, a tradeoff, an approach you rejected). -->
-## Notable decisions
-
-- {decision}
-
-<!-- OPTIONAL — omit unless the diff is large or noisy enough that pointing
-     reviewers at the few files that matter genuinely saves them time. -->
-## Where to look
-
-{review_guidance}
-
-<!-- OPTIONAL — omit if verification is unknown; never invent testing. -->
+<!-- OPTIONAL, and usually omitted: add only when verification isn't obvious
+     from the diff. Never invent testing. -->
 ## Testing
 
 {testing_notes}

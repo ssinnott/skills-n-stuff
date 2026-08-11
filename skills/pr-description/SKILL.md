@@ -31,18 +31,24 @@ confused to see them in the diff. Noise gets one aggregate clause at most
 **Watch for the buried lede.** Large mechanical diffs sometimes hide one real
 behavioral change (a renamed API that also changes a default, a formatting
 pass that also fixes a bug). That buried change IS the point — or at least a
-point. Surfacing it prominently is the single most valuable thing the
-description can do, because it's exactly what a skimming reviewer will miss.
+point. Surfacing it is the single most valuable thing the description can do,
+because it's exactly what a skimming reviewer will miss. Surface it in the
+title or the first paragraph — as an ordinary sentence, not a bolded warning.
 
 ## What to say about the point
 
 Describe behavior, not implementation. Say what changes for users or callers:
 what was broken and how it manifested, what's now possible, what's different
-at the boundary. Mention implementation only where a reviewer would otherwise
-be confused, or where you made a judgment call they might reasonably question
-(a chosen timeout, a compatibility shim, an approach you rejected). Those
-judgment calls are worth a "Notable decisions" note — they're what review
-discussion is actually for.
+at the boundary. Translate mechanism into effect — "retries a few times with
+growing pauses before giving up," not "exponential backoff with jitter (250ms
+base, 20%)." The constants, error codes, and mechanism names are all sitting
+in the diff; repeating them in the description is noise wearing a lab coat.
+Repeat a specific value only when the reviewer must weigh it (a changed
+default, a tightened timeout).
+
+Judgment calls a reviewer might reasonably question — a chosen default, an
+approach you rejected, a tradeoff you accepted — deserve one plain sentence
+each in the prose. They're what review discussion is actually for.
 
 Never enumerate files. If the draft references more than about three file
 paths, that's the changelog trap — delete the list and say what the changes
@@ -56,13 +62,14 @@ accomplish instead.
   size. A 40-file rename plus one behavior tweak is a small PR conceptually —
   it deserves a short description. Most PRs need under 150 words; going long
   requires the change to genuinely carry multiple ideas.
-- **Structure**: start from the fill-in template at `assets/template.md` —
-  a 2–4 sentence summary (why, then what), then only the optional sections
-  that earn their place:
-  - **Notable decisions** — judgment calls a reviewer might question
-  - **Where to look** — the files or areas that deserve careful review, which
-    is especially valuable when most of the diff is noise
-  - **Testing** — how the change was verified, if known
+- **Structure**: start from the fill-in template at `assets/template.md`.
+  The default shape is a title plus one or two short paragraphs of plain
+  prose — no headings, no bullets, no bold. Prose carries emphasis fine; a
+  sentence that matters goes first, it doesn't get a bolded label. When most
+  of the diff is churn, end with one sentence telling the reviewer the few
+  files worth reading. A heading (usually just Testing) earns its place only
+  when the PR genuinely carries several ideas a reviewer must navigate —
+  most PRs don't.
 - If the repository has a PR template, fill its sections instead — apply this
   same judgment inside each section rather than bolting the template on top.
 
@@ -76,6 +83,9 @@ drive-by rename, or a behavioral change hidden inside a mass rename.
 
 ## Tone
 
-Plain language. Use a technical term only when it's the precise name for the
-thing; never stack jargon to sound thorough. Thoroughness lives in the diff —
-the description's job is clarity.
+Write like you'd explain the change to a teammate in chat: plain verbs,
+short sentences, no ceremony. Use a technical term only when it's the precise
+name for the thing being reviewed; never stack jargon to sound thorough.
+A good test: if a sentence would send a product manager to a glossary, or
+wouldn't survive being said out loud, rewrite it. Thoroughness lives in the
+diff — the description's job is clarity.

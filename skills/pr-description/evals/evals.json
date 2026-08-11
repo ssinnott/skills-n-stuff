@@ -12,7 +12,9 @@
         "Body (excluding title) is under 200 words",
         "Lockfile/dependency churn gets at most one aggregate mention — no itemized package-lock.json or integrity-hash details",
         "The formatting-only rewrite of src/utils/format.js is not presented as a substantive change (one passing mention allowed)",
-        "References at most 3 file paths — no file-by-file inventory"
+        "References at most 3 file paths — no file-by-file inventory",
+        "No tuning constants or error-code jargon in the body: no millisecond values, jitter percentages, or identifiers like ECONNRESET — the retry mechanism is described as plain effect",
+        "At most one section heading beyond the title, and no bolded callout sentences"
       ]
     },
     {
@@ -26,7 +28,9 @@
         "Explains the cause: business-day counting anchored on the UTC calendar date instead of the customer's local date",
         "The to_local -> to_customer_timezone rename gets at most one brief passing mention",
         "Body (excluding title) is under 200 words",
-        "Mentions that a regression test was added"
+        "Mentions that a regression test was added",
+        "The customer-impact explanation reads as plain prose with no code identifiers or function names in it",
+        "At most one section heading beyond the title, and no bolded callout sentences"
       ]
     },
     {
@@ -39,7 +43,8 @@
         "Prominently surfaces the buried behavioral change: the user-cache TTL default dropped from 300 seconds to 30 seconds",
         "Summarizes the rename in a line or two rather than walking through the renamed call sites",
         "Body (excluding title) is under 200 words",
-        "References at most 3 file paths — does not enumerate the ~12 touched files"
+        "References at most 3 file paths — does not enumerate the ~12 touched files",
+        "At most one section heading beyond the title, and no bolded callout sentences"
       ]
     }
   ]
