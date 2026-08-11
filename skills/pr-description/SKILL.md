@@ -7,7 +7,7 @@ description: Write reviewer-friendly pull request descriptions from a code chang
 
 A PR description is not a changelog — the diff already records every change.
 It exists for a reviewer deciding in under a minute: what is this trying to
-do, is it safe, and where should I look hard?
+do, is it safe, and which few lines deserve real attention?
 
 Sort the diff into three buckets: the point (the change the PR exists to
 make), supporting changes, and noise (lockfiles, formatting, generated
@@ -23,8 +23,9 @@ name the areas, say what travels between them; that map beats any file list.
 Fill in `assets/template.md`: an imperative title (≤ 70 chars) naming the
 point, a one-sentence lead (why, then what), three to six single-fact
 bullets (the behavior change, a judgment call worth questioning, the noise
-note, where to look), and a short Testing section saying what the new tests
-cover.
+note, which few files hold the real change), and a short Testing section
+saying what the new tests cover. Bullets state facts — "the real change is
+one line in `dates.py`" — they don't give the reviewer orders.
 
 Describe effect, not mechanism — "retries a few times with growing pauses,"
 never constants, status codes ("rate limits," not 429), or identifiers like
