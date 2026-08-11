@@ -13,11 +13,10 @@ Sort the diff into three buckets — the point (the change the PR exists to
 make), supporting changes, and noise (mechanical churn). The point gets
 nearly everything; supporting changes a line each; noise one clause or none.
 
-A mostly-mechanical diff can hide one real behavioral change; that buried
-change IS the point — put it in the title or first sentence, plainly, never
-as a bolded warning. When a change threads through several areas of the
-codebase, give its path in one line: name the areas in order and say what
-travels between them. That map beats any file list.
+If a mechanical diff hides one real behavioral change, lead with that
+change — title or first sentence, no special formatting. If a change spans
+several areas, describe the path in one line: the areas in order, and what
+passes between them.
 
 Fill in `assets/template.md`: an imperative title (≤ 70 chars) naming the
 point, a one-sentence lead (why, then what), three to six single-fact
