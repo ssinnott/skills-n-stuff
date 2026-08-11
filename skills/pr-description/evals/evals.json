@@ -16,9 +16,10 @@
         "The formatting-only rewrite of src/utils/format.js is not presented as a substantive change (one passing mention allowed)",
         "References at most 3 file paths \u2014 no file-by-file inventory",
         "No tuning constants or wire-level jargon in the body: no millisecond values, jitter percentages, HTTP status codes (429, 4xx/5xx, etc.), or identifiers like ECONNRESET \u2014 failures described in plain words such as rate limits, server errors, bad requests",
-        "At most one section heading beyond the title, and no bolded callout sentences",
+        "No section headings beyond the title except Testing and an optional Commits list, and no bolded callout sentences",
         "Body is scannable: a one-sentence lead followed by short bullet points (each a single fact), or at most two sentences total with no dense multi-clause paragraphs",
-        "Includes a short Testing section (or line) saying what the new tests cover"
+        "Includes a short Testing section (or line) saying what the new tests cover",
+        "Contains no Commits section \u2014 the input is a bare diff with no commit history, and shas are never invented"
       ]
     },
     {
@@ -36,9 +37,10 @@
         "Body (excluding title and the Testing section) is under 100 words",
         "Mentions that a regression test was added",
         "The customer-impact explanation reads as plain prose with no code identifiers or function names in it",
-        "At most one section heading beyond the title, and no bolded callout sentences",
+        "No section headings beyond the title except Testing and an optional Commits list, and no bolded callout sentences",
         "States the bug without a worked example \u2014 no sample timestamps or step-by-step walkthrough of a specific invoice",
-        "Body is scannable: a one-sentence lead followed by short bullet points (each a single fact), or at most two sentences total with no dense multi-clause paragraphs"
+        "Body is scannable: a one-sentence lead followed by short bullet points (each a single fact), or at most two sentences total with no dense multi-clause paragraphs",
+        "Contains no Commits section \u2014 the input is a bare diff with no commit history, and shas are never invented"
       ]
     },
     {
@@ -54,9 +56,10 @@
         "Summarizes the rename in a line or two rather than walking through the renamed call sites",
         "Body (excluding title and the Testing section) is under 100 words",
         "References at most 3 file paths \u2014 does not enumerate the ~12 touched files",
-        "At most one section heading beyond the title, and no bolded callout sentences",
+        "No section headings beyond the title except Testing and an optional Commits list, and no bolded callout sentences",
         "Body is scannable: a one-sentence lead followed by short bullet points (each a single fact), or at most two sentences total with no dense multi-clause paragraphs",
-        "Scopes the TTL change accurately \u2014 does not claim it affects lookups that bypass the cache"
+        "Scopes the TTL change accurately \u2014 does not claim it affects lookups that bypass the cache",
+        "Contains no Commits section \u2014 the input is a bare diff with no commit history, and shas are never invented"
       ]
     },
     {
@@ -74,7 +77,8 @@
         "Body (excluding title and the Testing section) is under 120 words",
         "Body is scannable: a one-sentence lead followed by short bullet points (each a single fact), or at most two sentences total with no dense multi-clause paragraphs",
         "No HTTP status codes or wire-level jargon in the body",
-        "At most one section heading beyond the title, and no bolded callout sentences"
+        "No section headings beyond the title except Testing and an optional Commits list, and no bolded callout sentences",
+        "Contains no Commits section \u2014 the input is a bare diff with no commit history, and shas are never invented"
       ]
     },
     {
@@ -91,9 +95,10 @@
         "Body (excluding title and the Testing section) is under 120 words",
         "Body is scannable: a one-sentence lead followed by short bullet points (each a single fact), or at most two sentences total with no dense multi-clause paragraphs",
         "References at most 4 file paths \u2014 no file-by-file inventory of the ~14 touched files",
-        "At most one section heading beyond the title, and no bolded callout sentences",
+        "No section headings beyond the title except Testing and an optional Commits list, and no bolded callout sentences",
         "No HTTP status codes or ALL-CAPS error-code identifiers (FST_ERR_*) in the body",
-        "Testing section reflects what the new tests actually cover without inventing coverage"
+        "Testing section reflects what the new tests actually cover without inventing coverage",
+        "Contains no Commits section \u2014 the input is a bare diff with no commit history, and shas are never invented"
       ]
     },
     {
@@ -109,8 +114,61 @@
         "States cause and fix: the regex retained its previous match position between checks, and it is now reset before each check",
         "Body (excluding title and the Testing section) is under 100 words",
         "Body is scannable: a one-sentence lead followed by short bullet points (each a single fact), or at most two sentences total with no dense multi-clause paragraphs",
-        "At most one section heading beyond the title, and no bolded callout sentences",
-        "Testing section reflects the new regression tests without inventing coverage"
+        "No section headings beyond the title except Testing and an optional Commits list, and no bolded callout sentences",
+        "Testing section reflects the new regression tests without inventing coverage",
+        "Contains no Commits section \u2014 the input is a bare diff with no commit history, and shas are never invented"
+      ]
+    },
+    {
+      "id": 6,
+      "name": "branch-with-commits",
+      "prompt": "here's my idempotent-order-submission branch \u2014 the full diff is in complex-call-flow.diff and the commit list is in complex-call-flow.commits.txt. write the PR description and save it as pr-description.md",
+      "expected_output": "Same reviewer-first description as the complex-call-flow case, plus a Commits section at the end listing all four commits as '<short sha> - <subject>', one per line, matching the input commit list. No invented shas.",
+      "files": [
+        "fixtures/complex-call-flow.diff",
+        "fixtures/complex-call-flow.commits.txt"
+      ],
+      "assertions": [
+        "Describes the end-to-end flow: a client-supplied idempotency key travels from the API route through the order service and queue to the fulfillment worker, so retries don't double-process",
+        "Body (excluding title, Testing, and Commits sections) is under 120 words",
+        "Body is scannable: a one-sentence lead followed by short bullet points (each a single fact), or at most two sentences total with no dense multi-clause paragraphs",
+        "No section headings beyond the title except Testing and an optional Commits list, and no bolded callout sentences",
+        "Ends with a Commits section listing every commit from the input as '<short sha> - <subject>', one line per commit, shas matching the input list exactly",
+        "Contains no blockquote lines \u2014 the input history is clean, so no reorganization offer"
+      ]
+    },
+    {
+      "id": 7,
+      "name": "messy-branch-history",
+      "prompt": "here's my idempotent-order-submission branch \u2014 diff in complex-call-flow.diff, commits in complex-call-flow.messy-commits.txt. write the PR description and save it as pr-description.md",
+      "expected_output": "A blockquote offer to reorganize the messy history (naming what to squash/reword, e.g. wip/fix/oops commits) above the title, then the normal reviewer-first description of the branch as-is, ending with a Commits section listing the input commits verbatim.",
+      "files": [
+        "fixtures/complex-call-flow.diff",
+        "fixtures/complex-call-flow.messy-commits.txt"
+      ],
+      "assertions": [
+        "Opens with a blockquote (>) offer to reorganize the commit history before the description, naming concretely what to squash, reorder, or reword",
+        "Describes the branch as-is below the offer: lead plus bullets covering the idempotency behavior, not a description of the hypothetical cleaned-up branch",
+        "Body (excluding title, blockquote, Testing, and Commits sections) is under 120 words",
+        "No section headings beyond the title except Testing and an optional Commits list, and no bolded callout sentences",
+        "Ends with a Commits section listing every commit from the input as '<short sha> - <subject>', one line per commit, shas matching the input list exactly"
+      ]
+    },
+    {
+      "id": 8,
+      "name": "reorg-messy-history",
+      "kind": "action",
+      "prompt": "yes, please do that cleanup you offered on my branch. the repo is at {REPO} (branch: feature). squash the fixup/wip commits into their logical parents and reword the vague subjects \u2014 but don't change a single file's contents. no PR description needed for this step, just the reorganized history.",
+      "expected_output": "The feature branch rewritten to ~3 well-named commits (store, key threading, tests), tree at the tip byte-identical to the original, still based on main.",
+      "files": [
+        "fixtures/make-messy-repo.sh"
+      ],
+      "assertions": [
+        "The feature branch tip tree is byte-identical to the original tip (git diff original-tip feature is empty)",
+        "No wip, fixup, or vague subjects remain in the rewritten history",
+        "History lands between 2 and 4 commits",
+        "The branch is still based on main's tip (base remains an ancestor)",
+        "Commit subjects are imperative and each names the logical change its squashed group made"
       ]
     }
   ]

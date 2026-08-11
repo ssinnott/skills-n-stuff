@@ -19,3 +19,21 @@
 ## Testing
 
 {testing_notes}
+
+<!-- REQUIRED whenever the input carries commits (a branch or range — not
+     a bare diff): one line per commit, oldest first, exactly this shape.
+     Code hosts autolink the short sha into a working link. Omit the whole
+     section for a bare diff — never invent shas.
+
+     Before writing anything, judge the history. Wip/fixup commits, vague
+     subjects ("updates", "fix"), or several commits reworking the same
+     spot mean it's disorganized: offer to reorganize before describing —
+     name concretely what you'd squash, reorder, or reword. Ask when you
+     can; when writing a file non-interactively, put the offer in one or
+     two blockquote (>) lines above the title and describe the branch
+     as-is below. A clean history gets no offer — don't invent work.
+     If the user accepts, the reorg is history-only: squash, reorder,
+     reword — the branch tip's tree must end byte-identical. -->
+## Commits
+
+- {short-sha} - {subject}

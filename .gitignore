@@ -1,3 +1,4 @@
 # skill-creator eval run output (regenerated per run; the durable eval set
 # lives in skills/<name>/evals/evals.json and IS committed)
 *-workspace/
+__pycache__/
