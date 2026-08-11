@@ -13,8 +13,9 @@ and as a [pi](https://github.com/badlogic/pi-mono) package — from the same fil
 skills/               # one dir per skill, each with a SKILL.md (agentskills format)
 agents/               # Claude Code subagents (markdown + YAML frontmatter)
 commands/             # Claude Code slash commands / pi prompt templates
+extensions/           # pi extensions (TypeScript, pi-only)
 plugins/              # standalone plugins that deserve their own install unit
-package.json          # "pi" key maps skills/ and commands/ for pi
+package.json          # "pi" key maps skills/, commands/, and extensions/ for pi
 ```
 
 The top-level `skills/`, `agents/`, and `commands/` directories are the junk
@@ -53,6 +54,7 @@ Notes on cross-harness behavior:
   working in both harnesses.
 - **Agents** are Claude Code-only; pi has no subagent concept and ignores the
   `agents/` directory.
+- **Extensions** are pi-only; Claude Code ignores the `extensions/` directory.
 
 ## Adding stuff
 
@@ -61,6 +63,11 @@ Notes on cross-harness behavior:
 - **Agent**: `agents/<name>.md` with `name` + `description` frontmatter and the
   system prompt as the body.
 - **Command**: `commands/<name>.md` with a `description` frontmatter line.
+- **Extension** (pi-only): `extensions/<name>.ts` default-exporting a factory
+  that receives `ExtensionAPI` — it can subscribe to events (`pi.on`), register
+  tools (`pi.registerTool`) and slash commands (`pi.registerCommand`). Pi
+  compiles the TypeScript itself; npm dependencies are allowed if you add a
+  `package.json`/lockfile next to the extension.
 - **Plugin**: its own directory under `plugins/` plus an entry in
   `.claude-plugin/marketplace.json` — see `plugins/README.md`.
 
