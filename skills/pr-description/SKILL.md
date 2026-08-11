@@ -56,8 +56,9 @@ accomplish instead.
   size. A 40-file rename plus one behavior tweak is a small PR conceptually —
   it deserves a short description. Most PRs need under 150 words; going long
   requires the change to genuinely carry multiple ideas.
-- **Structure**: a 2–4 sentence summary (why, then what), then only the
-  optional sections that earn their place:
+- **Structure**: start from the fill-in template at `assets/template.md` —
+  a 2–4 sentence summary (why, then what), then only the optional sections
+  that earn their place:
   - **Notable decisions** — judgment calls a reviewer might question
   - **Where to look** — the files or areas that deserve careful review, which
     is especially valuable when most of the diff is noise
