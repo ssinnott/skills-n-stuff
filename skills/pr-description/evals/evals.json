@@ -170,6 +170,22 @@
         "The branch is still based on main's tip (base remains an ancestor)",
         "Commit subjects are imperative and each names the logical change its squashed group made"
       ]
+    },
+    {
+      "id": 9,
+      "name": "commits-with-repo-url",
+      "prompt": "same idempotency branch, but this time you know where it lives \u2014 diff in complex-call-flow.diff, commits (with the repo url) in complex-call-flow.linked-commits.txt. write the PR description and save it as pr-description.md",
+      "expected_output": "The standard description, with the Commits section rendered as markdown links: [<short sha>](<repo-url>/commit/<short sha>) - <subject>, URLs under the declared repo, no fabricated URLs or shas.",
+      "files": [
+        "fixtures/complex-call-flow.diff",
+        "fixtures/complex-call-flow.linked-commits.txt"
+      ],
+      "assertions": [
+        "Ends with a Commits section where every line is a markdown link: [<short sha>](<repo-url>/commit/<sha>) - <subject>, shas matching the input list exactly and URLs under the declared repo",
+        "Body (excluding title, Testing, and Commits sections) is under 120 words",
+        "No section headings beyond the title except Testing and an optional Commits list, and no bolded callout sentences",
+        "Contains no blockquote lines \u2014 the input history is clean, so no reorganization offer"
+      ]
     }
   ]
 }
