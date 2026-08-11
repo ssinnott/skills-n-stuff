@@ -147,6 +147,23 @@
         "No section headings beyond the title except Testing and an optional Commits list, and no bolded callout sentences",
         "Ends with a Commits section listing every commit from the input as '<short sha> - <subject>', one line per commit, shas matching the input list exactly"
       ]
+    },
+    {
+      "id": 8,
+      "name": "reorg-messy-history",
+      "kind": "action",
+      "prompt": "yes, please do that cleanup you offered on my branch. the repo is at {REPO} (branch: feature). squash the fixup/wip commits into their logical parents and reword the vague subjects \u2014 but don't change a single file's contents. no PR description needed for this step, just the reorganized history.",
+      "expected_output": "The feature branch rewritten to ~3 well-named commits (store, key threading, tests), tree at the tip byte-identical to the original, still based on main.",
+      "files": [
+        "fixtures/make-messy-repo.sh"
+      ],
+      "assertions": [
+        "The feature branch tip tree is byte-identical to the original tip (git diff original-tip feature is empty)",
+        "No wip, fixup, or vague subjects remain in the rewritten history",
+        "History lands between 2 and 4 commits",
+        "The branch is still based on main's tip (base remains an ancestor)",
+        "Commit subjects are imperative and each names the logical change its squashed group made"
+      ]
     }
   ]
 }

@@ -134,9 +134,47 @@ def check(assertion, text):
     return ("judge", "needs model/human grading")
 
 
+def check_repo(repo, assertion):
+    """Mechanical checks against a reorganized git repo (action evals)."""
+    import subprocess
+    def git(*args):
+        return subprocess.run(["git", "-C", str(repo), *args],
+                              capture_output=True, text=True)
+    a = assertion.lower()
+
+    if "byte-identical" in a or "identical tree" in a:
+        r = git("diff", "--quiet", "original-tip", "feature")
+        return ("pass" if r.returncode == 0 else "fail",
+                "tree unchanged" if r.returncode == 0 else "tree differs from original-tip")
+
+    if "subjects" in a and ("wip" in a or "vague" in a):
+        subjects = git("log", "--format=%s", "base..feature").stdout.splitlines()
+        junk = [s for s in subjects
+                if re.match(r"^(wip|fix(es)?|oops|typo|minor|more|again|updates?|changes?)\b", s, re.IGNORECASE)
+                or len(s.split()) < 3]
+        return ("pass" if not junk else "fail", f"junk subjects: {junk}" if junk else "subjects clean")
+
+    m = re.search(r"between (\d+) and (\d+) commits", a)
+    if m:
+        lo, hi = int(m.group(1)), int(m.group(2))
+        n = len(git("log", "--format=%h", "base..feature").stdout.splitlines())
+        return ("pass" if lo <= n <= hi else "fail", f"{n} commits (want {lo}-{hi})")
+
+    if "based on" in a:
+        r = git("merge-base", "--is-ancestor", "base", "feature")
+        return ("pass" if r.returncode == 0 else "fail",
+                "still descends from base" if r.returncode == 0 else "no longer based on base")
+
+    return ("judge", "needs model/human grading")
+
+
 def grade(output_path, ev):
-    text = Path(output_path).read_text()
-    results = [(a, *check(a, text)) for a in ev["assertions"]]
+    path = Path(output_path)
+    if path.is_dir():
+        results = [(a, *check_repo(path, a)) for a in ev["assertions"]]
+    else:
+        text = path.read_text()
+        results = [(a, *check(a, text)) for a in ev["assertions"]]
     mech = [r for r in results if r[1] != "judge"]
     failed = [r for r in mech if r[1] == "fail"]
     return results, mech, failed

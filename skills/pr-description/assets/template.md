@@ -31,7 +31,9 @@
      name concretely what you'd squash, reorder, or reword. Ask when you
      can; when writing a file non-interactively, put the offer in one or
      two blockquote (>) lines above the title and describe the branch
-     as-is below. A clean history gets no offer — don't invent work. -->
+     as-is below. A clean history gets no offer — don't invent work.
+     If the user accepts, the reorg is history-only: squash, reorder,
+     reword — the branch tip's tree must end byte-identical. -->
 ## Commits
 
 - {short-sha} - {subject}

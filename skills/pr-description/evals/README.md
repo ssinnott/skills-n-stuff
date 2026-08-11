@@ -67,6 +67,25 @@ comparisons. That loop produced the numbers in the skill's history:
 with-skill 91–97% vs without-skill 25–43% across Haiku/Sonnet/Opus/Fable,
 and 93% vs 43% on the held-out real-world fixtures.
 
+## Action evals
+
+`reorg-messy-history` tests the *performed* reorganization, not prose. Its
+fixture is a script (`fixtures/make-messy-repo.sh`) that builds a real git
+repo with a messy feature branch and two anchor tags: `base` (where the
+branch grew from) and `original-tip` (the pre-reorg tip). The agent under
+test rewrites the history; `checks.py` then grades the repo directory
+instead of a markdown file, entirely mechanically:
+
+- tree at the tip byte-identical to `original-tip` (`git diff` empty) — the
+  invariant that the reorg changed history only, never content
+- no wip/fixup/vague subjects remain
+- commit count landed in the planned range
+- the branch still descends from `base`
+
+Rebuild the fixture any time with
+`bash fixtures/make-messy-repo.sh <dir>` and grade with
+`python3 checks.py <dir> --eval reorg-messy-history`.
+
 ## Adding a case
 
 1. Drop the input diff in `fixtures/` (note real-world sources in
