@@ -9,7 +9,14 @@
     {
       "name": "grab-bag",
       "source": "./",
-      "description": "Everything in the drawer: all top-level skills, agents, and commands from this repo."
+      "strict": false,
+      "description": "Everything in the drawer: all top-level skills, agents, and commands from this repo.",
+      "author": {
+        "name": "ssinnott"
+      },
+      "repository": "https://github.com/ssinnott/skills-n-stuff",
+      "license": "MIT",
+      "keywords": ["skills", "agents", "misc"]
     }
   ]
 }

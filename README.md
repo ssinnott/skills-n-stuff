@@ -8,8 +8,9 @@ and as a [pi](https://github.com/badlogic/pi-mono) package — from the same fil
 
 ```
 .claude-plugin/
-  marketplace.json    # marks this repo as a Claude Code marketplace
-  plugin.json         # the repo root is itself a plugin: "grab-bag"
+  marketplace.json    # Claude Code marketplace manifest; also fully defines
+                      # the root "grab-bag" plugin (strict: false, so no
+                      # separate plugin.json is needed)
 skills/               # one dir per skill, each with a SKILL.md (agentskills format)
 agents/               # Claude Code subagents (markdown + YAML frontmatter)
 commands/             # Claude Code slash commands / pi prompt templates
