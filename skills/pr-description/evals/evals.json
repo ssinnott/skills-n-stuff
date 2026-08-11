@@ -18,7 +18,8 @@
         "No tuning constants or wire-level jargon in the body: no millisecond values, jitter percentages, HTTP status codes (429, 4xx/5xx, etc.), or identifiers like ECONNRESET \u2014 failures described in plain words such as rate limits, server errors, bad requests",
         "No section headings beyond the title except Testing and an optional Commits list, and no bolded callout sentences",
         "Body is scannable: a one-sentence lead followed by short bullet points (each a single fact), or at most two sentences total with no dense multi-clause paragraphs",
-        "Includes a short Testing section (or line) saying what the new tests cover"
+        "Includes a short Testing section (or line) saying what the new tests cover",
+        "Contains no Commits section \u2014 the input is a bare diff with no commit history, and shas are never invented"
       ]
     },
     {
@@ -38,7 +39,8 @@
         "The customer-impact explanation reads as plain prose with no code identifiers or function names in it",
         "No section headings beyond the title except Testing and an optional Commits list, and no bolded callout sentences",
         "States the bug without a worked example \u2014 no sample timestamps or step-by-step walkthrough of a specific invoice",
-        "Body is scannable: a one-sentence lead followed by short bullet points (each a single fact), or at most two sentences total with no dense multi-clause paragraphs"
+        "Body is scannable: a one-sentence lead followed by short bullet points (each a single fact), or at most two sentences total with no dense multi-clause paragraphs",
+        "Contains no Commits section \u2014 the input is a bare diff with no commit history, and shas are never invented"
       ]
     },
     {
@@ -56,7 +58,8 @@
         "References at most 3 file paths \u2014 does not enumerate the ~12 touched files",
         "No section headings beyond the title except Testing and an optional Commits list, and no bolded callout sentences",
         "Body is scannable: a one-sentence lead followed by short bullet points (each a single fact), or at most two sentences total with no dense multi-clause paragraphs",
-        "Scopes the TTL change accurately \u2014 does not claim it affects lookups that bypass the cache"
+        "Scopes the TTL change accurately \u2014 does not claim it affects lookups that bypass the cache",
+        "Contains no Commits section \u2014 the input is a bare diff with no commit history, and shas are never invented"
       ]
     },
     {
@@ -74,7 +77,8 @@
         "Body (excluding title and the Testing section) is under 120 words",
         "Body is scannable: a one-sentence lead followed by short bullet points (each a single fact), or at most two sentences total with no dense multi-clause paragraphs",
         "No HTTP status codes or wire-level jargon in the body",
-        "No section headings beyond the title except Testing and an optional Commits list, and no bolded callout sentences"
+        "No section headings beyond the title except Testing and an optional Commits list, and no bolded callout sentences",
+        "Contains no Commits section \u2014 the input is a bare diff with no commit history, and shas are never invented"
       ]
     },
     {
@@ -93,7 +97,8 @@
         "References at most 4 file paths \u2014 no file-by-file inventory of the ~14 touched files",
         "No section headings beyond the title except Testing and an optional Commits list, and no bolded callout sentences",
         "No HTTP status codes or ALL-CAPS error-code identifiers (FST_ERR_*) in the body",
-        "Testing section reflects what the new tests actually cover without inventing coverage"
+        "Testing section reflects what the new tests actually cover without inventing coverage",
+        "Contains no Commits section \u2014 the input is a bare diff with no commit history, and shas are never invented"
       ]
     },
     {
@@ -110,7 +115,8 @@
         "Body (excluding title and the Testing section) is under 100 words",
         "Body is scannable: a one-sentence lead followed by short bullet points (each a single fact), or at most two sentences total with no dense multi-clause paragraphs",
         "No section headings beyond the title except Testing and an optional Commits list, and no bolded callout sentences",
-        "Testing section reflects the new regression tests without inventing coverage"
+        "Testing section reflects the new regression tests without inventing coverage",
+        "Contains no Commits section \u2014 the input is a bare diff with no commit history, and shas are never invented"
       ]
     },
     {

@@ -95,6 +95,11 @@ def check(assertion, text):
         return ("pass" if ok else "fail",
                 "offer found before title" if ok else "no blockquote reorg offer before the title")
 
+    if "no commits section" in a:
+        has = re.search(r"^##\s*Commits\s*$", text, re.MULTILINE)
+        return ("pass" if not has else "fail",
+                "no Commits section" if not has else "Commits section present on a bare-diff input")
+
     if "commits section" in a:
         m = re.search(r"^##\s*Commits\s*$(.*)", text, re.MULTILINE | re.DOTALL)
         if not m:
