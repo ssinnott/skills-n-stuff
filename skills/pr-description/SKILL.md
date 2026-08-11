@@ -29,9 +29,10 @@ words they'd use aloud — the constants, codes, and internal identifiers
 behind it already sit in the diff, and repeating them is noise wearing a
 lab coat. No worked examples. Never enumerate files — more than about three
 paths is the changelog trap. Say only what the diff shows: never invent
-testing, author intent, or scope.
+testing, author intent, alternatives that were "considered," or scope.
 
 Keep the lead and bullets under 75 words, 120 at the outside; if over,
 drop the weakest bullet, then anything the title repeats.
 Testing sits outside that budget but stays to a line or two. Worked
-examples: `examples/`, each paired with its diff in `evals/fixtures/`.
+examples: `examples/` (one folder per model), each paired with its input
+diff in `evals/fixtures/`.
