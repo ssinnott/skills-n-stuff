@@ -33,8 +33,7 @@ lab coat. No worked examples. Never enumerate files — more than about three
 paths is the changelog trap. Say only what the diff shows: never invent
 testing, author intent, or scope.
 
-Keep the lead and bullets under 75 words (120 is the ceiling even for a
-several-idea change); if over, drop the weakest bullet, then anything the
-title repeats.
+Keep the lead and bullets under 75 words, 120 at the outside; if over,
+drop the weakest bullet, then anything the title repeats.
 Testing sits outside that budget but stays to a line or two. Worked
 examples: `examples/`, each paired with its diff in `evals/fixtures/`.
