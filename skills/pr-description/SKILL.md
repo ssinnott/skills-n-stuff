@@ -5,105 +5,49 @@ description: Write reviewer-friendly pull request descriptions from a code chang
 
 # PR Descriptions
 
-A PR description is not a changelog. The diff already documents every change,
-line by line — repeating it in prose helps no one. The description exists for a
-reviewer deciding three things in under a minute: what is this PR trying to do,
-is it safe, and where should I look hard? Write for that reader: a teammate
-skimming twenty PRs, not an auditor reconstructing the work.
+A PR description is not a changelog — the diff already records every change.
+It exists for a reviewer deciding in under a minute: what is this trying to
+do, is it safe, and where should I look hard?
 
 ## Process
 
-Read the whole diff first, then sort every change into three buckets:
+Read the whole diff, then sort it into three buckets: the point (the change
+the PR exists to make — usually one thing), supporting changes (what the
+point required), and noise (lockfiles, formatting, generated files, mass
+renames). Write almost entirely about the point; supporting changes get a
+line at most, noise one aggregate clause or nothing.
 
-1. **The point** — the change the PR exists to make. Usually one thing,
-   occasionally two. If you can't name it in a sentence, keep reading until
-   you can.
-2. **Supporting changes** — things required to make the point work: test
-   updates, refactors that enable it, config plumbing.
-3. **Noise** — mechanical churn: lockfiles, formatting-only edits, generated
-   files, version bumps, mass renames, import reordering.
+Large mechanical diffs sometimes hide one real behavioral change — a rename
+that also changes a default. That buried change IS the point: put it in the
+title or first sentence, as an ordinary sentence, not a bolded warning.
 
-Then write the description almost entirely about bucket 1. Supporting changes
-get at most one line each, and only when a reviewer would otherwise be
-confused to see them in the diff. Noise gets one aggregate clause at most
-("also regenerates the lockfile") — or, usually, nothing.
+When a change threads through several areas (route → service → queue →
+worker), give the reader that path in one line and say what travels along
+it — that map beats any file list.
 
-**Watch for the buried lede.** Large mechanical diffs sometimes hide one real
-behavioral change (a renamed API that also changes a default, a formatting
-pass that also fixes a bug). That buried change IS the point — or at least a
-point. Surfacing it is the single most valuable thing the description can do,
-because it's exactly what a skimming reviewer will miss. Surface it in the
-title or the first paragraph — as an ordinary sentence, not a bolded warning.
+## Writing it
 
-## What to say about the point
+Start from `assets/template.md`: an imperative title (≤ 70 chars) naming the
+point, a one-sentence lead (why, then what), then three to six short
+bullets, each a single plain fact — the behavior change, a judgment call
+worth questioning, what the new tests cover, the noise note, where to look.
+A PR small enough for two sentences skips the bullets. If the repository
+has a PR template, apply this same judgment inside its sections.
 
-Describe behavior, not implementation. Say what changes for users or callers:
-what was broken and how it manifested, what's now possible, what's different
-at the boundary. Translate mechanism into effect — "retries a few times with
-growing pauses before giving up," not "exponential backoff with jitter (250ms
-base, 20%)." That translation includes wire-level vocabulary: say "rate
-limits," "server errors," "bad requests" — not 429, 4xx/5xx, or ECONNRESET.
-The constants, status codes, and mechanism names are all sitting in the diff;
-repeating them in the description is noise wearing a lab coat. Repeat a
-specific value only when the reviewer must weigh it (a changed default, a
-tightened timeout).
+Describe effect, not mechanism: "retries a few times with growing pauses,"
+never backoff constants, status codes (say "rate limits," not 429), or
+identifiers like ECONNRESET — all of that already sits in the diff, and
+repeating it is noise wearing a lab coat. No worked examples; the tests
+carry those. Never enumerate files — more than about three paths is the
+changelog trap.
 
-When the change threads through several parts of the codebase — a value or
-call flowing from route to service to queue to worker — give the reader the
-path: name the areas in order and say what travels between them. One plain
-map like that is worth more than any file list, and it's exactly what a
-reviewer can't get from a diff sorted alphabetically.
+Say only what the diff shows: don't invent testing, don't guess the
+author's reasons for a change, and don't overstate scope. An unexplained
+change gets flagged as worth confirming, not handed a rationale.
 
-Judgment calls a reviewer might reasonably question — a chosen default, an
-approach you rejected, a tradeoff you accepted — deserve one plain sentence
-each in the prose. They're what review discussion is actually for.
+Most PRs fit in under 75 words of body; even a several-idea change should
+stay near 120 — if over, drop the weakest bullet. After drafting, cut
+anything the title already says.
 
-Never enumerate files. If the draft references more than about three file
-paths, that's the changelog trap — delete the list and say what the changes
-accomplish instead.
-
-## Format
-
-- **Title**: imperative mood, ≤ 70 characters, names the point ("Add retry
-  with backoff to API client", not "Updates to client code").
-- **Length**: scale with the conceptual size of the change, not the diff
-  size. A 40-file rename plus one behavior tweak is a small PR conceptually —
-  it deserves a short description. Most PRs need three to five short
-  sentences — under 75 words or so; only a PR genuinely carrying several
-  ideas earns more, and 150 words is a lot even then.
-- **Cut pass**: after drafting, cut hard. Kill worked examples — sample
-  timestamps, invented values, step-by-step walkthroughs of the bug; state
-  the failure plainly and let the tests carry the examples. Kill anything
-  the title already says. If a sentence chains clauses with colons and
-  "so"s, split it or drop half. The reviewer paying attention for twenty
-  seconds is the budget; spend it on nothing twice.
-- **Structure**: start from the fill-in template at `assets/template.md`.
-  The default shape is a title, a one-sentence lead saying why and what,
-  then three to six short bullets — each a single plain fact: the behavior
-  change, a judgment call worth questioning, the noise note ("everything
-  else is the rename"), where to look. Bullets are for scanning, so keep
-  each to a clause or two; a bullet that needs a semicolon wants to be two
-  bullets, and a bullet that repeats the lead or the title gets deleted.
-  No headings, no bold labels on bullets. A PR small enough to say in two
-  sentences skips the bullets entirely; a heading (usually just Testing)
-  earns its place only when the PR genuinely carries several ideas a
-  reviewer must navigate.
-- If the repository has a PR template, fill its sections instead — apply this
-  same judgment inside each section rather than bolting the template on top.
-
-## Worked examples
-
-`examples/` holds finished descriptions from real runs, each pairing with the
-input diff of the same name under `evals/fixtures/`. When unsure what "short,
-point-first, noise compressed" looks like in practice, read the example whose
-situation matches yours — feature buried in dependency churn, bug fix with a
-drive-by rename, or a behavioral change hidden inside a mass rename.
-
-## Tone
-
-Write like you'd explain the change to a teammate in chat: plain verbs,
-short sentences, no ceremony. Use a technical term only when it's the precise
-name for the thing being reviewed; never stack jargon to sound thorough.
-A good test: if a sentence would send a product manager to a glossary, or
-wouldn't survive being said out loud, rewrite it. Thoroughness lives in the
-diff — the description's job is clarity.
+Unsure what good looks like? `examples/` holds finished descriptions, each
+paired with its input diff in `evals/fixtures/`.

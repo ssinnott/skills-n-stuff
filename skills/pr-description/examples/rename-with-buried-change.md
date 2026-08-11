@@ -1,12 +1,8 @@
 <!-- Example output for the input diff at evals/fixtures/rename-with-buried-change.diff -->
-# Rename UserService to UserDirectory; drop default cache TTL to 30s
+# Lower user cache TTL to 30s; rename UserService to UserDirectory
 
-Alongside the rename, this changes behavior: the default user cache TTL goes
-from 300 seconds to 30, so cached users now go stale ten times faster and the
-database will see correspondingly more lookups. That's the one change worth
-weighing — it lives in the `UserDirectory` constructor in
-`src/services/users.ts`.
+This is mostly a mechanical rename, but it also cuts the default user cache TTL from 5 minutes to 30 seconds — cached user records now go stale much sooner, at the cost of more database reads for hot users.
 
-Everything else is mechanical: `UserService` becomes `UserDirectory`, and
-`fetchUser`/`fetchUserByEmail` become `getUser`/`getUserByEmail`, with all
-call sites and tests updated to match. No signatures or return types change.
+- The TTL change is the one behavioral difference; it lives in `src/services/users.ts` and is worth weighing before merge.
+- Everything else is the rename: `UserService` → `UserDirectory`, `fetchUser` → `getUser`, `fetchUserByEmail` → `getUserByEmail`, applied across routes, jobs, auth, GraphQL, websockets, and tests.
+- No call sites changed behavior — same arguments, same return types.

@@ -18,7 +18,7 @@
 - {fact}
 
 <!-- OPTIONAL, and usually omitted: only when verification isn't obvious
-     from the diff. Never invent testing. -->
+     from the diff. Never invent testing or the author's intent. -->
 ## Testing
 
 {testing_notes}
