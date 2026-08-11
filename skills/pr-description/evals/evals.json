@@ -18,11 +18,11 @@
     {
       "id": 1,
       "name": "bugfix-with-refactor",
-      "prompt": "wrote a fix for that billing bug where west coast customers were getting invoice due dates a business day early. diff is in bugfix-with-refactor.diff (i also renamed a helper while i was in there). write me the PR description and save it to pr-description.md",
-      "expected_output": "A description that explains the bug in plain customer-impact terms (due dates computed off UTC dates landed a day early for customers west of UTC) and the fix. The to_local -> to_customer_timezone rename mentioned at most in passing.",
+      "prompt": "wrote a fix for that billing bug where west coast customers were getting invoice due dates a business day late. diff is in bugfix-with-refactor.diff (i also renamed a helper while i was in there). write me the PR description and save it to pr-description.md",
+      "expected_output": "A description that explains the bug in plain customer-impact terms (due dates computed off UTC dates landed a business day late for customers west of UTC) and the fix. The to_local -> to_customer_timezone rename mentioned at most in passing.",
       "files": ["fixtures/bugfix-with-refactor.diff"],
       "assertions": [
-        "States the customer impact in plain language: invoice due dates landed a business day early for customers in timezones west of UTC",
+        "States the customer impact in plain language: invoice due dates landed a business day late for customers in timezones west of UTC",
         "Explains the cause: business-day counting anchored on the UTC calendar date instead of the customer's local date",
         "The to_local -> to_customer_timezone rename gets at most one brief passing mention",
         "Body (excluding title) is under 200 words",

@@ -39,7 +39,7 @@ index 2c3d4e5..6f7a8b9 100644
 +    # .date() on a UTC datetime shifted the anchor day for customers west
 +    # of UTC: an invoice issued at 01:00 UTC Monday is still Sunday in
 +    # e.g. America/Los_Angeles, so their due date landed one business day
-+    # early.
++    # late.
 +    current = to_customer_timezone(start, tz_name).date()
      added = 0
      while added < days:
