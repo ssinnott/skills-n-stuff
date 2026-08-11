@@ -11,10 +11,9 @@ do, is it safe, and which lines deserve real attention?
 
 Sort the diff into three buckets — the point (the change the PR exists to
 make), supporting changes, and noise (mechanical churn). The point gets
-nearly everything; supporting changes a line each; noise one clause or none.
-
-If a mechanical diff hides one real behavioral change, lead with that
-change — title or first sentence, no special formatting. If a change spans
+nearly everything; supporting changes a line each; noise one clause or
+none. The point can be a single hunk in a diff that is otherwise churn —
+its share of the diff doesn't matter; it still leads. If a change spans
 several areas, describe the path in one line: the areas in order, and what
 passes between them.
 
