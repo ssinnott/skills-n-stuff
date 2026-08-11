@@ -33,7 +33,8 @@ ECONNRESET; the diff already holds those. No worked examples. Never
 enumerate files — more than about three paths is the changelog trap. Say
 only what the diff shows: never invent testing, author intent, or scope.
 
-Keep the body under 75 words for most PRs, near 120 for a several-idea
-change — if over, drop the weakest bullet, then anything the title already
-says. Worked examples live in `examples/`, paired with input diffs in
+Keep the lead and bullets under 75 words for most PRs, near 120 for a
+several-idea change — if over, drop the weakest bullet, then anything the
+title already says. The Testing section sits outside that budget but stays
+to a line or two. Worked examples live in `examples/`, paired with input diffs in
 `evals/fixtures/`.
