@@ -4,16 +4,18 @@
     {
       "id": 0,
       "name": "feature-with-noise",
-      "prompt": "I just wrapped up a change to our order service and need to open a PR. The full diff of my branch is in feature-with-noise.diff — it's the retry stuff plus whatever npm dragged in. Can you write the PR description? Save it as pr-description.md.",
+      "prompt": "I just wrapped up a change to our order service and need to open a PR. The full diff of my branch is in feature-with-noise.diff \u2014 it's the retry stuff plus whatever npm dragged in. Can you write the PR description? Save it as pr-description.md.",
       "expected_output": "A short reviewer-focused description leading with the retry/backoff behavior added to the API client. Lockfile churn and formatting-only changes ignored or reduced to a single aggregate mention. No file-by-file inventory.",
-      "files": ["fixtures/feature-with-noise.diff"],
+      "files": [
+        "fixtures/feature-with-noise.diff"
+      ],
       "assertions": [
         "Title and opening sentences lead with the retry/backoff behavior added to the API client",
-        "Body (excluding title) is under 200 words",
-        "Lockfile/dependency churn gets at most one aggregate mention — no itemized package-lock.json or integrity-hash details",
+        "Body (excluding title) is under 100 words",
+        "Lockfile/dependency churn gets at most one aggregate mention \u2014 no itemized package-lock.json or integrity-hash details",
         "The formatting-only rewrite of src/utils/format.js is not presented as a substantive change (one passing mention allowed)",
-        "References at most 3 file paths — no file-by-file inventory",
-        "No tuning constants or error-code jargon in the body: no millisecond values, jitter percentages, or identifiers like ECONNRESET — the retry mechanism is described as plain effect",
+        "References at most 3 file paths \u2014 no file-by-file inventory",
+        "No tuning constants or error-code jargon in the body: no millisecond values, jitter percentages, or identifiers like ECONNRESET \u2014 the retry mechanism is described as plain effect",
         "At most one section heading beyond the title, and no bolded callout sentences"
       ]
     },
@@ -22,28 +24,33 @@
       "name": "bugfix-with-refactor",
       "prompt": "wrote a fix for that billing bug where west coast customers were getting invoice due dates a business day late. diff is in bugfix-with-refactor.diff (i also renamed a helper while i was in there). write me the PR description and save it to pr-description.md",
       "expected_output": "A description that explains the bug in plain customer-impact terms (due dates computed off UTC dates landed a business day late for customers west of UTC) and the fix. The to_local -> to_customer_timezone rename mentioned at most in passing.",
-      "files": ["fixtures/bugfix-with-refactor.diff"],
+      "files": [
+        "fixtures/bugfix-with-refactor.diff"
+      ],
       "assertions": [
         "States the customer impact in plain language: invoice due dates landed a business day late for customers in timezones west of UTC",
         "Explains the cause: business-day counting anchored on the UTC calendar date instead of the customer's local date",
         "The to_local -> to_customer_timezone rename gets at most one brief passing mention",
-        "Body (excluding title) is under 200 words",
+        "Body (excluding title) is under 100 words",
         "Mentions that a regression test was added",
         "The customer-impact explanation reads as plain prose with no code identifiers or function names in it",
-        "At most one section heading beyond the title, and no bolded callout sentences"
+        "At most one section heading beyond the title, and no bolded callout sentences",
+        "States the bug without a worked example \u2014 no sample timestamps or step-by-step walkthrough of a specific invoice"
       ]
     },
     {
       "id": 2,
       "name": "rename-with-buried-change",
-      "prompt": "here's my branch diff in rename-with-buried-change.diff — it's mostly renaming UserService to UserDirectory and fetchUser to getUser across the codebase. need a PR description for it, save as pr-description.md",
+      "prompt": "here's my branch diff in rename-with-buried-change.diff \u2014 it's mostly renaming UserService to UserDirectory and fetchUser to getUser across the codebase. need a PR description for it, save as pr-description.md",
       "expected_output": "A short description that summarizes the rename in a line or two AND prominently surfaces the buried behavioral change: the user cache TTL default dropped from 300s to 30s. Does not list every touched file.",
-      "files": ["fixtures/rename-with-buried-change.diff"],
+      "files": [
+        "fixtures/rename-with-buried-change.diff"
+      ],
       "assertions": [
         "Prominently surfaces the buried behavioral change: the user-cache TTL default dropped from 300 seconds to 30 seconds",
         "Summarizes the rename in a line or two rather than walking through the renamed call sites",
-        "Body (excluding title) is under 200 words",
-        "References at most 3 file paths — does not enumerate the ~12 touched files",
+        "Body (excluding title) is under 100 words",
+        "References at most 3 file paths \u2014 does not enumerate the ~12 touched files",
         "At most one section heading beyond the title, and no bolded callout sentences"
       ]
     }

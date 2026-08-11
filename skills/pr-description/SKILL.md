@@ -60,8 +60,15 @@ accomplish instead.
   with backoff to API client", not "Updates to client code").
 - **Length**: scale with the conceptual size of the change, not the diff
   size. A 40-file rename plus one behavior tweak is a small PR conceptually —
-  it deserves a short description. Most PRs need under 150 words; going long
-  requires the change to genuinely carry multiple ideas.
+  it deserves a short description. Most PRs need three to five short
+  sentences — under 75 words or so; only a PR genuinely carrying several
+  ideas earns more, and 150 words is a lot even then.
+- **Cut pass**: after drafting, cut hard. Kill worked examples — sample
+  timestamps, invented values, step-by-step walkthroughs of the bug; state
+  the failure plainly and let the tests carry the examples. Kill anything
+  the title already says. If a sentence chains clauses with colons and
+  "so"s, split it or drop half. The reviewer paying attention for twenty
+  seconds is the budget; spend it on nothing twice.
 - **Structure**: start from the fill-in template at `assets/template.md`.
   The default shape is a title plus one or two short paragraphs of plain
   prose — no headings, no bullets, no bold. Prose carries emphasis fine; a
