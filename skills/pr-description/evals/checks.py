@@ -104,7 +104,7 @@ def check(assertion, text):
         if bad:
             return ("fail", f"malformed commit lines: {bad[:3]}")
         shas = {re.match(r"^`?([0-9a-f]{7,12})", l).group(1) for l in lines}
-        commits_files = list(HERE.glob("fixtures/*.commits.txt"))
+        commits_files = list(HERE.glob("fixtures/*commits.txt"))
         expected = set()
         for cf in commits_files:
             expected |= {l.split()[0] for l in cf.read_text().splitlines() if l.strip()}
