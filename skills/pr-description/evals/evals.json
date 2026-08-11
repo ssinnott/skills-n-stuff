@@ -15,8 +15,9 @@
         "Lockfile/dependency churn gets at most one aggregate mention \u2014 no itemized package-lock.json or integrity-hash details",
         "The formatting-only rewrite of src/utils/format.js is not presented as a substantive change (one passing mention allowed)",
         "References at most 3 file paths \u2014 no file-by-file inventory",
-        "No tuning constants or error-code jargon in the body: no millisecond values, jitter percentages, or identifiers like ECONNRESET \u2014 the retry mechanism is described as plain effect",
-        "At most one section heading beyond the title, and no bolded callout sentences"
+        "No tuning constants or wire-level jargon in the body: no millisecond values, jitter percentages, HTTP status codes (429, 4xx/5xx, etc.), or identifiers like ECONNRESET \u2014 failures described in plain words such as rate limits, server errors, bad requests",
+        "At most one section heading beyond the title, and no bolded callout sentences",
+        "Body is scannable: a one-sentence lead followed by short bullet points (each a single fact), or at most two sentences total with no dense multi-clause paragraphs"
       ]
     },
     {
@@ -35,7 +36,8 @@
         "Mentions that a regression test was added",
         "The customer-impact explanation reads as plain prose with no code identifiers or function names in it",
         "At most one section heading beyond the title, and no bolded callout sentences",
-        "States the bug without a worked example \u2014 no sample timestamps or step-by-step walkthrough of a specific invoice"
+        "States the bug without a worked example \u2014 no sample timestamps or step-by-step walkthrough of a specific invoice",
+        "Body is scannable: a one-sentence lead followed by short bullet points (each a single fact), or at most two sentences total with no dense multi-clause paragraphs"
       ]
     },
     {
@@ -51,6 +53,25 @@
         "Summarizes the rename in a line or two rather than walking through the renamed call sites",
         "Body (excluding title) is under 100 words",
         "References at most 3 file paths \u2014 does not enumerate the ~12 touched files",
+        "At most one section heading beyond the title, and no bolded callout sentences",
+        "Body is scannable: a one-sentence lead followed by short bullet points (each a single fact), or at most two sentences total with no dense multi-clause paragraphs"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "complex-call-flow",
+      "prompt": "bigger change this time \u2014 I made order submission idempotent end to end. the branch diff is in complex-call-flow.diff. can you write the PR description? save it as pr-description.md",
+      "expected_output": "A description that maps the flow in plain language: a client-supplied idempotency key travels from the API route through the order service into the queue and fulfillment worker, backed by a new store, so retried submissions and redelivered jobs don't double-charge or double-ship. Names the areas involved without enumerating every file; scannable bullets; under 120 words.",
+      "files": [
+        "fixtures/complex-call-flow.diff"
+      ],
+      "assertions": [
+        "Describes the end-to-end flow: a client-supplied idempotency key travels from the API route through the order service and queue to the fulfillment worker, so retries don't double-process",
+        "States the user-facing behavior: repeated submissions with the same key return the original receipt instead of charging again, and a missing key is rejected",
+        "Names the areas involved (route, order service, queue/worker, new store) without a file-by-file inventory \u2014 at most 4 file paths referenced",
+        "Body (excluding title) is under 120 words",
+        "Body is scannable: a one-sentence lead followed by short bullet points (each a single fact), or at most two sentences total with no dense multi-clause paragraphs",
+        "No HTTP status codes or wire-level jargon in the body",
         "At most one section heading beyond the title, and no bolded callout sentences"
       ]
     }

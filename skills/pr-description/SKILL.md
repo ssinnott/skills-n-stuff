@@ -41,10 +41,18 @@ Describe behavior, not implementation. Say what changes for users or callers:
 what was broken and how it manifested, what's now possible, what's different
 at the boundary. Translate mechanism into effect — "retries a few times with
 growing pauses before giving up," not "exponential backoff with jitter (250ms
-base, 20%)." The constants, error codes, and mechanism names are all sitting
-in the diff; repeating them in the description is noise wearing a lab coat.
-Repeat a specific value only when the reviewer must weigh it (a changed
-default, a tightened timeout).
+base, 20%)." That translation includes wire-level vocabulary: say "rate
+limits," "server errors," "bad requests" — not 429, 4xx/5xx, or ECONNRESET.
+The constants, status codes, and mechanism names are all sitting in the diff;
+repeating them in the description is noise wearing a lab coat. Repeat a
+specific value only when the reviewer must weigh it (a changed default, a
+tightened timeout).
+
+When the change threads through several parts of the codebase — a value or
+call flowing from route to service to queue to worker — give the reader the
+path: name the areas in order and say what travels between them. One plain
+map like that is worth more than any file list, and it's exactly what a
+reviewer can't get from a diff sorted alphabetically.
 
 Judgment calls a reviewer might reasonably question — a chosen default, an
 approach you rejected, a tradeoff you accepted — deserve one plain sentence
@@ -70,13 +78,16 @@ accomplish instead.
   "so"s, split it or drop half. The reviewer paying attention for twenty
   seconds is the budget; spend it on nothing twice.
 - **Structure**: start from the fill-in template at `assets/template.md`.
-  The default shape is a title plus one or two short paragraphs of plain
-  prose — no headings, no bullets, no bold. Prose carries emphasis fine; a
-  sentence that matters goes first, it doesn't get a bolded label. When most
-  of the diff is churn, end with one sentence telling the reviewer the few
-  files worth reading. A heading (usually just Testing) earns its place only
-  when the PR genuinely carries several ideas a reviewer must navigate —
-  most PRs don't.
+  The default shape is a title, a one-sentence lead saying why and what,
+  then three to six short bullets — each a single plain fact: the behavior
+  change, a judgment call worth questioning, the noise note ("everything
+  else is the rename"), where to look. Bullets are for scanning, so keep
+  each to a clause or two; a bullet that needs a semicolon wants to be two
+  bullets, and a bullet that repeats the lead or the title gets deleted.
+  No headings, no bold labels on bullets. A PR small enough to say in two
+  sentences skips the bullets entirely; a heading (usually just Testing)
+  earns its place only when the PR genuinely carries several ideas a
+  reviewer must navigate.
 - If the repository has a PR template, fill its sections instead — apply this
   same judgment inside each section rather than bolting the template on top.
 
