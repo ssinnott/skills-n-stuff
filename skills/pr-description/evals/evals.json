@@ -55,7 +55,8 @@
         "Body (excluding title and the Testing section) is under 100 words",
         "References at most 3 file paths \u2014 does not enumerate the ~12 touched files",
         "At most one section heading beyond the title, and no bolded callout sentences",
-        "Body is scannable: a one-sentence lead followed by short bullet points (each a single fact), or at most two sentences total with no dense multi-clause paragraphs"
+        "Body is scannable: a one-sentence lead followed by short bullet points (each a single fact), or at most two sentences total with no dense multi-clause paragraphs",
+        "Scopes the TTL change accurately \u2014 does not claim it affects lookups that bypass the cache"
       ]
     },
     {

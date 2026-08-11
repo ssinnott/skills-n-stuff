@@ -7,7 +7,7 @@ description: Write reviewer-friendly pull request descriptions from a code chang
 
 A PR description is not a changelog — the diff already records every change.
 It exists for a reviewer deciding in under a minute: what is this trying to
-do, is it safe, and which few lines deserve real attention?
+do, is it safe, and which lines deserve real attention?
 
 Sort the diff into three buckets — the point (the change the PR exists to
 make), supporting changes, and noise (mechanical churn). The point gets
@@ -33,7 +33,8 @@ lab coat. No worked examples. Never enumerate files — more than about three
 paths is the changelog trap. Say only what the diff shows: never invent
 testing, author intent, or scope.
 
-Keep the lead and bullets under 75 words (near 120 for a several-idea
-change); if over, drop the weakest bullet, then anything the title repeats.
+Keep the lead and bullets under 75 words (120 is the ceiling even for a
+several-idea change); if over, drop the weakest bullet, then anything the
+title repeats.
 Testing sits outside that budget but stays to a line or two. Worked
 examples: `examples/`, each paired with its diff in `evals/fixtures/`.

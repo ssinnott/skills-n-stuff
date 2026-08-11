@@ -1,10 +1,16 @@
 <!-- Example output for the input diff at evals/fixtures/feature-with-noise.diff -->
-# Add retry with backoff to the order API client
+# Retry transient upstream failures in the API client
 
-The API client now retries requests that hit rate limits, transient server errors, or dropped connections, pausing a little longer between attempts instead of failing on the first hiccup.
+Brief upstream blips currently fail requests outright; the client now retries
+them with exponential backoff before giving up.
 
-- Retries up to three times by default; callers can tune this per client.
-- POSTs are retried too — worth a look if any downstream endpoint isn't idempotent.
-- Bad requests and other client errors still fail immediately.
-- Tests cover retry-then-succeed, giving up, and not retrying client errors.
-- Everything else is noise: undici bump, lockfile churn, and a formatting-only pass on the currency helpers.
+- Only transient failures — rate limiting, gateway errors, dropped
+  connections — are retried; other errors still fail immediately.
+- Three retries by default, configurable per client instance.
+- The real change is `src/api/client.js`; `src/utils/format.js` is
+  formatting-only churn, and the lockfile follows an undici minor bump.
+
+## Testing
+
+New tests cover a flaky endpoint that succeeds after retries, exhausting the
+retry limit and surfacing the final error, and not retrying a client error.
