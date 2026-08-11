@@ -1,0 +1,243 @@
+diff --git a/package.json b/package.json
+index 3f1a2b4..8c9d0e1 100644
+--- a/package.json
++++ b/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "orderflow",
+-  "version": "2.4.1",
++  "version": "2.5.0",
+   "description": "Order processing service",
+   "main": "src/index.js",
+   "scripts": {
+@@ -14,7 +14,7 @@
+   "dependencies": {
+     "express": "^4.19.2",
+     "pino": "^9.3.1",
+-    "undici": "^6.19.2"
++    "undici": "^6.21.0"
+   },
+   "devDependencies": {
+     "prettier": "^3.3.3",
+diff --git a/package-lock.json b/package-lock.json
+index a1b2c3d..e4f5a6b 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -1,12 +1,12 @@
+ {
+   "name": "orderflow",
+-  "version": "2.4.1",
++  "version": "2.5.0",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "orderflow",
+-      "version": "2.4.1",
++      "version": "2.5.0",
+       "dependencies": {
+         "express": "^4.19.2",
+         "pino": "^9.3.1",
+-        "undici": "^6.19.2"
++        "undici": "^6.21.0"
+       },
+@@ -1240,9 +1240,9 @@
+     "node_modules/undici": {
+-      "version": "6.19.2",
+-      "resolved": "https://registry.npmjs.org/undici/-/undici-6.19.2.tgz",
+-      "integrity": "sha512-JfjKqIauur3Q6biAtHJ564e3bWa8VvT+7cSiOJHFbX4Erv6CLGDpg8z+Fmg/1OI/47RA+GI2QZaF48SSaLvyBA==",
++      "version": "6.21.0",
++      "resolved": "https://registry.npmjs.org/undici/-/undici-6.21.0.tgz",
++      "integrity": "sha512-BUgJXc752Kou3oOIuU1i+yZZypyZRqNPW0vqoMPl8VaoalSfeR0D8/t4iAS3yirs79SSMTxTag+ZC86uswv+Cw==",
+       "engines": {
+         "node": ">=18.17"
+       }
+     },
+@@ -1310,15 +1310,15 @@
+     "node_modules/undici-types": {
+-      "version": "6.19.6",
+-      "resolved": "https://registry.npmjs.org/undici-types/-/undici-types-6.19.6.tgz",
+-      "integrity": "sha512-e/vggGopEfTKSvj4ihnOLTsqhrKRN3LeO6qSN/GxohhuRv8qH9bNQ4B8W7e/vFL+0XTnmHPB4/kegunZGA4Org==",
++      "version": "6.21.0",
++      "resolved": "https://registry.npmjs.org/undici-types/-/undici-types-6.21.0.tgz",
++      "integrity": "sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==",
+       "dev": false
+     },
+     "node_modules/fast-querystring": {
+       "version": "1.1.2",
+       "resolved": "https://registry.npmjs.org/fast-querystring/-/fast-querystring-1.1.2.tgz",
+-      "integrity": "sha512-g6KuKWmFXc0fID8WWH0jit4g0AGBoJhCkJMb1RmbsSEUNvQ+ZC8D6CUZ+GtF8nMzSPXnhiePyyqqipzNNEnHjg==",
++      "integrity": "sha512-g6KuKWmFXc0fID8WWH0jit4g0AGBoJhCkJMb1RmbsSEUNvQ+ZC8D6CUZ+GtF8nMzSPXnhiePyyqqipzNNEnHjh==",
+       "dependencies": {
+         "fast-decode-uri-component": "^1.0.1"
+       }
+diff --git a/src/api/client.js b/src/api/client.js
+index 9d8e7f6..2b3c4d5 100644
+--- a/src/api/client.js
++++ b/src/api/client.js
+@@ -1,24 +1,63 @@
+ const { request } = require("undici");
+ const logger = require("../logger");
+
++const RETRYABLE_STATUS = new Set([429, 502, 503, 504]);
++const MAX_RETRIES = 3;
++const BASE_DELAY_MS = 250;
++
++function sleep(ms) {
++  return new Promise((resolve) => setTimeout(resolve, ms));
++}
++
++function backoffDelay(attempt) {
++  const exp = BASE_DELAY_MS * 2 ** attempt;
++  const jitter = Math.random() * exp * 0.2;
++  return exp + jitter;
++}
++
+ class ApiClient {
+   constructor(baseUrl, opts = {}) {
+     this.baseUrl = baseUrl;
+     this.timeout = opts.timeout ?? 30_000;
++    this.maxRetries = opts.maxRetries ?? MAX_RETRIES;
+   }
+
+   async get(path) {
+-    const res = await request(`${this.baseUrl}${path}`, {
+-      method: "GET",
+-      headersTimeout: this.timeout,
+-    });
+-    if (res.statusCode >= 400) {
+-      throw new Error(`GET ${path} failed: ${res.statusCode}`);
+-    }
+-    return res.body.json();
++    return this.#withRetries("GET", path, () =>
++      request(`${this.baseUrl}${path}`, {
++        method: "GET",
++        headersTimeout: this.timeout,
++      })
++    );
+   }
+
+   async post(path, body) {
+-    const res = await request(`${this.baseUrl}${path}`, {
+-      method: "POST",
+-      headersTimeout: this.timeout,
+-      headers: { "content-type": "application/json" },
+-      body: JSON.stringify(body),
+-    });
+-    if (res.statusCode >= 400) {
+-      throw new Error(`POST ${path} failed: ${res.statusCode}`);
+-    }
+-    return res.body.json();
++    return this.#withRetries("POST", path, () =>
++      request(`${this.baseUrl}${path}`, {
++        method: "POST",
++        headersTimeout: this.timeout,
++        headers: { "content-type": "application/json" },
++        body: JSON.stringify(body),
++      })
++    );
++  }
++
++  async #withRetries(method, path, doRequest) {
++    let lastError;
++    for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
++      try {
++        const res = await doRequest();
++        if (RETRYABLE_STATUS.has(res.statusCode) && attempt < this.maxRetries) {
++          const delay = backoffDelay(attempt);
++          logger.warn(
++            { method, path, status: res.statusCode, attempt, delay },
++            "retrying request"
++          );
++          await sleep(delay);
++          continue;
++        }
++        if (res.statusCode >= 400) {
++          throw new Error(`${method} ${path} failed: ${res.statusCode}`);
++        }
++        return res.body.json();
++      } catch (err) {
++        lastError = err;
++        if (err.code !== "ECONNRESET" || attempt >= this.maxRetries) throw err;
++        await sleep(backoffDelay(attempt));
++      }
++    }
++    throw lastError;
+   }
+ }
+
+diff --git a/test/api/client.test.js b/test/api/client.test.js
+index 5e6f7a8..b9c0d1e 100644
+--- a/test/api/client.test.js
++++ b/test/api/client.test.js
+@@ -30,4 +30,38 @@ describe("ApiClient", () => {
+     await assert.rejects(client.get("/missing"), /404/);
+   });
++
++  it("retries on 503 and succeeds", async () => {
++    let calls = 0;
++    server.on("request", (req, res) => {
++      calls++;
++      if (calls < 3) {
++        res.statusCode = 503;
++        res.end();
++      } else {
++        res.end(JSON.stringify({ ok: true }));
++      }
++    });
++    const result = await client.get("/flaky");
++    assert.equal(calls, 3);
++    assert.deepEqual(result, { ok: true });
++  });
++
++  it("gives up after maxRetries and throws", async () => {
++    server.on("request", (req, res) => {
++      res.statusCode = 503;
++      res.end();
++    });
++    const client = new ApiClient(baseUrl, { maxRetries: 1 });
++    await assert.rejects(client.get("/down"), /503/);
++  });
++
++  it("does not retry on 400", async () => {
++    let calls = 0;
++    server.on("request", (req, res) => {
++      calls++;
++      res.statusCode = 400;
++      res.end();
++    });
++    await assert.rejects(client.get("/bad"), /400/);
++    assert.equal(calls, 1);
++  });
+ });
+diff --git a/src/utils/format.js b/src/utils/format.js
+index 1a2b3c4..d5e6f7a 100644
+--- a/src/utils/format.js
++++ b/src/utils/format.js
+@@ -1,19 +1,11 @@
+-const CURRENCIES = {
+-  'USD': '$',
+-  'EUR': '€',
+-  'GBP': '£'
+-};
++const CURRENCIES = { USD: "$", EUR: "€", GBP: "£" };
+
+-function formatMoney (amount, currency) {
+-  const symbol = CURRENCIES[currency] || currency
+-  return symbol + (amount / 100).toFixed(2)
++function formatMoney(amount, currency) {
++  const symbol = CURRENCIES[currency] || currency;
++  return symbol + (amount / 100).toFixed(2);
+ }
+
+-function formatPercent (value) {
+-  return (value * 100).toFixed(1) + '%'
++function formatPercent(value) {
++  return (value * 100).toFixed(1) + "%";
+ }
+
+-module.exports = {
+-  formatMoney,
+-  formatPercent
+-}
++module.exports = { formatMoney, formatPercent };

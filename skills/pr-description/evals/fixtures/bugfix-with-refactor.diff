@@ -1,0 +1,98 @@
+diff --git a/src/billing/invoice.py b/src/billing/invoice.py
+index 4a5b6c7..8d9e0f1 100644
+--- a/src/billing/invoice.py
++++ b/src/billing/invoice.py
+@@ -1,10 +1,10 @@
+ from datetime import datetime, timezone
+ from decimal import Decimal
+
+-from .dates import to_local
++from .dates import to_customer_timezone
+ from .models import Invoice, LineItem
+
+
+ def build_invoice(customer, line_items, issued_at=None):
+     issued_at = issued_at or datetime.now(timezone.utc)
+-    due_date = to_local(issued_at, customer.tz).date()
++    due_date = to_customer_timezone(issued_at, customer.tz).date()
+     return Invoice(
+         customer_id=customer.id,
+         issued_at=issued_at,
+diff --git a/src/billing/dates.py b/src/billing/dates.py
+index 2c3d4e5..6f7a8b9 100644
+--- a/src/billing/dates.py
++++ b/src/billing/dates.py
+@@ -1,14 +1,17 @@
+ from datetime import datetime, timedelta
+ from zoneinfo import ZoneInfo
+
+
+-def to_local(dt, tz_name):
+-    return dt.astimezone(ZoneInfo(tz_name))
++def to_customer_timezone(dt, tz_name):
++    return dt.astimezone(ZoneInfo(tz_name))
+
+
+ def add_business_days(start, days, tz_name):
+-    current = start.date()
++    # Convert to the customer's timezone BEFORE taking the date. Taking
++    # .date() on a UTC datetime shifted the anchor day for customers west
++    # of UTC: an invoice issued at 01:00 UTC Monday is still Sunday in
++    # e.g. America/Los_Angeles, so their due date landed one business day
++    # early.
++    current = to_customer_timezone(start, tz_name).date()
+     added = 0
+     while added < days:
+         current += timedelta(days=1)
+         if current.weekday() < 5:
+             added += 1
+     return current
+diff --git a/tests/billing/test_dates.py b/tests/billing/test_dates.py
+index 9a0b1c2..3d4e5f6 100644
+--- a/tests/billing/test_dates.py
++++ b/tests/billing/test_dates.py
+@@ -1,8 +1,8 @@
+ from datetime import datetime, timezone
+
+-from src.billing.dates import add_business_days, to_local
++from src.billing.dates import add_business_days, to_customer_timezone
+
+
+ def test_add_business_days_skips_weekend():
+     start = datetime(2026, 3, 6, 12, 0, tzinfo=timezone.utc)  # Friday
+     assert add_business_days(start, 1, "UTC").weekday() == 0  # Monday
++
++
++def test_add_business_days_uses_customer_timezone():
++    # 01:00 UTC Monday is 17:00 Sunday in Los Angeles. Business-day
++    # counting must anchor on the customer's Sunday, not UTC's Monday.
++    start = datetime(2026, 3, 9, 1, 0, tzinfo=timezone.utc)
++    utc_due = add_business_days(start, 3, "UTC")
++    la_due = add_business_days(start, 3, "America/Los_Angeles")
++    assert utc_due.day == 12
++    assert la_due.day == 11
++
++
++def test_to_customer_timezone_converts():
++    dt = datetime(2026, 3, 9, 1, 0, tzinfo=timezone.utc)
++    local = to_customer_timezone(dt, "America/Los_Angeles")
++    assert local.hour == 17
++    assert local.day == 8
+diff --git a/src/billing/reminders.py b/src/billing/reminders.py
+index 7b8c9d0..1e2f3a4 100644
+--- a/src/billing/reminders.py
++++ b/src/billing/reminders.py
+@@ -1,9 +1,9 @@
+ from datetime import datetime, timezone
+
+-from .dates import to_local
++from .dates import to_customer_timezone
+ from .mailer import send_email
+
+
+ def send_due_reminder(invoice, customer):
+-    local_due = to_local(invoice.due_at, customer.tz)
++    local_due = to_customer_timezone(invoice.due_at, customer.tz)
+     send_email(
+         customer.email,
+         subject=f"Invoice {invoice.number} due {local_due:%B %-d}",
