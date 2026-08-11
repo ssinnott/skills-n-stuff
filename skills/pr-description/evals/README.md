@@ -22,10 +22,13 @@ regenerated evidence, not source). Curated passing outputs get promoted to
 ## Two kinds of assertions
 
 - **Mechanical** — verifiable by script, no model needed: word caps
-  (excluding the title and Testing section), heading/bold-callout limits,
-  file-path counts, wire-level jargon patterns, and a scannability proxy
-  (bullets plus at most two prose sentences). `checks.py` derives these from
-  the assertion text in `evals.json`, so the two can't drift apart.
+  (excluding the title and the Testing/Commits sections), a heading
+  allowlist (only Testing and Commits) and bold-callout ban, file-path
+  counts, wire-level jargon patterns, a scannability proxy (bullets plus at
+  most two prose sentences), and the Commits-section format — every line
+  `<short sha> - <subject>` with shas verified against the input commit
+  list. `checks.py` derives these from the assertion text in `evals.json`,
+  so the two can't drift apart.
 - **Judgment** — need a model or human grader: does the description lead
   with the right thing, is the impact stated accurately, is anything claimed
   that the diff doesn't show. These are the assertions that catch invented
@@ -70,8 +73,8 @@ and 93% vs 43% on the held-out real-world fixtures.
    `fixtures/SOURCES.md`).
 2. Add an entry to `evals.json`: realistic prompt, files, assertions.
    Phrase mechanical assertions with the recognized patterns ("under N
-   words", "at most N file paths", "one section heading", "status codes",
-   "scannable") so `checks.py` picks them up.
+   words", "at most N file paths", "no section headings", "status codes",
+   "scannable", "commits section") so `checks.py` picks them up.
 3. `python3 checks.py --test` to validate the schema.
 4. Prefer fixtures the skill's examples have never seen — that's what keeps
    the suite an overfitting check rather than a mirror.

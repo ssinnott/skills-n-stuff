@@ -5,16 +5,16 @@ description: Write reviewer-friendly pull request descriptions from a code chang
 
 # PR Descriptions
 
-A PR description is not a changelog — the diff already records every change.
-It exists for a reviewer deciding in under a minute: what is this trying to
-do, is it safe, and which lines deserve real attention?
+A PR description is not a changelog — the diff records every change. It
+exists for a reviewer deciding in under a minute: what is this trying to
+do, is it safe, and which lines deserve attention?
 
 Sort the diff into three buckets — the point (the change the PR exists to
 make), supporting changes, and noise (mechanical churn). The point gets
 nearly everything; supporting changes a line each; noise one clause or
 none. The point can be a single hunk in a diff that is otherwise churn —
-its share of the diff doesn't matter; it still leads. If a change spans
-several areas, describe the path in one line: the areas in order, and what
+its share of the diff doesn't matter; it still leads. A change spanning
+several areas gets its path in one line: the areas in order, and what
 passes between them.
 
 Fill in `assets/template.md`: an imperative title (≤ 70 chars) naming the
@@ -22,7 +22,9 @@ point, a one-sentence lead (why, then what), three to six single-fact
 bullets (the behavior change, a judgment call worth questioning, the noise
 note, which few files hold the real change), and a short Testing section
 saying what the new tests cover. Bullets state facts; they don't give the
-reviewer orders.
+reviewer orders. When the input carries commits — a branch or range, not a
+bare diff — end with a Commits section, one line per commit, formatted
+`<short sha> - <subject>`; code hosts autolink the sha.
 
 Describe effect, not mechanism: say what the user or caller experiences, in
 words they'd use aloud — the constants, codes, and internal identifiers
@@ -32,7 +34,6 @@ paths is the changelog trap. Say only what the diff shows: never invent
 testing, author intent, alternatives that were "considered," or scope.
 
 Keep the lead and bullets under 75 words, 120 at the outside; if over,
-drop the weakest bullet, then anything the title repeats.
-Testing sits outside that budget but stays to a line or two. Worked
-examples: `examples/` (one folder per model), each paired with its input
-diff in `evals/fixtures/`.
+drop the weakest bullet, then anything the title repeats. Testing and
+Commits sit outside that budget. Worked examples: `examples/` (one folder
+per model), each paired with its input diff in `evals/fixtures/`.

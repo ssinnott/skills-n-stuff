@@ -19,3 +19,11 @@
 ## Testing
 
 {testing_notes}
+
+<!-- REQUIRED whenever the input carries commits (a branch or range — not
+     a bare diff): one line per commit, oldest first, exactly this shape.
+     Code hosts autolink the short sha into a working link. Omit the whole
+     section for a bare diff — never invent shas. -->
+## Commits
+
+- {short-sha} - {subject}

@@ -33,20 +33,20 @@ def load_evals():
 
 
 def split_output(text):
-    """Return (body, testing) where body excludes title, comments, Testing."""
+    """Return (body, extras) — body excludes title, comments, and the
+    Testing and Commits sections (which live outside the word budget)."""
     text = re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL)
-    lines = text.splitlines()
-    body, testing, in_testing = [], [], False
-    for line in lines:
+    body, extras, section = [], [], None
+    for line in text.splitlines():
         if re.match(r"^#\s", line):          # title
             continue
-        if re.match(r"^##\s*Testing", line, re.IGNORECASE):
-            in_testing = True
-            continue
-        if re.match(r"^##\s", line) and in_testing:
-            in_testing = False
-        (testing if in_testing else body).append(line)
-    return "\n".join(body), "\n".join(testing)
+        m = re.match(r"^##\s*(\w+)", line)
+        if m:
+            section = m.group(1).lower() if m.group(1).lower() in ("testing", "commits") else None
+            if section:
+                continue
+        (extras if section else body).append(line)
+    return "\n".join(body), "\n".join(extras)
 
 
 def word_count(text):
@@ -70,12 +70,31 @@ def check(assertion, text):
         return ("pass" if len(paths) <= cap else "fail",
                 f"{len(paths)} paths (cap {cap}): {sorted(paths)[:6]}")
 
-    if "one section heading" in a:
-        headings = re.findall(r"^#{2,}\s.*$", text, re.MULTILINE)
+    if "one section heading" in a or "no section headings" in a:
+        headings = re.findall(r"^#{2,}\s*(.+)$", text, re.MULTILINE)
+        extra = [h for h in headings if h.strip().lower() not in ("testing", "commits")]
         callouts = BOLD_CALLOUT.findall(body)
-        ok = len(headings) <= 1 and not callouts
+        ok = not extra and not callouts
         return ("pass" if ok else "fail",
-                f"{len(headings)} headings, {len(callouts)} bold callouts")
+                f"disallowed headings: {extra}, {len(callouts)} bold callouts")
+
+    if "commits section" in a:
+        m = re.search(r"^##\s*Commits\s*$(.*)", text, re.MULTILINE | re.DOTALL)
+        if not m:
+            return ("fail", "no Commits section found")
+        lines = [l.strip().lstrip("-* ").strip() for l in m.group(1).splitlines() if l.strip()]
+        bad = [l for l in lines if not re.match(r"^`?[0-9a-f]{7,12}`?\s+-\s+\S", l)]
+        if bad:
+            return ("fail", f"malformed commit lines: {bad[:3]}")
+        shas = {re.match(r"^`?([0-9a-f]{7,12})", l).group(1) for l in lines}
+        commits_files = list(HERE.glob("fixtures/*.commits.txt"))
+        expected = set()
+        for cf in commits_files:
+            expected |= {l.split()[0] for l in cf.read_text().splitlines() if l.strip()}
+        unknown = shas - expected if expected else set()
+        if unknown:
+            return ("fail", f"shas not in any input commit list: {sorted(unknown)}")
+        return ("pass", f"{len(lines)} commit lines, shas verified")
 
     if "status codes" in a or "wire-level" in a or "jargon" in a:
         hits = (STATUS_CODE.findall(body) + MS_VALUE.findall(body) +
