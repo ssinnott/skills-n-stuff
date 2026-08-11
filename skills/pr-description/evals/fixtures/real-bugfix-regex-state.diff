@@ -1,0 +1,58 @@
+diff --git a/lib/content-type-parser.js b/lib/content-type-parser.js
+index 3910c85..3dd8808 100644
+--- a/lib/content-type-parser.js
++++ b/lib/content-type-parser.js
+@@ -145,6 +145,10 @@ ContentTypeParser.prototype.getParser = function (contentType) {
+ 
+   for (let j = 0; j !== this.parserRegExpList.length; ++j) {
+     const parserRegExp = this.parserRegExpList[j]
++    // A parser registered with a `g`/`y` flagged RegExp keeps a mutable
++    // lastIndex between calls, so a plain `.test()` would skip part of the
++    // next content type and match inconsistently. Reset it before testing.
++    parserRegExp.lastIndex = 0
+     if (parserRegExp.test(ct)) {
+       parser = this.customParsers.get(parserRegExp.toString())
+       this.cache.set(ct, parser)
+diff --git a/test/content-parser.test.js b/test/content-parser.test.js
+index 4c361cd..91f831d 100644
+--- a/test/content-parser.test.js
++++ b/test/content-parser.test.js
+@@ -578,6 +578,38 @@ test('content-type match parameters - regexp', async t => {
+   })
+ })
+ 
++test('content-type match - RegExp with global flag', async t => {
++  t.plan(4)
++
++  const fastify = Fastify()
++  fastify.addContentTypeParser(/^application\/.+\+xml$/g, { parseAs: 'string' }, function (request, body, done) {
++    done(null, body)
++  })
++
++  fastify.post('/', async (request) => request.body)
++
++  // Two distinct content types that both match the parser. A RegExp with the
++  // `g` flag keeps a mutable lastIndex between test() calls, so the second
++  // content type must still match rather than fall through to 415.
++  const first = await fastify.inject({
++    method: 'POST',
++    path: '/',
++    headers: { 'content-type': 'application/vnd.a+xml' },
++    body: '<a/>'
++  })
++  const second = await fastify.inject({
++    method: 'POST',
++    path: '/',
++    headers: { 'content-type': 'application/vnd.b+xml' },
++    body: '<b/>'
++  })
++
++  t.assert.strictEqual(first.statusCode, 200)
++  t.assert.strictEqual(first.payload, '<a/>')
++  t.assert.strictEqual(second.statusCode, 200)
++  t.assert.strictEqual(second.payload, '<b/>')
++})
++
+ test('content-type fail when parameters not match - string 1', async t => {
+   t.plan(1)
+ 

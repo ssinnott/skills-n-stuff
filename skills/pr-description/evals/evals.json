@@ -76,6 +76,42 @@
         "No HTTP status codes or wire-level jargon in the body",
         "At most one section heading beyond the title, and no bolded callout sentences"
       ]
+    },
+    {
+      "id": 4,
+      "name": "real-feature-query-method",
+      "prompt": "my branch adds support for the new HTTP QUERY method (rfc 10008) to our fastify fork \u2014 full diff is in real-feature-query-method.diff. write the PR description and save it as pr-description.md",
+      "expected_output": "A short description leading with the new capability (routes can be registered and served for the HTTP QUERY method) and stating the validation behavior plainly (QUERY requests without a content type or body are rejected as bad requests). No inventory of the 14 touched files.",
+      "files": [
+        "fixtures/real-feature-query-method.diff"
+      ],
+      "assertions": [
+        "Leads with the new capability: routes can now be registered and served for the HTTP QUERY method",
+        "States the request-validation behavior plainly: QUERY requests missing a content type or a body are rejected as bad requests",
+        "Body (excluding title and the Testing section) is under 120 words",
+        "Body is scannable: a one-sentence lead followed by short bullet points (each a single fact), or at most two sentences total with no dense multi-clause paragraphs",
+        "References at most 4 file paths \u2014 no file-by-file inventory of the ~14 touched files",
+        "At most one section heading beyond the title, and no bolded callout sentences",
+        "No HTTP status codes or ALL-CAPS error-code identifiers (FST_ERR_*) in the body",
+        "Testing section reflects what the new tests actually cover without inventing coverage"
+      ]
+    },
+    {
+      "id": 5,
+      "name": "real-bugfix-regex-state",
+      "prompt": "tracked down that flaky content-type parser bug \u2014 turns out regexes registered with g/y flags keep state between matches. diff is in real-bugfix-regex-state.diff. write me a PR description and save it as pr-description.md",
+      "expected_output": "A short description explaining the bug's effect plainly (parsers registered with global/sticky regexes could intermittently fail to match on later requests because the regex remembered its previous match position) and the fix (reset the position before each check).",
+      "files": [
+        "fixtures/real-bugfix-regex-state.diff"
+      ],
+      "assertions": [
+        "Explains the bug's effect plainly: content-type parsers registered with global or sticky regexes could match inconsistently on subsequent requests",
+        "States cause and fix: the regex retained its previous match position between checks, and it is now reset before each check",
+        "Body (excluding title and the Testing section) is under 100 words",
+        "Body is scannable: a one-sentence lead followed by short bullet points (each a single fact), or at most two sentences total with no dense multi-clause paragraphs",
+        "At most one section heading beyond the title, and no bolded callout sentences",
+        "Testing section reflects the new regression tests without inventing coverage"
+      ]
     }
   ]
 }
