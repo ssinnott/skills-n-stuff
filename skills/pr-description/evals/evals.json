@@ -127,6 +127,24 @@
         "Body (excluding title, Testing, and Commits sections) is under 120 words",
         "Body is scannable: a one-sentence lead followed by short bullet points (each a single fact), or at most two sentences total with no dense multi-clause paragraphs",
         "No section headings beyond the title except Testing and an optional Commits list, and no bolded callout sentences",
+        "Ends with a Commits section listing every commit from the input as '<short sha> - <subject>', one line per commit, shas matching the input list exactly",
+        "Contains no blockquote lines \u2014 the input history is clean, so no reorganization offer"
+      ]
+    },
+    {
+      "id": 7,
+      "name": "messy-branch-history",
+      "prompt": "here's my idempotent-order-submission branch \u2014 diff in complex-call-flow.diff, commits in complex-call-flow.messy-commits.txt. write the PR description and save it as pr-description.md",
+      "expected_output": "A blockquote offer to reorganize the messy history (naming what to squash/reword, e.g. wip/fix/oops commits) above the title, then the normal reviewer-first description of the branch as-is, ending with a Commits section listing the input commits verbatim.",
+      "files": [
+        "fixtures/complex-call-flow.diff",
+        "fixtures/complex-call-flow.messy-commits.txt"
+      ],
+      "assertions": [
+        "Opens with a blockquote (>) offer to reorganize the commit history before the description, naming concretely what to squash, reorder, or reword",
+        "Describes the branch as-is below the offer: lead plus bullets covering the idempotency behavior, not a description of the hypothetical cleaned-up branch",
+        "Body (excluding title, blockquote, Testing, and Commits sections) is under 120 words",
+        "No section headings beyond the title except Testing and an optional Commits list, and no bolded callout sentences",
         "Ends with a Commits section listing every commit from the input as '<short sha> - <subject>', one line per commit, shas matching the input list exactly"
       ]
     }

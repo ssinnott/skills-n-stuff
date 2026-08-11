@@ -1,0 +1,7 @@
+a11c9f0 wip
+3f8e2d1 idempotency store
+9b7d4c2 fix
+c5e1a83 thread key thru queue
+d94f7b6 oops typo
+e2a6c15 tests
+f81b3d9 more tests + fix worker claim again

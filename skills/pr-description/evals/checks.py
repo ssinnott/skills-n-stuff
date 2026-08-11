@@ -40,6 +40,9 @@ def split_output(text):
     for line in text.splitlines():
         if re.match(r"^#\s", line):          # title
             continue
+        if line.lstrip().startswith(">"):    # blockquote (reorg offer)
+            extras.append(line)
+            continue
         m = re.match(r"^##\s*(\w+)", line)
         if m:
             section = m.group(1).lower() if m.group(1).lower() in ("testing", "commits") else None
@@ -77,6 +80,20 @@ def check(assertion, text):
         ok = not extra and not callouts
         return ("pass" if ok else "fail",
                 f"disallowed headings: {extra}, {len(callouts)} bold callouts")
+
+    if "no blockquote" in a:
+        quotes = [l for l in text.splitlines() if l.lstrip().startswith(">")]
+        return ("pass" if not quotes else "fail",
+                f"{len(quotes)} blockquote lines (expected none)")
+
+    if "blockquote" in a and "reorganize" in a:
+        pre_title = text.split("\n# ")[0] if "\n# " in text else text
+        quotes = " ".join(l for l in pre_title.splitlines() if l.lstrip().startswith(">"))
+        if not quotes and text.lstrip().startswith("#"):
+            quotes = ""  # title-first output with no offer
+        ok = bool(quotes) and re.search(r"squash|reword|reorder|reorganiz|clean", quotes, re.IGNORECASE)
+        return ("pass" if ok else "fail",
+                "offer found before title" if ok else "no blockquote reorg offer before the title")
 
     if "commits section" in a:
         m = re.search(r"^##\s*Commits\s*$(.*)", text, re.MULTILINE | re.DOTALL)
