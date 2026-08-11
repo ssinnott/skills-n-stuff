@@ -16,7 +16,7 @@ A new test file covers a repeated key replaying the first receipt with only one 
 
 ## Commits
 
-- b3a91f2 - Add redis-backed idempotency store
-- 7c40de8 - Require idempotency key on order submission and replay stored receipts
-- e19f4a6 - Thread key through fulfillment queue and dedupe redeliveries
-- f52c7b9 - Cover replay, missing-key, and redelivery cases in tests
+- [b3a91f2](https://github.com/acme/orderflow/commit/b3a91f2) - Add redis-backed idempotency store
+- [7c40de8](https://github.com/acme/orderflow/commit/7c40de8) - Require idempotency key on order submission and replay stored receipts
+- [e19f4a6](https://github.com/acme/orderflow/commit/e19f4a6) - Thread key through fulfillment queue and dedupe redeliveries
+- [f52c7b9](https://github.com/acme/orderflow/commit/f52c7b9) - Cover replay, missing-key, and redelivery cases in tests

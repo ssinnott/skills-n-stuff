@@ -133,7 +133,7 @@
         "Body (excluding title, Testing, and Commits sections) is under 120 words",
         "Body is scannable: a one-sentence lead followed by short bullet points (each a single fact), or at most two sentences total with no dense multi-clause paragraphs",
         "No section headings beyond the title except Testing and an optional Commits list, and no bolded callout sentences",
-        "Ends with a Commits section listing every commit from the input as '<short sha> - <subject>', one line per commit, shas matching the input list exactly",
+        "Ends with a Commits section where every line is a markdown link: [<short sha>](<repo-url>/commit/<sha>) - <subject>, shas matching the input list exactly and URLs under the declared repo",
         "Contains no blockquote lines \u2014 the input history is clean, so no reorganization offer"
       ]
     },
@@ -151,7 +151,7 @@
         "Describes the branch as-is below the offer: lead plus bullets covering the idempotency behavior, not a description of the hypothetical cleaned-up branch",
         "Body (excluding title, blockquote, Testing, and Commits sections) is under 120 words",
         "No section headings beyond the title except Testing and an optional Commits list, and no bolded callout sentences",
-        "Ends with a Commits section listing every commit from the input as '<short sha> - <subject>', one line per commit, shas matching the input list exactly"
+        "Ends with a Commits section where every line is a markdown link: [<short sha>](<repo-url>/commit/<sha>) - <subject>, shas matching the input list exactly and URLs under the declared repo"
       ]
     },
     {
@@ -173,15 +173,15 @@
     },
     {
       "id": 9,
-      "name": "commits-with-repo-url",
-      "prompt": "same idempotency branch, but this time you know where it lives \u2014 diff in complex-call-flow.diff, commits (with the repo url) in complex-call-flow.linked-commits.txt. write the PR description and save it as pr-description.md",
-      "expected_output": "The standard description, with the Commits section rendered as markdown links: [<short sha>](<repo-url>/commit/<short sha>) - <subject>, URLs under the declared repo, no fabricated URLs or shas.",
+      "name": "commits-without-repo-url",
+      "prompt": "same idempotency branch but I only have the log, no remote set up yet \u2014 diff in complex-call-flow.diff, commits in complex-call-flow.plain-commits.txt. write the PR description and save it as pr-description.md",
+      "expected_output": "The standard description with a bare-form Commits section \u2014 '<short sha> - <subject>' per line, no markdown links, since no repository URL was provided and URLs are never fabricated.",
       "files": [
         "fixtures/complex-call-flow.diff",
-        "fixtures/complex-call-flow.linked-commits.txt"
+        "fixtures/complex-call-flow.plain-commits.txt"
       ],
       "assertions": [
-        "Ends with a Commits section where every line is a markdown link: [<short sha>](<repo-url>/commit/<sha>) - <subject>, shas matching the input list exactly and URLs under the declared repo",
+        "Ends with a bare-form Commits section \u2014 '<short sha> - <subject>' per line with shas matching the input, and no markdown links, since no repo URL was provided",
         "Body (excluding title, Testing, and Commits sections) is under 120 words",
         "No section headings beyond the title except Testing and an optional Commits list, and no bolded callout sentences",
         "Contains no blockquote lines \u2014 the input history is clean, so no reorganization offer"

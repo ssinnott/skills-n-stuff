@@ -123,6 +123,11 @@ def check(assertion, text):
         unknown = shas - expected if expected else set()
         if unknown:
             return ("fail", f"shas not in any input commit list: {sorted(unknown)}")
+        if "bare-form" in a or "no markdown links" in a:
+            linked = [l for l in lines if LINE.match(l).group(2)]
+            return ("pass" if not linked else "fail",
+                    f"fabricated links: {linked[:3]}" if linked else f"{len(lines)} bare commit lines, shas verified")
+
         if "markdown link" in a:
             unlinked = [l for l in lines if not LINE.match(l).group(2)]
             if unlinked:

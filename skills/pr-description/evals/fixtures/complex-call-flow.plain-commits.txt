@@ -1,4 +1,3 @@
-repo: https://github.com/acme/orderflow
 b3a91f2 Add redis-backed idempotency store
 7c40de8 Require idempotency key on order submission and replay stored receipts
 e19f4a6 Thread key through fulfillment queue and dedupe redeliveries
