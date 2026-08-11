@@ -66,6 +66,14 @@ accomplish instead.
 - If the repository has a PR template, fill its sections instead — apply this
   same judgment inside each section rather than bolting the template on top.
 
+## Worked examples
+
+`examples/` holds finished descriptions from real runs, each pairing with the
+input diff of the same name under `evals/fixtures/`. When unsure what "short,
+point-first, noise compressed" looks like in practice, read the example whose
+situation matches yours — feature buried in dependency churn, bug fix with a
+drive-by rename, or a behavioral change hidden inside a mass rename.
+
 ## Tone
 
 Plain language. Use a technical term only when it's the precise name for the
