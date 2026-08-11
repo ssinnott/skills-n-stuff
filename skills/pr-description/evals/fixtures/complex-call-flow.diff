@@ -1,0 +1,155 @@
+diff --git a/src/routes/orders.ts b/src/routes/orders.ts
+index 1f2e3d4..5c6b7a8 100644
+--- a/src/routes/orders.ts
++++ b/src/routes/orders.ts
+@@ -10,13 +10,22 @@ export async function submitOrderHandler(req: Request, res: Response) {
+   const parsed = OrderSchema.safeParse(req.body);
+   if (!parsed.success) {
+     return res.status(422).json({ errors: parsed.error.issues });
+   }
++
++  const idempotencyKey = req.get("Idempotency-Key");
++  if (!idempotencyKey) {
++    return res.status(400).json({ error: "Idempotency-Key header required" });
++  }
++
+-  const result = await services.orders.submitOrder(parsed.data);
++  const { result, replayed } = await services.orders.submitOrder(
++    parsed.data,
++    idempotencyKey
++  );
++  res.set("Idempotent-Replayed", String(replayed));
+   res.status(202).json(result);
+ }
+diff --git a/src/services/orders.ts b/src/services/orders.ts
+index 9a8b7c6..2d3e4f5 100644
+--- a/src/services/orders.ts
++++ b/src/services/orders.ts
+@@ -1,20 +1,38 @@
+ import { enqueueFulfillment } from "../queue/producer";
++import { idempotencyStore } from "../db/idempotency";
+ import { db } from "../db";
+
+ export class OrderService {
+-  async submitOrder(order: NewOrder): Promise<OrderReceipt> {
++  async submitOrder(
++    order: NewOrder,
++    idempotencyKey: string
++  ): Promise<{ result: OrderReceipt; replayed: boolean }> {
++    const existing = await idempotencyStore.get(idempotencyKey);
++    if (existing) {
++      return { result: existing as OrderReceipt, replayed: true };
++    }
++
+     const record = await db.orders.insert({
+       ...order,
+       status: "accepted",
+     });
+
+     await charge(order.payment, record.id);
+-    await enqueueFulfillment(record.id);
++    await enqueueFulfillment(record.id, idempotencyKey);
+
+     const receipt = { orderId: record.id, status: record.status };
++    await idempotencyStore.put(idempotencyKey, receipt);
+     return { result: receipt, replayed: false };
+   }
+ }
+diff --git a/src/db/idempotency.ts b/src/db/idempotency.ts
+new file mode 100644
+index 0000000..8e9f0a1
+--- /dev/null
++++ b/src/db/idempotency.ts
+@@ -0,0 +1,34 @@
++import { redis } from "./redis";
++
++const TTL_SECONDS = 24 * 60 * 60;
++
++// Stores the response we produced for a given Idempotency-Key so a retried
++// submission returns the original receipt instead of re-processing.
++export const idempotencyStore = {
++  async get(key: string): Promise<unknown | null> {
++    const raw = await redis.get(`idem:${key}`);
++    return raw ? JSON.parse(raw) : null;
++  },
++
++  async put(key: string, value: unknown): Promise<void> {
++    await redis.set(`idem:${key}`, JSON.stringify(value), {
++      EX: TTL_SECONDS,
++      NX: true,
++    });
++  },
++
++  async claim(key: string): Promise<boolean> {
++    const claimed = await redis.set(`idem:claim:${key}`, "1", {
++      EX: TTL_SECONDS,
++      NX: true,
++    });
++    return claimed === "OK";
++  },
++};
+diff --git a/src/queue/producer.ts b/src/queue/producer.ts
+index 3c4d5e6..7f8a9b0 100644
+--- a/src/queue/producer.ts
++++ b/src/queue/producer.ts
+@@ -4,10 +4,11 @@ import { fulfillmentQueue } from "./queues";
+
+-export async function enqueueFulfillment(orderId: string) {
++export async function enqueueFulfillment(orderId: string, idempotencyKey: string) {
+   await fulfillmentQueue.add(
+     "fulfill",
+-    { orderId },
++    { orderId, idempotencyKey },
+     { attempts: 5, backoff: { type: "exponential", delay: 3000 } }
+   );
+ }
+diff --git a/src/workers/fulfillment.ts b/src/workers/fulfillment.ts
+index 6e7f8a9..0b1c2d3 100644
+--- a/src/workers/fulfillment.ts
++++ b/src/workers/fulfillment.ts
+@@ -1,14 +1,21 @@
+ import { Worker } from "bullmq";
++import { idempotencyStore } from "../db/idempotency";
+ import { shipOrder } from "./shipping";
+
+ export const fulfillmentWorker = new Worker("fulfillment", async (job) => {
+-  const { orderId } = job.data;
++  const { orderId, idempotencyKey } = job.data;
++
++  // Queue retries redeliver jobs; only the first delivery for a key ships.
++  const firstDelivery = await idempotencyStore.claim(`fulfill:${idempotencyKey}`);
++  if (!firstDelivery) {
++    return;
++  }
+
+   await shipOrder(orderId);
+ });
+diff --git a/test/orders.idempotency.test.ts b/test/orders.idempotency.test.ts
+new file mode 100644
+index 0000000..4d5e6f7
+--- /dev/null
++++ b/test/orders.idempotency.test.ts
+@@ -0,0 +1,42 @@
++import { submitOrderHandler } from "../src/routes/orders";
++import { idempotencyStore } from "../src/db/idempotency";
++
++describe("order idempotency", () => {
++  it("replays the original receipt for a repeated key", async () => {
++    const first = await post("/orders", order, { "Idempotency-Key": "k1" });
++    const second = await post("/orders", order, { "Idempotency-Key": "k1" });
++    expect(second.body).toEqual(first.body);
++    expect(second.headers["idempotent-replayed"]).toBe("true");
++    expect(chargeSpy).toHaveBeenCalledTimes(1);
++  });
++
++  it("rejects submissions without a key", async () => {
++    const res = await post("/orders", order, {});
++    expect(res.status).toBe(400);
++  });
++
++  it("ships an order only once across queue redeliveries", async () => {
++    await enqueueTwice("order-1", "k2");
++    await drainQueue();
++    expect(shipSpy).toHaveBeenCalledTimes(1);
++  });
++});

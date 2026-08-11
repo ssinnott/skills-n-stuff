@@ -1,0 +1,117 @@
+{
+  "skill_name": "pr-description",
+  "evals": [
+    {
+      "id": 0,
+      "name": "feature-with-noise",
+      "prompt": "I just wrapped up a change to our order service and need to open a PR. The full diff of my branch is in feature-with-noise.diff \u2014 it's the retry stuff plus whatever npm dragged in. Can you write the PR description? Save it as pr-description.md.",
+      "expected_output": "A short reviewer-focused description leading with the retry/backoff behavior added to the API client. Lockfile churn and formatting-only changes ignored or reduced to a single aggregate mention. No file-by-file inventory.",
+      "files": [
+        "fixtures/feature-with-noise.diff"
+      ],
+      "assertions": [
+        "Title and opening sentences lead with the retry/backoff behavior added to the API client",
+        "Body (excluding title and the Testing section) is under 100 words",
+        "Lockfile/dependency churn gets at most one aggregate mention \u2014 no itemized package-lock.json or integrity-hash details",
+        "The formatting-only rewrite of src/utils/format.js is not presented as a substantive change (one passing mention allowed)",
+        "References at most 3 file paths \u2014 no file-by-file inventory",
+        "No tuning constants or wire-level jargon in the body: no millisecond values, jitter percentages, HTTP status codes (429, 4xx/5xx, etc.), or identifiers like ECONNRESET \u2014 failures described in plain words such as rate limits, server errors, bad requests",
+        "At most one section heading beyond the title, and no bolded callout sentences",
+        "Body is scannable: a one-sentence lead followed by short bullet points (each a single fact), or at most two sentences total with no dense multi-clause paragraphs",
+        "Includes a short Testing section (or line) saying what the new tests cover"
+      ]
+    },
+    {
+      "id": 1,
+      "name": "bugfix-with-refactor",
+      "prompt": "wrote a fix for that billing bug where west coast customers were getting invoice due dates a business day late. diff is in bugfix-with-refactor.diff (i also renamed a helper while i was in there). write me the PR description and save it to pr-description.md",
+      "expected_output": "A description that explains the bug in plain customer-impact terms (due dates computed off UTC dates landed a business day late for customers west of UTC) and the fix. The to_local -> to_customer_timezone rename mentioned at most in passing.",
+      "files": [
+        "fixtures/bugfix-with-refactor.diff"
+      ],
+      "assertions": [
+        "States the customer impact in plain language: invoice due dates landed a business day late for customers in timezones west of UTC",
+        "Explains the cause: business-day counting anchored on the UTC calendar date instead of the customer's local date",
+        "The to_local -> to_customer_timezone rename gets at most one brief passing mention",
+        "Body (excluding title and the Testing section) is under 100 words",
+        "Mentions that a regression test was added",
+        "The customer-impact explanation reads as plain prose with no code identifiers or function names in it",
+        "At most one section heading beyond the title, and no bolded callout sentences",
+        "States the bug without a worked example \u2014 no sample timestamps or step-by-step walkthrough of a specific invoice",
+        "Body is scannable: a one-sentence lead followed by short bullet points (each a single fact), or at most two sentences total with no dense multi-clause paragraphs"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "rename-with-buried-change",
+      "prompt": "here's my branch diff in rename-with-buried-change.diff \u2014 it's mostly renaming UserService to UserDirectory and fetchUser to getUser across the codebase. need a PR description for it, save as pr-description.md",
+      "expected_output": "A short description that summarizes the rename in a line or two AND prominently surfaces the buried behavioral change: the user cache TTL default dropped from 300s to 30s. Does not list every touched file.",
+      "files": [
+        "fixtures/rename-with-buried-change.diff"
+      ],
+      "assertions": [
+        "Prominently surfaces the buried behavioral change: the user-cache TTL default dropped from 300 seconds to 30 seconds",
+        "Summarizes the rename in a line or two rather than walking through the renamed call sites",
+        "Body (excluding title and the Testing section) is under 100 words",
+        "References at most 3 file paths \u2014 does not enumerate the ~12 touched files",
+        "At most one section heading beyond the title, and no bolded callout sentences",
+        "Body is scannable: a one-sentence lead followed by short bullet points (each a single fact), or at most two sentences total with no dense multi-clause paragraphs",
+        "Scopes the TTL change accurately \u2014 does not claim it affects lookups that bypass the cache"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "complex-call-flow",
+      "prompt": "bigger change this time \u2014 I made order submission idempotent end to end. the branch diff is in complex-call-flow.diff. can you write the PR description? save it as pr-description.md",
+      "expected_output": "A description that maps the flow in plain language: a client-supplied idempotency key travels from the API route through the order service into the queue and fulfillment worker, backed by a new store, so retried submissions and redelivered jobs don't double-charge or double-ship. Names the areas involved without enumerating every file; scannable bullets; under 120 words.",
+      "files": [
+        "fixtures/complex-call-flow.diff"
+      ],
+      "assertions": [
+        "Describes the end-to-end flow: a client-supplied idempotency key travels from the API route through the order service and queue to the fulfillment worker, so retries don't double-process",
+        "States the user-facing behavior: repeated submissions with the same key return the original receipt instead of charging again, and a missing key is rejected",
+        "Names the areas involved (route, order service, queue/worker, new store) without a file-by-file inventory \u2014 at most 4 file paths referenced",
+        "Body (excluding title and the Testing section) is under 120 words",
+        "Body is scannable: a one-sentence lead followed by short bullet points (each a single fact), or at most two sentences total with no dense multi-clause paragraphs",
+        "No HTTP status codes or wire-level jargon in the body",
+        "At most one section heading beyond the title, and no bolded callout sentences"
+      ]
+    },
+    {
+      "id": 4,
+      "name": "real-feature-query-method",
+      "prompt": "my branch adds support for the new HTTP QUERY method (rfc 10008) to our fastify fork \u2014 full diff is in real-feature-query-method.diff. write the PR description and save it as pr-description.md",
+      "expected_output": "A short description leading with the new capability (routes can be registered and served for the HTTP QUERY method) and stating the validation behavior plainly (QUERY requests without a content type or body are rejected as bad requests). No inventory of the 14 touched files.",
+      "files": [
+        "fixtures/real-feature-query-method.diff"
+      ],
+      "assertions": [
+        "Leads with the new capability: routes can now be registered and served for the HTTP QUERY method",
+        "States the request-validation behavior plainly: QUERY requests missing a content type or a body are rejected as bad requests",
+        "Body (excluding title and the Testing section) is under 120 words",
+        "Body is scannable: a one-sentence lead followed by short bullet points (each a single fact), or at most two sentences total with no dense multi-clause paragraphs",
+        "References at most 4 file paths \u2014 no file-by-file inventory of the ~14 touched files",
+        "At most one section heading beyond the title, and no bolded callout sentences",
+        "No HTTP status codes or ALL-CAPS error-code identifiers (FST_ERR_*) in the body",
+        "Testing section reflects what the new tests actually cover without inventing coverage"
+      ]
+    },
+    {
+      "id": 5,
+      "name": "real-bugfix-regex-state",
+      "prompt": "tracked down that flaky content-type parser bug \u2014 turns out regexes registered with g/y flags keep state between matches. diff is in real-bugfix-regex-state.diff. write me a PR description and save it as pr-description.md",
+      "expected_output": "A short description explaining the bug's effect plainly (parsers registered with global/sticky regexes could intermittently fail to match on later requests because the regex remembered its previous match position) and the fix (reset the position before each check).",
+      "files": [
+        "fixtures/real-bugfix-regex-state.diff"
+      ],
+      "assertions": [
+        "Explains the bug's effect plainly: content-type parsers registered with global or sticky regexes could match inconsistently on subsequent requests",
+        "States cause and fix: the regex retained its previous match position between checks, and it is now reset before each check",
+        "Body (excluding title and the Testing section) is under 100 words",
+        "Body is scannable: a one-sentence lead followed by short bullet points (each a single fact), or at most two sentences total with no dense multi-clause paragraphs",
+        "At most one section heading beyond the title, and no bolded callout sentences",
+        "Testing section reflects the new regression tests without inventing coverage"
+      ]
+    }
+  ]
+}

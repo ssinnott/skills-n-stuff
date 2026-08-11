@@ -1,0 +1,182 @@
+diff --git a/src/services/users.ts b/src/services/users.ts
+index 1a2b3c4..5d6e7f8 100644
+--- a/src/services/users.ts
++++ b/src/services/users.ts
+@@ -8,12 +8,12 @@ export interface UserServiceOptions {
+   cacheTtlSeconds?: number;
+ }
+
+-export class UserService {
++export class UserDirectory {
+   private cache = new LruCache<string, User>();
+
+   constructor(private db: Database, opts: UserServiceOptions = {}) {
+-    this.cacheTtl = opts.cacheTtlSeconds ?? 300;
++    this.cacheTtl = opts.cacheTtlSeconds ?? 30;
+   }
+
+-  async fetchUser(id: string): Promise<User> {
++  async getUser(id: string): Promise<User> {
+     const cached = this.cache.get(id);
+     if (cached) return cached;
+     const user = await this.db.users.findById(id);
+@@ -23,7 +23,7 @@ export class UserService {
+     return user;
+   }
+
+-  async fetchUserByEmail(email: string): Promise<User | null> {
++  async getUserByEmail(email: string): Promise<User | null> {
+     return this.db.users.findByEmail(email);
+   }
+ }
+diff --git a/src/routes/profile.ts b/src/routes/profile.ts
+index 2b3c4d5..6e7f8a9 100644
+--- a/src/routes/profile.ts
++++ b/src/routes/profile.ts
+@@ -12,7 +12,7 @@ export async function profileHandler(req: Request, res: Response) {
+-  const user = await services.users.fetchUser(req.params.id);
++  const user = await services.users.getUser(req.params.id);
+   if (!user) return res.status(404).send();
+   res.json(serializeProfile(user));
+ }
+diff --git a/src/routes/settings.ts b/src/routes/settings.ts
+index 3c4d5e6..7f8a9b0 100644
+--- a/src/routes/settings.ts
++++ b/src/routes/settings.ts
+@@ -9,7 +9,7 @@ export async function settingsHandler(req: Request, res: Response) {
+-  const user = await services.users.fetchUser(req.session.userId);
++  const user = await services.users.getUser(req.session.userId);
+   res.json({ settings: user.settings });
+ }
+diff --git a/src/routes/admin.ts b/src/routes/admin.ts
+index 4d5e6f7..8a9b0c1 100644
+--- a/src/routes/admin.ts
++++ b/src/routes/admin.ts
+@@ -21,9 +21,9 @@ export async function impersonateHandler(req: Request, res: Response) {
+-  const target = await services.users.fetchUserByEmail(req.body.email);
++  const target = await services.users.getUserByEmail(req.body.email);
+   if (!target) return res.status(404).send();
+-  const admin = await services.users.fetchUser(req.session.userId);
++  const admin = await services.users.getUser(req.session.userId);
+   audit.log("impersonate", { admin: admin.id, target: target.id });
+ }
+diff --git a/src/auth/session.ts b/src/auth/session.ts
+index 5e6f7a8..9b0c1d2 100644
+--- a/src/auth/session.ts
++++ b/src/auth/session.ts
+@@ -18,7 +18,7 @@ export async function resolveSession(token: string): Promise<Session | null> {
+   const claims = verifyJwt(token);
+   if (!claims) return null;
+-  const user = await services.users.fetchUser(claims.sub);
++  const user = await services.users.getUser(claims.sub);
+   return user ? { user, expiresAt: claims.exp } : null;
+ }
+diff --git a/src/jobs/digest.ts b/src/jobs/digest.ts
+index 6f7a8b9..0c1d2e3 100644
+--- a/src/jobs/digest.ts
++++ b/src/jobs/digest.ts
+@@ -14,7 +14,7 @@ export async function sendWeeklyDigest(userIds: string[]) {
+   for (const id of userIds) {
+-    const user = await services.users.fetchUser(id);
++    const user = await services.users.getUser(id);
+     if (user.preferences.digest) {
+       await mailer.send(user.email, renderDigest(user));
+     }
+diff --git a/src/jobs/cleanup.ts b/src/jobs/cleanup.ts
+index 7a8b9c0..1d2e3f4 100644
+--- a/src/jobs/cleanup.ts
++++ b/src/jobs/cleanup.ts
+@@ -9,7 +9,7 @@ export async function purgeInactive(candidateIds: string[]) {
+   for (const id of candidateIds) {
+-    const user = await services.users.fetchUser(id);
++    const user = await services.users.getUser(id);
+     if (isInactive(user)) await db.users.softDelete(id);
+   }
+ }
+diff --git a/src/graphql/resolvers/user.ts b/src/graphql/resolvers/user.ts
+index 8b9c0d1..2e3f4a5 100644
+--- a/src/graphql/resolvers/user.ts
++++ b/src/graphql/resolvers/user.ts
+@@ -5,11 +5,11 @@ export const userResolvers = {
+   Query: {
+-    user: (_: unknown, { id }: { id: string }) => services.users.fetchUser(id),
++    user: (_: unknown, { id }: { id: string }) => services.users.getUser(id),
+     userByEmail: (_: unknown, { email }: { email: string }) =>
+-      services.users.fetchUserByEmail(email),
++      services.users.getUserByEmail(email),
+   },
+   Post: {
+-    author: (post: Post) => services.users.fetchUser(post.authorId),
++    author: (post: Post) => services.users.getUser(post.authorId),
+   },
+ };
+diff --git a/src/websocket/presence.ts b/src/websocket/presence.ts
+index 9c0d1e2..3f4a5b6 100644
+--- a/src/websocket/presence.ts
++++ b/src/websocket/presence.ts
+@@ -22,7 +22,7 @@ export async function onConnect(socket: Socket) {
+-  const user = await services.users.fetchUser(socket.userId);
++  const user = await services.users.getUser(socket.userId);
+   presence.markOnline(user.id);
+   socket.broadcast("presence", { userId: user.id, online: true });
+ }
+diff --git a/src/services/index.ts b/src/services/index.ts
+index 0d1e2f3..4a5b6c7 100644
+--- a/src/services/index.ts
++++ b/src/services/index.ts
+@@ -1,11 +1,11 @@
+ import { Database } from "../db";
+-import { UserService } from "./users";
++import { UserDirectory } from "./users";
+ import { BillingService } from "./billing";
+
+ export function buildServices(db: Database) {
+   return {
+-    users: new UserService(db),
++    users: new UserDirectory(db),
+     billing: new BillingService(db),
+   };
+ }
+diff --git a/test/services/users.test.ts b/test/services/users.test.ts
+index 1e2f3a4..5b6c7d8 100644
+--- a/test/services/users.test.ts
++++ b/test/services/users.test.ts
+@@ -1,24 +1,24 @@
+-import { UserService } from "../../src/services/users";
++import { UserDirectory } from "../../src/services/users";
+
+-describe("UserService", () => {
++describe("UserDirectory", () => {
+-  it("fetchUser caches results", async () => {
+-    const svc = new UserService(fakeDb());
+-    await svc.fetchUser("u1");
+-    await svc.fetchUser("u1");
++  it("getUser caches results", async () => {
++    const svc = new UserDirectory(fakeDb());
++    await svc.getUser("u1");
++    await svc.getUser("u1");
+     expect(fakeDb().users.findById).toHaveBeenCalledTimes(1);
+   });
+
+-  it("fetchUserByEmail hits the db every time", async () => {
+-    const svc = new UserService(fakeDb());
+-    await svc.fetchUserByEmail("a@b.c");
+-    await svc.fetchUserByEmail("a@b.c");
++  it("getUserByEmail hits the db every time", async () => {
++    const svc = new UserDirectory(fakeDb());
++    await svc.getUserByEmail("a@b.c");
++    await svc.getUserByEmail("a@b.c");
+     expect(fakeDb().users.findByEmail).toHaveBeenCalledTimes(2);
+   });
+ });
+diff --git a/test/routes/profile.test.ts b/test/routes/profile.test.ts
+index 2f3a4b5..6c7d8e9 100644
+--- a/test/routes/profile.test.ts
++++ b/test/routes/profile.test.ts
+@@ -8,7 +8,7 @@ describe("profileHandler", () => {
+   it("returns 404 for missing user", async () => {
+-    services.users.fetchUser = jest.fn().mockResolvedValue(null);
++    services.users.getUser = jest.fn().mockResolvedValue(null);
+     const res = await get("/profile/nope");
+     expect(res.status).toBe(404);
+   });

@@ -1,0 +1,528 @@
+diff --git a/docs/Reference/Errors.md b/docs/Reference/Errors.md
+index 1360042..b099ba0 100644
+--- a/docs/Reference/Errors.md
++++ b/docs/Reference/Errors.md
+@@ -91,6 +91,8 @@
+ 
+     - [FST_ERR_ROUTE_HANDLER_TIMEOUT_OPTION_NOT_INT](#fst_err_route_handler_timeout_option_not_int)
+     - [FST_ERR_ROUTE_REWRITE_NOT_STR](#fst_err_route_rewrite_not_str)
++    - [FST_ERR_ROUTE_MISSING_CONTENT_TYPE](#fst_err_route_missing_content_type)
++    - [FST_ERR_ROUTE_MISSING_CONTENT](#fst_err_route_missing_content)
+     - [FST_ERR_REOPENED_CLOSE_SERVER](#fst_err_reopened_close_server)
+     - [FST_ERR_REOPENED_SERVER](#fst_err_reopened_server)
+     - [FST_ERR_PLUGIN_VERSION_MISMATCH](#fst_err_plugin_version_mismatch)
+@@ -369,6 +371,8 @@ Below is a table with all the error codes used by Fastify.
+ | <a id="fst_err_handler_timeout">FST_ERR_HANDLER_TIMEOUT</a> | Request timed out. | Increase the `handlerTimeout` option or optimize the handler. | - |
+ | <a id="fst_err_route_handler_timeout_option_not_int">FST_ERR_ROUTE_HANDLER_TIMEOUT_OPTION_NOT_INT</a> | `handlerTimeout` option must be a positive integer. | Use a positive integer for the `handlerTimeout` option. | - |
+ | <a id="fst_err_route_rewrite_not_str">FST_ERR_ROUTE_REWRITE_NOT_STR</a> | `rewriteUrl` needs to be of type `string`. | Use a string for the `rewriteUrl`. | [#4554](https://github.com/fastify/fastify/pull/4554) |
++| <a id="fst_err_route_missing_content_type">FST_ERR_ROUTE_MISSING_CONTENT_TYPE</a> | `Content-Type` header is required for the request. | Send request with `Content-Type` header. | [#6832](https://github.com/fastify/fastify/pull/6832) |
++| <a id="fst_err_route_missing_content">FST_ERR_ROUTE_MISSING_CONTENT</a> | Body is required for the request. | Send request with payload. | [#6832](https://github.com/fastify/fastify/pull/6832) |
+ | <a id="fst_err_reopened_close_server">FST_ERR_REOPENED_CLOSE_SERVER</a> | Fastify has already been closed and cannot be reopened. | - | [#2415](https://github.com/fastify/fastify/pull/2415) |
+ | <a id="fst_err_reopened_server">FST_ERR_REOPENED_SERVER</a> | Fastify is already listening. | - | [#2415](https://github.com/fastify/fastify/pull/2415) |
+ | <a id="fst_err_plugin_version_mismatch">FST_ERR_PLUGIN_VERSION_MISMATCH</a> | Installed Fastify plugin mismatched expected version. | Use a compatible version of the plugin. | [#2549](https://github.com/fastify/fastify/pull/2549) |
+diff --git a/docs/Reference/Server.md b/docs/Reference/Server.md
+index ba6c005..e86c935 100644
+--- a/docs/Reference/Server.md
++++ b/docs/Reference/Server.md
+@@ -659,11 +659,11 @@ For more examples, refer to the
+ You may access the `ip`, `ips`, `host` and `protocol` values on the
+ [`request`](./Request.md) object.
+ 
+-> ⚠️ Security:
+-> These values are derived from socket/forwarding metadata and must be treated
+-> as untrusted input unless your proxy chain is explicitly trusted and
+-> validated. Do not use them directly for authorization or other
+-> security-sensitive decisions without explicit validation.
++> ⚠️ Security:
++> These values are derived from socket/forwarding metadata and must be treated
++> as untrusted input unless your proxy chain is explicitly trusted and
++> validated. Do not use them directly for authorization or other
++> security-sensitive decisions without explicit validation.
+ 
+ ```js
+ fastify.get('/', (request, reply) => {
+@@ -1702,7 +1702,7 @@ Fake HTTP injection (for testing purposes)
+ <a id="addHttpMethod"></a>
+ 
+ Fastify supports the `GET`, `HEAD`, `TRACE`, `DELETE`, `OPTIONS`,
+-`PATCH`, `PUT` and `POST` HTTP methods by default.
++`PATCH`, `PUT`, `POST` and `QUERY` HTTP methods by default.
+ The `addHttpMethod` method allows to add any non standard HTTP
+ methods to the server that are [supported by Node.js](https://nodejs.org/api/http.html#httpmethods).
+ 
+diff --git a/fastify.js b/fastify.js
+index 48895f3..5811e2e 100644
+--- a/fastify.js
++++ b/fastify.js
+@@ -143,7 +143,9 @@ function fastify (serverOptions) {
+         'OPTIONS',
+         'PATCH',
+         'PUT',
+-        'POST'
++        'POST',
++        // RFC 10008
++        'QUERY'
+       ])
+     },
+     [kOptions]: options,
+@@ -200,6 +202,9 @@ function fastify (serverOptions) {
+     options: function _options (url, options, handler) {
+       return router.prepareRoute.call(this, { method: 'OPTIONS', url, options, handler })
+     },
++    query: function _query (url, options, handler) {
++      return router.prepareRoute.call(this, { method: 'QUERY', url, options, handler })
++    },
+     all: function _all (url, options, handler) {
+       return router.prepareRoute.call(this, { method: this.supportedMethods, url, options, handler })
+     },
+diff --git a/lib/errors.js b/lib/errors.js
+index 24abe8a..11214ea 100644
+--- a/lib/errors.js
++++ b/lib/errors.js
+@@ -455,6 +455,16 @@ const codes = {
+     500,
+     TypeError
+   ),
++  FST_ERR_ROUTE_MISSING_CONTENT_TYPE: createError(
++    'FST_ERR_ROUTE_MISSING_CONTENT_TYPE',
++    "Method '%s' must provide a 'Content-Type' header.",
++    400
++  ),
++  FST_ERR_ROUTE_MISSING_CONTENT: createError(
++    'FST_ERR_ROUTE_MISSING_CONTENT',
++    "Method '%s' must provide a request body.",
++    400
++  ),
+ 
+   /**
+    *  again listen when close server
+diff --git a/lib/handle-request.js b/lib/handle-request.js
+index dce3402..adee1a9 100644
+--- a/lib/handle-request.js
++++ b/lib/handle-request.js
+@@ -4,7 +4,11 @@ const diagnostics = require('node:diagnostics_channel')
+ const wrapThenable = require('./wrap-thenable')
+ const { validate: validateSchema } = require('./validation')
+ const { preValidationHookRunner, preHandlerHookRunner } = require('./hooks')
+-const { FST_ERR_CTP_INVALID_MEDIA_TYPE } = require('./errors')
++const {
++  FST_ERR_CTP_INVALID_MEDIA_TYPE,
++  FST_ERR_ROUTE_MISSING_CONTENT_TYPE,
++  FST_ERR_ROUTE_MISSING_CONTENT
++} = require('./errors')
+ const { setErrorStatusCode } = require('./error-status')
+ const {
+   kReplyIsError,
+@@ -37,13 +41,30 @@ function handleRequest (err, request, reply) {
+     const headers = request.headers
+     const ctHeader = headers['content-type']
+ 
+-    if (ctHeader === undefined) {
+-      const contentLength = headers['content-length']
+-      const transferEncoding = headers['transfer-encoding']
+-      const isEmptyBody = transferEncoding === undefined &&
+-        (contentLength === undefined || contentLength === '0')
++    if (method === 'QUERY') {
++      if (ctHeader === undefined) {
++        // https://datatracker.ietf.org/doc/html/rfc10008#section-2
++        // Servers MUST fail the request if the Content-Type request field
++        // ([HTTP], Section 8.3) is missing or is inconsistent with the
++        // request content.
++        reply[kReplyIsError] = true
++        reply.status(400).send(new FST_ERR_ROUTE_MISSING_CONTENT_TYPE(method))
++        return
++      }
+ 
+-      if (isEmptyBody) {
++      if (isEmptyBody(headers)) {
++        // https://datatracker.ietf.org/doc/html/rfc10008#section-2
++        // Servers MUST fail the request if the Content-Type request field
++        // ([HTTP], Section 8.3) is missing or is inconsistent with the
++        // request content.
++        reply[kReplyIsError] = true
++        reply.status(400).send(new FST_ERR_ROUTE_MISSING_CONTENT(method))
++        return
++      }
++    }
++
++    if (ctHeader === undefined) {
++      if (isEmptyBody(headers)) {
+         // Request has no body to parse
+         handler(request, reply)
+         return
+@@ -88,6 +109,13 @@ function handler (request, reply) {
+   }
+ }
+ 
++function isEmptyBody (headers) {
++  const contentLength = headers['content-length']
++  const transferEncoding = headers['transfer-encoding']
++  return transferEncoding === undefined &&
++    (contentLength === undefined || contentLength === '0')
++}
++
+ function preValidationCallback (err, request, reply) {
+   if (reply.sent === true) return
+ 
+diff --git a/test/internals/all.test.js b/test/internals/all.test.js
+index 14d3370..f1bc41d 100644
+--- a/test/internals/all.test.js
++++ b/test/internals/all.test.js
+@@ -9,7 +9,8 @@ test('fastify.all should add all the methods to the same url', async t => {
+   const requirePayload = [
+     'POST',
+     'PUT',
+-    'PATCH'
++    'PATCH',
++    'QUERY'
+   ]
+ 
+   const supportedMethods = fastify.supportedMethods
+diff --git a/test/internals/errors.test.js b/test/internals/errors.test.js
+index f3f70b4..4df9d69 100644
+--- a/test/internals/errors.test.js
++++ b/test/internals/errors.test.js
+@@ -5,7 +5,7 @@ const errors = require('../../lib/errors')
+ const { readFileSync } = require('node:fs')
+ const { resolve } = require('node:path')
+ 
+-const expectedErrors = 92
++const expectedErrors = 94
+ 
+ test(`should expose ${expectedErrors} errors`, t => {
+   t.plan(1)
+@@ -770,6 +770,26 @@ test('FST_ERR_ROUTE_REWRITE_NOT_STR', t => {
+   t.assert.ok(error instanceof TypeError)
+ })
+ 
++test('FST_ERR_ROUTE_MISSING_CONTENT_TYPE', t => {
++  t.plan(5)
++  const error = new errors.FST_ERR_ROUTE_MISSING_CONTENT_TYPE()
++  t.assert.strictEqual(error.name, 'FastifyError')
++  t.assert.strictEqual(error.code, 'FST_ERR_ROUTE_MISSING_CONTENT_TYPE')
++  t.assert.strictEqual(error.message, "Method '%s' must provide a 'Content-Type' header.")
++  t.assert.strictEqual(error.statusCode, 400)
++  t.assert.ok(error instanceof Error)
++})
++
++test('FST_ERR_ROUTE_MISSING_CONTENT', t => {
++  t.plan(5)
++  const error = new errors.FST_ERR_ROUTE_MISSING_CONTENT()
++  t.assert.strictEqual(error.name, 'FastifyError')
++  t.assert.strictEqual(error.code, 'FST_ERR_ROUTE_MISSING_CONTENT')
++  t.assert.strictEqual(error.message, "Method '%s' must provide a request body.")
++  t.assert.strictEqual(error.statusCode, 400)
++  t.assert.ok(error instanceof Error)
++})
++
+ test('FST_ERR_REOPENED_CLOSE_SERVER', t => {
+   t.plan(5)
+   const error = new errors.FST_ERR_REOPENED_CLOSE_SERVER()
+diff --git a/test/rfc-10008.test.js b/test/rfc-10008.test.js
+new file mode 100644
+index 0000000..4af3806
+--- /dev/null
++++ b/test/rfc-10008.test.js
+@@ -0,0 +1,147 @@
++'use strict'
++
++const { describe, test } = require('node:test')
++const Fastify = require('..')
++
++describe('RFC 10008', () => {
++  test('support adding QUERY method though fastify.route', async (t) => {
++    t.plan(2)
++
++    const fastify = Fastify()
++    fastify.route({
++      method: 'QUERY',
++      url: '/query',
++      handler: function (request, reply) {
++        reply.send(request.body)
++      }
++    })
++    await fastify.ready()
++
++    const res = await fastify.inject({
++      method: 'QUERY',
++      url: '/query',
++      headers: { 'Content-Type': 'application/json' },
++      body: JSON.stringify({ hello: 'world' })
++    })
++
++    t.assert.equal(res.statusCode, 200)
++    t.assert.equal(res.json().hello, 'world')
++  })
++
++  test('support adding QUERY method though fastify.query', async (t) => {
++    t.plan(2)
++
++    const fastify = Fastify()
++    fastify.query('/query', function (request, reply) {
++      reply.send(request.body)
++    })
++    await fastify.ready()
++
++    const res = await fastify.inject({
++      method: 'QUERY',
++      url: '/query',
++      headers: { 'Content-Type': 'application/json' },
++      body: JSON.stringify({ hello: 'world' })
++    })
++
++    t.assert.equal(res.statusCode, 200)
++    t.assert.equal(res.json().hello, 'world')
++  })
++
++  /**
++   * https://datatracker.ietf.org/doc/html/rfc10008#section-2.1
++   */
++
++  test('should return 400 if Content-Type header is missing for QUERY method', async (t) => {
++    // If a request lacks media type information, it is
++    // incorrect by definition and needs to fail with a
++    // 4xx status code such as 400 (Client Error).
++    t.plan(2)
++
++    const fastify = Fastify()
++    fastify.query('/query', function (request, reply) {
++      reply.send(request.body)
++    })
++    await fastify.ready()
++
++    const res = await fastify.inject({
++      method: 'QUERY',
++      url: '/query',
++      body: JSON.stringify({ hello: 'world' })
++    })
++
++    t.assert.equal(res.statusCode, 400)
++    t.assert.equal(res.json().code, 'FST_ERR_ROUTE_MISSING_CONTENT_TYPE')
++  })
++
++  test('should return 400 if invalid content is provided for QUERY method', async (t) => {
++    // If a media type is specified but is inconsistent
++    // with the actual request content, a 400 (Bad Request)
++    // can be returned. That is, a server is not allowed to
++    // infer a media type from the request content and then
++    // override a missing or "erroneous" value (i.e., "content sniffing").
++    t.plan(2)
++
++    const fastify = Fastify()
++    fastify.query('/query', function (request, reply) {
++      reply.send(request.body)
++    })
++    await fastify.ready()
++
++    const res = await fastify.inject({
++      method: 'QUERY',
++      url: '/query',
++      headers: { 'Content-Type': 'application/json' },
++      body: 'it is not a valid json'
++    })
++
++    t.assert.equal(res.statusCode, 400)
++    t.assert.equal(res.json().code, 'FST_ERR_CTP_INVALID_JSON_BODY')
++  })
++
++  test('should return 400 if no content is provided for QUERY method', async (t) => {
++    // If a media type is specified but is inconsistent
++    // with the actual request content, a 400 (Bad Request)
++    // can be returned. That is, a server is not allowed to
++    // infer a media type from the request content and then
++    // override a missing or "erroneous" value (i.e., "content sniffing").
++    t.plan(2)
++
++    const fastify = Fastify()
++    fastify.query('/query', function (request, reply) {
++      reply.send(request.body)
++    })
++    await fastify.ready()
++
++    const res = await fastify.inject({
++      method: 'QUERY',
++      url: '/query',
++      headers: { 'Content-Type': 'application/json' }
++    })
++
++    t.assert.equal(res.statusCode, 400)
++    t.assert.equal(res.json().code, 'FST_ERR_ROUTE_MISSING_CONTENT')
++  })
++
++  test('should return 415 if unsupported media type is provided for QUERY method', async (t) => {
++    // If a media type is specified but is not supported by the
++    // resource, a 415 (Unsupported Media Type) is appropriate.
++    t.plan(2)
++
++    const fastify = Fastify()
++    fastify.query('/query', function (request, reply) {
++      reply.send(request.body)
++    })
++    await fastify.ready()
++
++    const res = await fastify.inject({
++      method: 'QUERY',
++      url: '/query',
++      headers: { 'Content-Type': 'application/ld+json' },
++      body: JSON.stringify({ hello: 'world' })
++    })
++
++    t.assert.equal(res.statusCode, 415)
++    t.assert.equal(res.json().code, 'FST_ERR_CTP_INVALID_MEDIA_TYPE')
++  })
++})
+diff --git a/test/route-shorthand.test.js b/test/route-shorthand.test.js
+index 46e1b36..739ba81 100644
+--- a/test/route-shorthand.test.js
++++ b/test/route-shorthand.test.js
+@@ -21,8 +21,13 @@ describe('route-shorthand', () => {
+ 
+       const instance = new Client(`http://localhost:${fastify.server.address().port}`)
+ 
+-      const response = await instance.request({ path: '/', method })
+-      t.assert.strictEqual(response.statusCode, 200)
++      if (method === 'QUERY') {
++        const response = await instance.request({ path: '/', method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ hello: 'world' }) })
++        t.assert.strictEqual(response.statusCode, 200)
++      } else {
++        const response = await instance.request({ path: '/', method })
++        t.assert.strictEqual(response.statusCode, 200)
++      }
+     })
+   }
+ 
+@@ -41,8 +46,13 @@ describe('route-shorthand', () => {
+       currentMethod = method
+       const instance = new Client(`http://localhost:${fastify.server.address().port}`)
+ 
+-      const response = await instance.request({ path: '/', method })
+-      t.assert.strictEqual(response.statusCode, 200)
++      if (method === 'QUERY') {
++        const response = await instance.request({ path: '/', method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ hello: 'world' }) })
++        t.assert.strictEqual(response.statusCode, 200)
++      } else {
++        const response = await instance.request({ path: '/', method })
++        t.assert.strictEqual(response.statusCode, 200)
++      }
+     }
+   })
+ })
+diff --git a/test/types/errors.tst.ts b/test/types/errors.tst.ts
+index 4ba9bdd..2dd0560 100644
+--- a/test/types/errors.tst.ts
++++ b/test/types/errors.tst.ts
+@@ -77,6 +77,8 @@ expect(errorCodes.FST_ERR_ROUTE_METHOD_NOT_SUPPORTED).type.toBeAssignableTo<Fast
+ expect(errorCodes.FST_ERR_ROUTE_BODY_VALIDATION_SCHEMA_NOT_SUPPORTED).type.toBeAssignableTo<FastifyErrorConstructor>()
+ expect(errorCodes.FST_ERR_ROUTE_BODY_LIMIT_OPTION_NOT_INT).type.toBeAssignableTo<FastifyErrorConstructor>()
+ expect(errorCodes.FST_ERR_ROUTE_REWRITE_NOT_STR).type.toBeAssignableTo<FastifyErrorConstructor>()
++expect(errorCodes.FST_ERR_ROUTE_MISSING_CONTENT_TYPE).type.toBeAssignableTo<FastifyErrorConstructor>()
++expect(errorCodes.FST_ERR_ROUTE_MISSING_CONTENT).type.toBeAssignableTo<FastifyErrorConstructor>()
+ expect(errorCodes.FST_ERR_REOPENED_CLOSE_SERVER).type.toBeAssignableTo<FastifyErrorConstructor>()
+ expect(errorCodes.FST_ERR_REOPENED_SERVER).type.toBeAssignableTo<FastifyErrorConstructor>()
+ expect(errorCodes.FST_ERR_INSTANCE_ALREADY_LISTENING).type.toBeAssignableTo<FastifyErrorConstructor>()
+diff --git a/test/types/route.tst.ts b/test/types/route.tst.ts
+index a5aabc8..2b7d0e9 100644
+--- a/test/types/route.tst.ts
++++ b/test/types/route.tst.ts
+@@ -1,5 +1,5 @@
+-import * as http from 'node:http'
+ import { FastifyError } from '@fastify/error'
++import * as http from 'node:http'
+ import { expect } from 'tstyche'
+ import fastify, { FastifyInstance, FastifyReply, FastifyRequest, RouteHandlerMethod } from '../../fastify.js'
+ import { RequestPayload } from '../../types/hooks.js'
+@@ -75,10 +75,10 @@ fastify().get(
+ )
+ 
+ type LowerCaseHTTPMethods = 'delete' | 'get' | 'head' | 'patch' | 'post' | 'put' |
+-  'options' | 'propfind' | 'proppatch' | 'mkcol' | 'copy' | 'move' | 'lock' |
++  'options' | 'query' | 'propfind' | 'proppatch' | 'mkcol' | 'copy' | 'move' | 'lock' |
+   'unlock' | 'trace' | 'search' | 'mkcalendar' | 'report'
+ 
+-  ;['DELETE', 'GET', 'HEAD', 'PATCH', 'POST', 'PUT', 'OPTIONS', 'PROPFIND',
++  ;['DELETE', 'GET', 'HEAD', 'PATCH', 'POST', 'PUT', 'OPTIONS', 'QUERY', 'PROPFIND',
+   'PROPPATCH', 'MKCOL', 'COPY', 'MOVE', 'LOCK', 'UNLOCK', 'TRACE', 'SEARCH', 'MKCALENDAR', 'REPORT'
+ ].forEach(method => {
+   // route method
+diff --git a/types/errors.d.ts b/types/errors.d.ts
+index 59cb520..acd3931 100644
+--- a/types/errors.d.ts
++++ b/types/errors.d.ts
+@@ -81,6 +81,8 @@ export type FastifyErrorCodes = Record<
+   'FST_ERR_HANDLER_TIMEOUT' |
+   'FST_ERR_ROUTE_HANDLER_TIMEOUT_OPTION_NOT_INT' |
+   'FST_ERR_ROUTE_REWRITE_NOT_STR' |
++  'FST_ERR_ROUTE_MISSING_CONTENT_TYPE' |
++  'FST_ERR_ROUTE_MISSING_CONTENT' |
+   'FST_ERR_REOPENED_CLOSE_SERVER' |
+   'FST_ERR_REOPENED_SERVER' |
+   'FST_ERR_INSTANCE_ALREADY_LISTENING' |
+diff --git a/types/instance.d.ts b/types/instance.d.ts
+index f33f6fa..1b21122 100644
+--- a/types/instance.d.ts
++++ b/types/instance.d.ts
+@@ -1,8 +1,9 @@
+ import { FastifyError } from '@fastify/error'
+ import { ConstraintStrategy, FindResult, HTTPVersion } from 'find-my-way'
+-import * as http from 'node:http'
+ import { InjectOptions, CallbackFunc as LightMyRequestCallback, Chain as LightMyRequestChain, Response as LightMyRequestResponse } from 'light-my-request'
++import * as http from 'node:http'
+ import { AddressInfo } from 'node:net'
++import { FastifyRouterOptions } from '../fastify'
+ import { AddContentTypeParser, ConstructorAction, FastifyBodyParser, ProtoAction, getDefaultJsonParser, hasContentTypeParser, removeAllContentTypeParsers, removeContentTypeParser } from './content-type-parser'
+ import { ApplicationHook, HookAsyncLookup, HookLookup, LifecycleHook, onCloseAsyncHookHandler, onCloseHookHandler, onErrorAsyncHookHandler, onErrorHookHandler, onListenAsyncHookHandler, onListenHookHandler, onReadyAsyncHookHandler, onReadyHookHandler, onRegisterHookHandler, onRequestAbortAsyncHookHandler, onRequestAbortHookHandler, onRequestAsyncHookHandler, onRequestHookHandler, onResponseAsyncHookHandler, onResponseHookHandler, onRouteHookHandler, onSendAsyncHookHandler, onSendHookHandler, onTimeoutAsyncHookHandler, onTimeoutHookHandler, preCloseAsyncHookHandler, preCloseHookHandler, preHandlerAsyncHookHandler, preHandlerHookHandler, preParsingAsyncHookHandler, preParsingHookHandler, preSerializationAsyncHookHandler, preSerializationHookHandler, preValidationAsyncHookHandler, preValidationHookHandler } from './hooks'
+ import { FastifyBaseLogger, FastifyChildLoggerFactory } from './logger'
+@@ -23,7 +24,6 @@ import {
+   SafePromiseLike
+ } from './type-provider'
+ import { ContextConfigDefault, HTTPMethods, RawReplyDefaultExpression, RawRequestDefaultExpression, RawServerBase, RawServerDefault } from './utils'
+-import { FastifyRouterOptions } from '../fastify'
+ 
+ export interface PrintRoutesOptions {
+   method?: HTTPMethods;
+@@ -202,6 +202,7 @@ export interface FastifyInstance<
+   trace: RouteShorthandMethod<RawServer, RawRequest, RawReply, TypeProvider, Logger>;
+   report: RouteShorthandMethod<RawServer, RawRequest, RawReply, TypeProvider, Logger>;
+   search: RouteShorthandMethod<RawServer, RawRequest, RawReply, TypeProvider, Logger>;
++  query: RouteShorthandMethod<RawServer, RawRequest, RawReply, TypeProvider, Logger>;
+   all: RouteShorthandMethod<RawServer, RawRequest, RawReply, TypeProvider, Logger>;
+ 
+   hasRoute<
+@@ -441,7 +442,7 @@ export interface FastifyInstance<
+   addHook<
+     K extends ApplicationHook | LifecycleHook,
+     Fn extends (...args: any) => Promise<any> | any
+-  > (
++  >(
+     name: K,
+     hook: Fn extends unknown ? Fn extends AsyncFunction ? HookAsyncLookup<K> : HookLookup<K> : Fn
+   ): FastifyInstance<RawServer, RawRequest, RawReply, Logger, TypeProvider>;
+@@ -449,11 +450,11 @@ export interface FastifyInstance<
+   /**
+      * Set the 404 handler
+      */
+-  setNotFoundHandler<RouteGeneric extends RouteGenericInterface = RouteGenericInterface, ContextConfig extends ContextConfigDefault = ContextConfigDefault, TypeProvider extends FastifyTypeProvider = FastifyTypeProviderDefault, SchemaCompiler extends FastifySchema = FastifySchema> (
++  setNotFoundHandler<RouteGeneric extends RouteGenericInterface = RouteGenericInterface, ContextConfig extends ContextConfigDefault = ContextConfigDefault, TypeProvider extends FastifyTypeProvider = FastifyTypeProviderDefault, SchemaCompiler extends FastifySchema = FastifySchema>(
+     handler: RouteHandlerMethod<RawServer, RawRequest, RawReply, RouteGeneric, ContextConfig, SchemaCompiler, TypeProvider, Logger>
+   ): FastifyInstance<RawServer, RawRequest, RawReply, Logger, TypeProvider>;
+ 
+-  setNotFoundHandler<RouteGeneric extends RouteGenericInterface = RouteGenericInterface, ContextConfig extends ContextConfigDefault = ContextConfigDefault, TypeProvider extends FastifyTypeProvider = FastifyTypeProviderDefault, SchemaCompiler extends FastifySchema = FastifySchema> (
++  setNotFoundHandler<RouteGeneric extends RouteGenericInterface = RouteGenericInterface, ContextConfig extends ContextConfigDefault = ContextConfigDefault, TypeProvider extends FastifyTypeProvider = FastifyTypeProviderDefault, SchemaCompiler extends FastifySchema = FastifySchema>(
+     opts: {
+       preValidation?: preValidationHookHandler<RawServer, RawRequest, RawReply, RouteGeneric, ContextConfig, SchemaCompiler, TypeProvider> | preValidationAsyncHookHandler<RawServer, RawRequest, RawReply, RouteGeneric, ContextConfig, SchemaCompiler, TypeProvider> | preValidationHookHandler<RawServer, RawRequest, RawReply, RouteGeneric, ContextConfig, SchemaCompiler, TypeProvider>[] | preValidationAsyncHookHandler<RawServer, RawRequest, RawReply, RouteGeneric, ContextConfig, SchemaCompiler, TypeProvider>[];
+       preHandler?: preHandlerHookHandler<RawServer, RawRequest, RawReply, RouteGeneric, ContextConfig, SchemaCompiler, TypeProvider> | preHandlerAsyncHookHandler<RawServer, RawRequest, RawReply, RouteGeneric, ContextConfig, SchemaCompiler, TypeProvider> | preHandlerHookHandler<RawServer, RawRequest, RawReply, RouteGeneric, ContextConfig, SchemaCompiler, TypeProvider>[] | preHandlerAsyncHookHandler<RawServer, RawRequest, RawReply, RouteGeneric, ContextConfig, SchemaCompiler, TypeProvider>[];
+diff --git a/types/utils.d.ts b/types/utils.d.ts
+index c569e15..7277dbe 100644
+--- a/types/utils.d.ts
++++ b/types/utils.d.ts
+@@ -14,8 +14,8 @@ export type Autocomplete<T> = T | (AutocompletePrimitiveBaseType<T> & Record<nev
+  * Standard HTTP method strings
+  * for internal use
+  */
+-type _HTTPMethods = 'DELETE' | 'GET' | 'HEAD' | 'PATCH' | 'POST' | 'PUT' | 'OPTIONS' |
+-'PROPFIND' | 'PROPPATCH' | 'MKCOL' | 'COPY' | 'MOVE' | 'LOCK' | 'UNLOCK' | 'TRACE' | 'SEARCH' | 'REPORT' | 'MKCALENDAR'
++type _HTTPMethods = 'DELETE' | 'GET' | 'HEAD' | 'PATCH' | 'POST' | 'PUT' | 'OPTIONS' | 'QUERY' |
++  'PROPFIND' | 'PROPPATCH' | 'MKCOL' | 'COPY' | 'MOVE' | 'LOCK' | 'UNLOCK' | 'TRACE' | 'SEARCH' | 'REPORT' | 'MKCALENDAR'
+ 
+ export type HTTPMethods = Autocomplete<_HTTPMethods | Lowercase<_HTTPMethods>>
+ 
