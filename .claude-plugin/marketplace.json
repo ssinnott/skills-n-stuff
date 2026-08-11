@@ -1,0 +1,22 @@
+{
+  "name": "skills-n-stuff",
+  "description": "A junk drawer of skills, agents, and plugins.",
+  "owner": {
+    "name": "ssinnott",
+    "email": "ssinnott747@gmail.com"
+  },
+  "plugins": [
+    {
+      "name": "grab-bag",
+      "source": "./",
+      "strict": false,
+      "description": "Everything in the drawer: all top-level skills, agents, and commands from this repo.",
+      "author": {
+        "name": "ssinnott"
+      },
+      "repository": "https://github.com/ssinnott/skills-n-stuff",
+      "license": "MIT",
+      "keywords": ["skills", "agents", "misc"]
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "name": "skills-n-stuff",
+  "version": "0.1.0",
+  "description": "A junk drawer of skills, agents, and plugins for Claude Code and pi.",
+  "license": "MIT",
+  "pi": {
+    "skills": ["./skills"],
+    "prompts": ["./commands"],
+    "extensions": ["./extensions"]
+  }
+}
