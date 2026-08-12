@@ -2,3 +2,6 @@
 # lives in skills/<name>/evals/evals.json and IS committed)
 *-workspace/
 __pycache__/
+node_modules/
+main.js
+obsidian-pi-tasks/test/docbind.mjs

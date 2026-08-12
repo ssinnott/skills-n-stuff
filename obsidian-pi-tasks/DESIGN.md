@@ -1,0 +1,89 @@
+---
+status: draft
+pi-session: —
+---
+
+# pi-tasks: document-driven agent work in Obsidian
+
+## Goal
+
+An Obsidian plugin that binds pi sessions to documents. A task document
+holds checkbox tasks; each task can launch its own pi agent; every task and
+review document owns a durable pi session that opens as a regular Obsidian
+tab; `@pi` comments in any bound document are resolved by its session. The
+document is the durable artifact — sessions are its working memory.
+
+## Non-goals
+
+- No changes to pi itself. Everything rides on shipped seams: `--mode rpc`,
+  `--session`, file editing, skill loading.
+- No task board UI. The task document is the board; agents write status
+  back to their own task line.
+- Not a general chat client. Upstream's obsidian-pi-plugin covers
+  free-floating chat; this plugin exists for doc-bound sessions.
+- No MCP, no servers, no daemons.
+
+## Decisions
+
+- Sessions are tabs, one live `pi --mode rpc --session <id>` process per
+  open chat tab; spawn on open, kill on close, resume from the session file
+  on reopen. Rejected: a singleton chat view with session switching, and
+  the session-browser sidebar as a task board — both make the session list
+  a second, ephemeral copy of what the task doc already shows.
+- Session identity lives in the document's frontmatter (`pi-session`).
+  Rejected: path-derived session names — they break on file rename.
+- Comments are Obsidian native comments carrying a marker:
+  `%% @pi: <instruction> %%`. Text adjacency is the anchor; resolution
+  deletes the marker. Rejected: a custom comment UI.
+- Clean-room build against pi's documented RPC protocol rather than a fork
+  of sigilmakes/obsidian-pi-plugin: upstream shows no license, so forking
+  is not legally safe. Revisit if a license appears; offer patches upstream
+  where they fit. Obsidian's `MarkdownRenderer` makes a minimal chat pane
+  cheap enough that the fork's main dowry (rendering) is replaceable.
+- Behavior lives in drawer skills (task-doc, review-doc, comment
+  resolution), not plugin code. The plugin's commands only route
+  instructions into the right session; judgment stays in evaluable
+  markdown (skills-n-stuff pattern).
+
+## Build plan
+
+- [ ] Protocol: pin pi's RPC message shapes (stdin commands, stdout
+      events, resume semantics) from pi-mono docs/source.
+- [ ] Scaffold: manifest, esbuild, TypeScript, `PiProcess` wrapper
+      (spawn/kill/restart, JSON-lines framing, event dispatch).
+- [ ] Chat view: multi-instance `ItemView`; streaming markdown via
+      `MarkdownRenderer`; input box with steering; render prior history on
+      resume.
+- [ ] Session binding: resolve-or-create `pi-session` frontmatter; command
+      "Open pi session for this note".
+- [ ] Command "Launch agent for task line": new session named for the task
+      slug, seeded with task text + doc + resolved `[[links]]`; status
+      written back to the line (running marker → checked box + links).
+- [ ] Command "Resolve @pi comments": send the resolution instruction to
+      the note's bound session.
+- [ ] Process hygiene: kill children on plugin unload/quit; cap concurrent
+      processes; surface crashes in the tab.
+- [ ] Drawer skills: task-doc + review-doc templates, comment-resolution
+      skill, evals with mechanical checks (markers resolved and removed,
+      checkbox structure, honest status).
+- [ ] Live validation on a real vault (not possible in the build
+      environment — no Obsidian, no pi).
+
+## Risks
+
+- RPC protocol stability: pi is young; the protocol may drift. Mitigation:
+  pin the pi version in the plugin's requirements, keep `PiProcess` the
+  only file that knows message shapes.
+- Multi-process resource use: N open tabs = N pi processes. Mitigation:
+  processes die with their tab; sessions make that loss-free.
+- Frontmatter edits by agents and plugin can race Obsidian's own metadata
+  cache. Mitigation: single writer per doc — the plugin writes frontmatter,
+  agents write body.
+
+## Done means
+
+A vault where: opening a task doc and running "launch agent" on a task line
+produces a new chat tab doing the work; closing and reopening that tab
+resumes the same conversation; an `@pi` comment in the review doc gets
+resolved by its bound session and the marker disappears; and quitting
+Obsidian leaves no orphaned pi processes.

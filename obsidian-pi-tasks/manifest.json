@@ -1,0 +1,9 @@
+{
+  "id": "pi-tasks",
+  "name": "Pi Tasks",
+  "version": "0.1.0",
+  "minAppVersion": "1.4.0",
+  "description": "Document-driven pi agent work: task docs launch agents, sessions live in tabs bound to notes, @pi comments get resolved by the note's session.",
+  "author": "ssinnott",
+  "isDesktopOnly": true
+}
