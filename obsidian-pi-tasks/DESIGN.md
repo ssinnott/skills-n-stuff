@@ -110,9 +110,11 @@ document is the durable artifact — sessions are its working memory.
 - [x] PR tracking: outcome protocol reports PRs, child lines under the
       task, review state 🔃, gh-backed status refresh, parent completion
       when all PRs merge.
-- [x] Workflow starters in the drawer: pi-tasks-setup (verify/repair the
-      whole toolchain), plan-to-pr, issue-research — each with
-      scenario-fixture evals asserting outcome-protocol honesty.
+- [x] pi-tasks-setup meta skill in the drawer (verify/repair the whole
+      toolchain), with scenario-fixture evals asserting evidence-backed
+      checklists. Workflow skills deliberately not shipped: which
+      workflows a session sees belongs to pi's loading configuration
+      (profiles), owned by the user, not this repo.
 - [ ] Drawer skills: task-doc + review-doc templates, comment-resolution
       skill, evals with mechanical checks (markers resolved and removed,
       checkbox structure, honest status).

@@ -135,13 +135,12 @@ behind. Chains stay human-launched: nothing auto-fires, the doc shows
 every step.
 
 No workflow is baked into the plugin — a workflow is just a skill the
-agent can see, named in the task text. The drawer ships starters
-(`skills/` in this repo): **plan-to-pr** (worktree → plan → implement →
-PR) and **issue-research** (evidence → filed issue → chained fix), plus
-**pi-tasks-setup**, a meta skill that verifies and repairs this whole
-setup. Defining your own (ci-triage, snyk-update, support-triage) is
-one `SKILL.md`: describe the judgment, end with the protocol verbs
-above — nothing needs registering with the plugin.
+agent can see, named in the task text. Which skills a session sees is a
+pi loading question (settings, packages, per-profile config dirs), not
+a plugin one: defining a workflow is one `SKILL.md` that describes the
+judgment and ends with the protocol verbs above — nothing needs
+registering with the plugin. The drawer ships **pi-tasks-setup**, a
+meta skill that verifies and repairs this whole toolchain.
 
 ## How it fits together
 
