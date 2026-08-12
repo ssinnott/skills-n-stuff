@@ -64,11 +64,27 @@ export function attachSessionRef(noteText: string, line: number, sessionPath: st
   return lines.join("\n");
 }
 
-/** Parse a task agent's final text: DONE / BLOCKED, optional review path. */
-export function parseOutcome(text: string): { status: "done" | "failed"; reviewPath: string | null } {
+/**
+ * Parse a task agent's final text. DONE/BLOCKED decide done vs failed;
+ * "DONE — review: <path>" names a review document; "PR: <url> [— title]"
+ * lines (or "DONE — pr: <url>") report pull requests, which put the task
+ * in review rather than done — it completes when its PRs merge.
+ */
+export function parseOutcome(text: string): {
+  status: "done" | "failed" | "review";
+  reviewPath: string | null;
+  prs: { url: string; title?: string }[];
+} {
   const done = !/\bBLOCKED\b/.test(text) && /\bDONE\b/.test(text);
-  const m = text.match(/\bDONE\b\s*[—–-]*\s*review:\s*(\S+)/i);
-  return { status: done ? "done" : "failed", reviewPath: m ? m[1] : null };
+  const rm = text.match(/\bDONE\b\s*[—–-]*\s*review:\s*(\S+)/i);
+  const prs: { url: string; title?: string }[] = [];
+  for (const m of text.matchAll(/^\s*PR:\s*(https?:\/\/\S+?)(?:\s+—\s+(.+?))?\s*$/gim)) {
+    prs.push({ url: m[1], title: m[2]?.trim() });
+  }
+  const dm = text.match(/\bDONE\b\s*[—–-]*\s*pr:\s*(https?:\/\/\S+)/i);
+  if (dm && !prs.some((p) => p.url === dm[1])) prs.push({ url: dm[1] });
+  const status = !done ? "failed" : prs.length > 0 ? "review" : "done";
+  return { status, reviewPath: rm ? rm[1] : null, prs };
 }
 
 export function slugify(text: string): string {
@@ -79,10 +95,10 @@ export function slugify(text: string): string {
     .slice(0, 48) || "task";
 }
 
-/** Mark a task line as running / done / failed, preserving indentation. */
+/** Mark a task line as running / review / done / failed, preserving indentation. */
 export function setTaskStatus(
   noteText: string, line: number,
-  status: "running" | "done" | "failed", suffix?: string,
+  status: "running" | "review" | "done" | "failed", suffix?: string,
 ): string {
   const lines = noteText.split("\n");
   const m = lines[line]?.match(TASK);
@@ -90,11 +106,79 @@ export function setTaskStatus(
   const box = status === "done" ? "x" : " ";
   const refMatch = m[3].match(SESSION_REF);
   const ref = refMatch ? refMatch[0].trim() : "";
-  const clean = m[3].replace(SESSION_REF, "").replace(/\s*(⏳|❌)\s*$/u, "").trimEnd();
-  const marker = status === "running" ? " ⏳" : status === "failed" ? " ❌" : "";
+  const clean = m[3].replace(SESSION_REF, "").replace(/\s*(⏳|❌|🔃)\s*$/u, "").trimEnd();
+  const marker = status === "running" ? " ⏳"
+    : status === "failed" ? " ❌"
+    : status === "review" ? " 🔃" : "";
   const tail = suffix ? ` ${suffix}` : "";
   lines[line] = `${m[1]}- [${box}] ${clean}${marker}${tail}${ref ? ` ${ref}` : ""}`;
   return lines.join("\n");
+}
+
+// --- PR tracking: child lines under a task, one per pull request ---
+
+export interface PRChild {
+  line: number;
+  title: string;
+  url: string;
+  state: "open" | "merged" | "closed";
+}
+
+const PR_CHILD = /^(\s*)- \[([ xX])\] PR: \[([^\]]+)\]\((\S+?)\)(?:\s+—\s+(open|merged|closed))?\s*$/;
+
+/** All PR child lines in a note. */
+export function findPRChildren(noteText: string): PRChild[] {
+  const out: PRChild[] = [];
+  noteText.split("\n").forEach((raw, i) => {
+    const m = raw.match(PR_CHILD);
+    if (m) {
+      out.push({
+        line: i, title: m[3], url: m[4],
+        state: (m[5] as PRChild["state"]) ?? (m[2] !== " " ? "merged" : "open"),
+      });
+    }
+  });
+  return out;
+}
+
+/** Insert PR child lines under a task (skipping already-listed URLs). */
+export function appendPRChildren(
+  noteText: string, taskLine: number, prs: { url: string; title?: string }[],
+): string {
+  const lines = noteText.split("\n");
+  const m = lines[taskLine]?.match(TASK);
+  if (!m) return noteText;
+  const existing = new Set(findPRChildren(noteText).map((c) => c.url));
+  const indent = m[1] + "  ";
+  const fresh = prs.filter((pr) => !existing.has(pr.url)).map((pr) => {
+    const n = pr.url.match(/\/(?:pull|merge_requests)\/(\d+)/);
+    const title = pr.title ?? (n ? `#${n[1]}` : pr.url);
+    return `${indent}- [ ] PR: [${title}](${pr.url}) — open`;
+  });
+  if (fresh.length) lines.splice(taskLine + 1, 0, ...fresh);
+  return lines.join("\n");
+}
+
+/** Update one PR child line's state (merged checks its box). */
+export function setPRChildState(noteText: string, line: number, state: PRChild["state"]): string {
+  const lines = noteText.split("\n");
+  const m = lines[line]?.match(PR_CHILD);
+  if (!m) return noteText;
+  const box = state === "merged" ? "x" : " ";
+  lines[line] = `${m[1]}- [${box}] PR: [${m[3]}](${m[4]}) — ${state}`;
+  return lines.join("\n");
+}
+
+/** The parent task line of a PR child: nearest task line above with less indent. */
+export function parentTaskOf(noteText: string, childLine: number): number | null {
+  const lines = noteText.split("\n");
+  const childIndent = (lines[childLine]?.match(/^\s*/) ?? [""])[0].length;
+  for (let i = childLine - 1; i >= 0; i--) {
+    const m = lines[i]?.match(TASK);
+    if (m && m[1].length < childIndent) return i;
+    if (lines[i].trim() === "") return null;
+  }
+  return null;
 }
 
 export interface PiComment {
@@ -131,10 +215,12 @@ export function taskPrompt(task: TaskLine, notePath: string, linkedPaths: string
   return (
     `Work on this task from ${notePath}:\n\n${task.text}\n${links}\n\n` +
     `The task document itself is at ${notePath} — read it for surrounding ` +
-    `context before starting. When the task is complete, end with a final ` +
-    `line of exactly "DONE — review: <path>" where <path> is the one ` +
-    `document a reviewer should read (vault-relative), or just "DONE" if ` +
-    `the result is code changes rather than a document. If you are ` +
-    `blocked, end with "BLOCKED" and why.`
+    `context before starting. If the task names a workflow, slash command, ` +
+    `or skill (like /plan-to-pr), follow that workflow. When finished, ` +
+    `report on the final lines: "DONE — review: <path>" if the deliverable ` +
+    `is a document a reviewer should read (vault-relative path); one ` +
+    `"PR: <url> — <title>" line per pull request you opened, then "DONE", ` +
+    `if the work went out as pull requests; plain "DONE" for direct code ` +
+    `changes; "BLOCKED" and why if you are stuck. Never invent URLs.`
   );
 }

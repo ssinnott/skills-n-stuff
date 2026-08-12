@@ -26,12 +26,15 @@ export interface PiTasksSettings {
     difitCommand: string;
     /** Launch difit automatically when a task agent finishes with DONE. */
     difitOnDone: boolean;
+    /** Path to the GitHub CLI, used to refresh PR states. */
+    ghPath: string;
 }
 
 export const DEFAULT_SETTINGS: PiTasksSettings = {
     piBinaryPath: "pi",
     difitCommand: "npx difit",
     difitOnDone: true,
+    ghPath: "gh",
 };
 
 interface ModelOption {
@@ -117,6 +120,82 @@ export default class PiTasksPlugin extends Plugin {
             id: "open-task-review",
             name: "Open review for task under cursor",
             callback: () => void this.openTaskReview(),
+        });
+
+        this.addCommand({
+            id: "refresh-pr-statuses",
+            name: "Update PR statuses in this note",
+            callback: () => void this.refreshPRStatuses(),
+        });
+    }
+
+    // --- PR tracking ---
+
+    /**
+     * Sweep the note's PR child lines, ask `gh` for each PR's state, write
+     * changes back, and complete any parent task whose PRs are all merged.
+     */
+    private async refreshPRStatuses(): Promise<void> {
+        const file = this.getActiveMarkdownFile();
+        if (!file) return;
+        const text = await this.app.vault.read(file);
+        const children = docbind.findPRChildren(text);
+        if (children.length === 0) {
+            new Notice("No PR lines in this note");
+            return;
+        }
+        new Notice(`Checking ${children.length} PR${children.length === 1 ? "" : "s"}…`);
+        const states = new Map<string, "open" | "merged" | "closed">();
+        for (const child of children) {
+            const state = await this.ghPRState(child.url);
+            if (state) states.set(child.url, state);
+        }
+        if (states.size === 0) {
+            new Notice("Could not read PR states — is `gh` installed and authenticated?");
+            return;
+        }
+        await this.app.vault.process(file, (t) => {
+            // Re-find lines against the current text, update each child,
+            // then complete parents whose children are all merged.
+            for (const child of docbind.findPRChildren(t)) {
+                const state = states.get(child.url);
+                if (state && state !== child.state) {
+                    t = docbind.setPRChildState(t, child.line, state);
+                }
+            }
+            const parents = new Set<number>();
+            const updated = docbind.findPRChildren(t);
+            for (const child of updated) {
+                const parent = docbind.parentTaskOf(t, child.line);
+                if (parent !== null) parents.add(parent);
+            }
+            for (const parent of parents) {
+                const kids = updated.filter((c) => docbind.parentTaskOf(t, c.line) === parent);
+                if (kids.length && kids.every((c) => c.state === "merged")) {
+                    t = docbind.setTaskStatus(t, parent, "done");
+                }
+            }
+            return t;
+        });
+        new Notice("PR statuses updated");
+    }
+
+    /** Query one PR's state via the gh CLI; null if unavailable. */
+    private ghPRState(url: string): Promise<"open" | "merged" | "closed" | null> {
+        return new Promise((resolve) => {
+            const child = spawn(this.settings.ghPath, ["pr", "view", url, "--json", "state"], {});
+            let out = "";
+            child.stdout?.on("data", (d) => { out += String(d); });
+            child.on("error", () => resolve(null));
+            child.on("exit", (code) => {
+                if (code !== 0) return resolve(null);
+                try {
+                    const state = String(JSON.parse(out).state ?? "").toUpperCase();
+                    resolve(state === "MERGED" ? "merged" : state === "CLOSED" ? "closed" : state === "OPEN" ? "open" : null);
+                } catch {
+                    resolve(null);
+                }
+            });
         });
     }
 
@@ -347,19 +426,22 @@ export default class PiTasksPlugin extends Plugin {
                     console.warn("[pi-tasks] get_last_assistant_text failed:", err);
                 }
 
-                const { status, reviewPath } = docbind.parseOutcome(text);
+                const { status, reviewPath, prs } = docbind.parseOutcome(text);
                 const suffix = reviewPath
                     ? `([[${reviewPath.replace(/\.md$/, "")}|review]])`
                     : undefined;
                 try {
                     await this.app.vault.process(file, (t) =>
-                        docbind.setTaskStatus(t, line, status, suffix),
+                        docbind.appendPRChildren(
+                            docbind.setTaskStatus(t, line, status, suffix),
+                            line, prs,
+                        ),
                     );
                 } catch (err) {
                     console.error("[pi-tasks] Failed to write task status:", err);
                 }
-                new Notice(status === "done"
-                    ? `Task done: ${file.basename}`
+                new Notice(status === "done" ? `Task done: ${file.basename}`
+                    : status === "review" ? `Task in review (${prs.length} PR${prs.length === 1 ? "" : "s"}): ${file.basename}`
                     : `Task did not complete: ${file.basename}`);
                 if (status === "done") {
                     // Context-dependent review surface: a declared document
@@ -556,6 +638,19 @@ class PiTasksSettingTab extends PluginSettingTab {
                     .setValue(this.plugin.settings.difitCommand)
                     .onChange(async (value) => {
                         this.plugin.settings.difitCommand = value || "npx difit";
+                        await this.plugin.saveSettings();
+                    })
+            );
+
+        new Setting(containerEl)
+            .setName("gh path")
+            .setDesc("GitHub CLI used to refresh PR statuses on task lines")
+            .addText((text) =>
+                text
+                    .setPlaceholder("gh")
+                    .setValue(this.plugin.settings.ghPath)
+                    .onChange(async (value) => {
+                        this.plugin.settings.ghPath = value || "gh";
                         await this.plugin.saveSettings();
                     })
             );

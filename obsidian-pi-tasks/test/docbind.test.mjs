@@ -79,15 +79,52 @@ assert.equal(taskSessionRef(rs, 2), ".pi-sessions/xyz.jsonl");
 
 // outcome parsing
 assert.deepEqual(parseOutcome("all wrapped up\nDONE — review: reviews/plan.md"),
-  { status: "done", reviewPath: "reviews/plan.md" });
+  { status: "done", reviewPath: "reviews/plan.md", prs: [] });
 assert.deepEqual(parseOutcome("DONE - review: notes/x.qmd"),
-  { status: "done", reviewPath: "notes/x.qmd" });
+  { status: "done", reviewPath: "notes/x.qmd", prs: [] });
 assert.deepEqual(parseOutcome("refactor finished\nDONE"),
-  { status: "done", reviewPath: null });
+  { status: "done", reviewPath: null, prs: [] });
 assert.deepEqual(parseOutcome("BLOCKED: missing credentials"),
-  { status: "failed", reviewPath: null });
+  { status: "failed", reviewPath: null, prs: [] });
 assert.deepEqual(parseOutcome("did DONE things but BLOCKED on tests"),
-  { status: "failed", reviewPath: null });
+  { status: "failed", reviewPath: null, prs: [] });
+
+// PR outcomes put the task in review
+const multi = parseOutcome(
+  "PR: https://github.com/o/r/pull/12 — theme tokens\nPR: https://github.com/o/r/pull/13\nDONE");
+assert.equal(multi.status, "review");
+assert.deepEqual(multi.prs, [
+  { url: "https://github.com/o/r/pull/12", title: "theme tokens" },
+  { url: "https://github.com/o/r/pull/13", title: undefined },
+]);
+assert.deepEqual(parseOutcome("DONE — pr: https://github.com/o/r/pull/9").prs,
+  [{ url: "https://github.com/o/r/pull/9" }]);
+assert.equal(parseOutcome("PR: https://github.com/o/r/pull/9\nBLOCKED on CI").status, "failed");
+
+// PR children under a task line
+import { findPRChildren, appendPRChildren, setPRChildState, parentTaskOf } from "./docbind.mjs";
+let pdoc = "# T\n\n- [ ] Ship dark mode 🔃\nother\n";
+pdoc = appendPRChildren(pdoc, 2, multi.prs);
+let kids = findPRChildren(pdoc);
+assert.equal(kids.length, 2);
+assert.equal(kids[0].title, "theme tokens");
+assert.equal(kids[1].title, "#13");
+assert.equal(kids[0].state, "open");
+assert.ok(pdoc.split("\n")[3].startsWith("  - [ ] PR:"), "indented under parent");
+pdoc = appendPRChildren(pdoc, 2, multi.prs);   // idempotent
+assert.equal(findPRChildren(pdoc).length, 2);
+pdoc = setPRChildState(pdoc, kids[0].line, "merged");
+kids = findPRChildren(pdoc);
+assert.equal(kids[0].state, "merged");
+assert.ok(pdoc.split("\n")[kids[0].line].includes("- [x]"), "merged checks the box");
+assert.equal(parentTaskOf(pdoc, kids[0].line), 2);
+assert.equal(parentTaskOf(pdoc, 0), null);
+// review -> done transition strips the 🔃 marker
+const finished = setTaskStatus(pdoc, 2, "done");
+assert.ok(!finished.split("\n")[2].includes("🔃"));
+assert.ok(finished.split("\n")[2].startsWith("- [x] Ship dark mode"));
+const inReview = setTaskStatus(pdoc, 2, "review");
+assert.ok(inReview.split("\n")[2].endsWith("🔃"));
 
 // slug + prompt
 assert.equal(slugify("Fix the %%weird%% thing!!"), "fix-the-weird-thing");

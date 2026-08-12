@@ -55,6 +55,15 @@ document is the durable artifact — sessions are its working memory.
   "DONE — review: <path>" naming their primary artifact; a document path
   opens in one stable right-side review pane, no path means code and goes
   to difit. Rejected: git-status heuristics for guessing the surface.
+- Tasks can outlive their session: an agent that ships pull requests
+  reports "PR: <url> — <title>" lines, the task enters review (🔃) with
+  one indented child line per PR, and it completes only when every child
+  is merged. "Update PR statuses in this note" sweeps the children via
+  the gh CLI and auto-checks parents whose PRs are all merged. Workflows
+  (a /plan-to-pr prompt, a planning skill) are named in the task text and
+  honored by the seed prompt — the plugin adds no workflow machinery.
+  Rejected: background polling (a command the user runs keeps the plugin
+  serverless and the doc authoritative).
 - difit is the code-review surface: on a task agent's DONE (or the
   "Review changes in difit" command), the plugin launches `difit .` over
   the vault's uncommitted changes; line comments flow back via difit's
@@ -84,6 +93,9 @@ document is the durable artifact — sessions are its working memory.
       upstream patch (process handle is private).
 - [x] difit integration: review-on-DONE (setting-gated), the review
       command, one managed difit process killed on unload.
+- [x] PR tracking: outcome protocol reports PRs, child lines under the
+      task, review state 🔃, gh-backed status refresh, parent completion
+      when all PRs merge.
 - [ ] Drawer skills: task-doc + review-doc templates, comment-resolution
       skill, evals with mechanical checks (markers resolved and removed,
       checkbox structure, honest status).
