@@ -35,11 +35,13 @@ document is the durable artifact — sessions are its working memory.
 - Comments are Obsidian native comments carrying a marker:
   `%% @pi: <instruction> %%`. Text adjacency is the anchor; resolution
   deletes the marker. Rejected: a custom comment UI.
-- Clean-room build against pi's documented RPC protocol rather than a fork
-  of sigilmakes/obsidian-pi-plugin: upstream shows no license, so forking
-  is not legally safe. Revisit if a license appears; offer patches upstream
-  where they fit. Obsidian's `MarkdownRenderer` makes a minimal chat pane
-  cheap enough that the fork's main dowry (rendering) is replaceable.
+- Fork of sigilmakes/obsidian-pi-plugin (MIT, confirmed in package.json)
+  rather than clean-room: upstream's RPC client, stream handler, and
+  renderer are exactly the hard parts, and its PiConnection already takes
+  extra spawn args, so `--session` slots in. The multi-tab change is an
+  ownership move (connection per view instead of per plugin), not a
+  rewrite. Vendored with attribution; graftable patches offered upstream.
+  (Earlier draft chose clean-room when the license looked absent.)
 - Behavior lives in drawer skills (task-doc, review-doc, comment
   resolution), not plugin code. The plugin's commands only route
   instructions into the right session; judgment stays in evaluable
