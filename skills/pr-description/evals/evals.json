@@ -204,6 +204,24 @@
         "Ticks no checkbox the diff can't support \u2014 'All new and existing tests passed' stays unsupported/unticked since a diff can't prove test execution",
         "Contains no Commits section \u2014 the input is a bare diff with no commit history, and shas are never invented"
       ]
+    },
+    {
+      "id": 11,
+      "name": "conflicting-pr-template",
+      "prompt": "our repo's PR template is strict and a bit at odds with how you like to write \u2014 it's in repo-pr-template-conflicting.md. write the PR description for my branch diff in feature-with-noise.diff following the repo's template exactly, and save it as pr-description.md",
+      "expected_output": "Template honored where it explicitly demands what the skill normally forbids: the file-list section names all 5 changed files, the error-codes section names the retryable codes, both scoped to their sections; Screenshots kept and marked not applicable; the production-verification checkbox stays unticked; the Summary keeps the skill's plain voice.",
+      "files": [
+        "fixtures/feature-with-noise.diff",
+        "fixtures/repo-pr-template-conflicting.md"
+      ],
+      "assertions": [
+        "Uses the repo template's section headings verbatim and in order, instead of the skill's default shape",
+        "The \"Complete List of Changed Files\" section names all 5 changed files \u2014 the template's explicit demand overrides the skill's three-path default",
+        "Status codes appear only inside the \"Error Codes Affected\" section \u2014 the explicit demand is honored there and nowhere else",
+        "The \"Screenshots\" section is kept and marked not applicable \u2014 not deleted, not filled with inventions",
+        "Ticks no checkbox the diff can't support \u2014 the verified-in-production box stays unticked, since a diff can't prove deployment",
+        "The Summary section keeps the skill's voice: leads with the retry behavior, compresses churn, plain words"
+      ]
     }
   ]
 }
