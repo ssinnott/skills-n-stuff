@@ -1,5 +1,5 @@
 ---
-status: draft
+status: in-progress
 pi-session: —
 ---
 
@@ -49,22 +49,24 @@ document is the durable artifact — sessions are its working memory.
 
 ## Build plan
 
-- [ ] Protocol: pin pi's RPC message shapes (stdin commands, stdout
+- [x] Protocol: pin pi's RPC message shapes (stdin commands, stdout
       events, resume semantics) from pi-mono docs/source.
-- [ ] Scaffold: manifest, esbuild, TypeScript, `PiProcess` wrapper
+- [x] Scaffold: manifest, esbuild, TypeScript, `PiProcess` wrapper
       (spawn/kill/restart, JSON-lines framing, event dispatch).
-- [ ] Chat view: multi-instance `ItemView`; streaming markdown via
+- [x] Chat view: multi-instance `ItemView`; streaming markdown via
       `MarkdownRenderer`; input box with steering; render prior history on
       resume.
-- [ ] Session binding: resolve-or-create `pi-session` frontmatter; command
+- [x] Session binding: resolve-or-create `pi-session` frontmatter; command
       "Open pi session for this note".
-- [ ] Command "Launch agent for task line": new session named for the task
+- [x] Command "Launch agent for task line": new session named for the task
       slug, seeded with task text + doc + resolved `[[links]]`; status
       written back to the line (running marker → checked box + links).
-- [ ] Command "Resolve @pi comments": send the resolution instruction to
+- [x] Command "Resolve @pi comments": send the resolution instruction to
       the note's bound session.
-- [ ] Process hygiene: kill children on plugin unload/quit; cap concurrent
-      processes; surface crashes in the tab.
+- [x] Process hygiene: each view destroys its pi process on close (loss-free
+      — state lives in the session file); unload closes views. Open: no
+      concurrency cap yet, and the gentler stdin-close shutdown needs an
+      upstream patch (process handle is private).
 - [ ] Drawer skills: task-doc + review-doc templates, comment-resolution
       skill, evals with mechanical checks (markers resolved and removed,
       checkbox structure, honest status).
