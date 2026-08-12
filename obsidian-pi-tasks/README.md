@@ -67,10 +67,15 @@ Then in Obsidian: Settings → Community plugins → enable **Pi Tasks**.
 3. Add `%% @pi: tighten this paragraph %%` anywhere in a bound note →
    **Resolve @pi comments in this note** — the bound session applies the
    instruction and deletes the marker.
-4. Review: a finished task either opens its declared document in the
-   review pane, or (for code) launches difit in your browser. Comment on
-   diff lines in difit, hit **Copy All Prompt**, and paste into the task's
-   session tab to request changes.
+4. Review: a finished task that produced a document opens it in the
+   review pane (comment there with `@pi` markers). A task that shipped
+   PRs goes into review (🔃) with one child line per PR — **Open review
+   for task under cursor** launches difit over the PR's branch range in
+   the repo where the work happened; comment on diff lines, hit **Copy
+   All Prompt**, and paste into the task's session tab. **Update PR
+   statuses in this note** sweeps PR states via `gh` and checks the task
+   off once everything is merged. Diff review is only for PRs — documents
+   are never reviewed as diffs.
 
 ## Commands
 
@@ -81,12 +86,14 @@ Then in Obsidian: Settings → Community plugins → enable **Pi Tasks**.
   DONE, ❌ on BLOCKED).
 - **Open session for task under cursor** — reopen the session recorded on
   a task line (hidden `%% pi:session=... %%` comment).
-- **Open review for task under cursor** — open the task's review link in
-  the review pane, or difit if there is none.
+- **Open review for task under cursor** — a document review link opens in
+  the review pane; a task with PRs opens difit over the PR's branches in
+  its work repo (falling back to the PR page).
 - **Resolve @pi comments in this note** — send the resolution instruction
   to the note's bound session.
-- **Review changes in difit** — difit over the vault's uncommitted
-  changes, any time.
+- **Review changes in difit** — manual difit launch, any time.
+- **Update PR statuses in this note** — sweep PR child lines via the gh
+  CLI; tasks complete when all their PRs merge.
 - **Switch model (active pi tab)** — change the model for the focused
   session.
 
@@ -94,8 +101,8 @@ Then in Obsidian: Settings → Community plugins → enable **Pi Tasks**.
 
 - **pi binary path** (default `pi`)
 - **difit command** (default `npx difit`)
-- **Review in difit when a task finishes** (default on) — auto-launch
-  difit when a task agent reports DONE without naming a review document.
+- **gh path** (default `gh`) — used for PR status refresh and resolving
+  PR branches for difit review.
 
 ## How it fits together
 
@@ -104,6 +111,7 @@ session comment — so the document, not the plugin, stores the
 task↔session↔review relationships; everything survives sync, rename, and
 restarts. Sessions are `.jsonl` files under `.pi-sessions/`; closing a tab
 kills its pi process, reopening resumes from the file. Agents declare
-their review artifact by ending with `DONE — review: <path>`; no path
-means code, which goes to difit. Design decisions and their rejected
-alternatives are in [DESIGN.md](DESIGN.md).
+their outcome: `DONE — review: <path>` for a document, `PR:` lines plus a
+`REPO:` line for pull requests (tracked as child lines to merge), plain
+DONE otherwise. Diff review is only for PRs. Design decisions and their
+rejected alternatives are in [DESIGN.md](DESIGN.md).

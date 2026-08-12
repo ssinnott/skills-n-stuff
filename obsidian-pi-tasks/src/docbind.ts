@@ -34,7 +34,7 @@ export interface TaskLine {
 }
 
 const TASK = /^(\s*)- \[([ xX])\]\s+(.*)$/;
-const SESSION_REF = /\s*%%\s*pi:session=(\S+)\s*%%/;
+const PI_MARKER = /\s*%%\s*pi:(\w+)=(\S+)\s*%%/g;
 
 /** Parse the task line at a given line number, if it is one. */
 export function taskAt(noteText: string, line: number): TaskLine | null {
@@ -42,27 +42,37 @@ export function taskAt(noteText: string, line: number): TaskLine | null {
   if (raw === undefined) return null;
   const m = raw.match(TASK);
   if (!m) return null;
-  const text = m[3].replace(SESSION_REF, "").trim();
+  const text = m[3].replace(PI_MARKER, "").trim();
   return { line, text, checked: m[2] !== " ", slug: slugify(text) };
 }
 
-/** Read the hidden session reference on a task line, if present. */
-export function taskSessionRef(noteText: string, line: number): string | null {
+/** Read a hidden %% pi:<key>=... %% marker on a task line, if present. */
+export function taskMarker(noteText: string, line: number, key: string): string | null {
   const raw = noteText.split("\n")[line];
-  const m = raw?.match(SESSION_REF);
-  return m ? m[1] : null;
+  if (raw === undefined) return null;
+  for (const m of raw.matchAll(PI_MARKER)) {
+    if (m[1] === key) return m[2];
+  }
+  return null;
 }
 
-/** Append a hidden %% pi:session=... %% marker to a task line (idempotent). */
-export function attachSessionRef(noteText: string, line: number, sessionPath: string): string {
+/** Append/replace a hidden %% pi:<key>=... %% marker on a task line. */
+export function attachMarker(noteText: string, line: number, key: string, value: string): string {
   const lines = noteText.split("\n");
   const raw = lines[line];
   if (raw === undefined || !TASK.test(raw)) return noteText;
-  lines[line] = SESSION_REF.test(raw)
-    ? raw.replace(SESSION_REF, ` %% pi:session=${sessionPath} %%`)
-    : `${raw} %% pi:session=${sessionPath} %%`;
+  const keyed = new RegExp(`\\s*%%\\s*pi:${key}=\\S+\\s*%%`);
+  lines[line] = keyed.test(raw)
+    ? raw.replace(keyed, ` %% pi:${key}=${value} %%`)
+    : `${raw} %% pi:${key}=${value} %%`;
   return lines.join("\n");
 }
+
+/** Back-compat helpers for the two markers in use. */
+export const taskSessionRef = (t: string, l: number) => taskMarker(t, l, "session");
+export const attachSessionRef = (t: string, l: number, v: string) => attachMarker(t, l, "session", v);
+export const taskRepoRef = (t: string, l: number) => taskMarker(t, l, "repo");
+export const attachRepoRef = (t: string, l: number, v: string) => attachMarker(t, l, "repo", v);
 
 /**
  * Parse a task agent's final text. DONE/BLOCKED decide done vs failed;
@@ -73,10 +83,12 @@ export function attachSessionRef(noteText: string, line: number, sessionPath: st
 export function parseOutcome(text: string): {
   status: "done" | "failed" | "review";
   reviewPath: string | null;
+  repoPath: string | null;
   prs: { url: string; title?: string }[];
 } {
   const done = !/\bBLOCKED\b/.test(text) && /\bDONE\b/.test(text);
   const rm = text.match(/\bDONE\b\s*[—–-]*\s*review:\s*(\S+)/i);
+  const repo = text.match(/^\s*REPO:\s*(\S+)\s*$/im);
   const prs: { url: string; title?: string }[] = [];
   for (const m of text.matchAll(/^\s*PR:\s*(https?:\/\/\S+?)(?:\s+—\s+(.+?))?\s*$/gim)) {
     prs.push({ url: m[1], title: m[2]?.trim() });
@@ -84,7 +96,7 @@ export function parseOutcome(text: string): {
   const dm = text.match(/\bDONE\b\s*[—–-]*\s*pr:\s*(https?:\/\/\S+)/i);
   if (dm && !prs.some((p) => p.url === dm[1])) prs.push({ url: dm[1] });
   const status = !done ? "failed" : prs.length > 0 ? "review" : "done";
-  return { status, reviewPath: rm ? rm[1] : null, prs };
+  return { status, reviewPath: rm ? rm[1] : null, repoPath: repo ? repo[1] : null, prs };
 }
 
 export function slugify(text: string): string {
@@ -104,9 +116,9 @@ export function setTaskStatus(
   const m = lines[line]?.match(TASK);
   if (!m) return noteText;
   const box = status === "done" ? "x" : " ";
-  const refMatch = m[3].match(SESSION_REF);
-  const ref = refMatch ? refMatch[0].trim() : "";
-  const clean = m[3].replace(SESSION_REF, "").replace(/\s*(⏳|❌|🔃)\s*$/u, "").trimEnd();
+  const refs = [...m[3].matchAll(PI_MARKER)].map((r) => r[0].trim());
+  const ref = refs.join(" ");
+  const clean = m[3].replace(PI_MARKER, "").replace(/\s*(⏳|❌|🔃)\s*$/u, "").trimEnd();
   const marker = status === "running" ? " ⏳"
     : status === "failed" ? " ❌"
     : status === "review" ? " 🔃" : "";
@@ -219,8 +231,10 @@ export function taskPrompt(task: TaskLine, notePath: string, linkedPaths: string
     `or skill (like /plan-to-pr), follow that workflow. When finished, ` +
     `report on the final lines: "DONE — review: <path>" if the deliverable ` +
     `is a document a reviewer should read (vault-relative path); one ` +
-    `"PR: <url> — <title>" line per pull request you opened, then "DONE", ` +
-    `if the work went out as pull requests; plain "DONE" for direct code ` +
-    `changes; "BLOCKED" and why if you are stuck. Never invent URLs.`
+    `"PR: <url> — <title>" line per pull request you opened plus one ` +
+    `"REPO: <absolute path>" line naming the repository you worked in, ` +
+    `then "DONE", if the work went out as pull requests; plain "DONE" for ` +
+    `direct code changes; "BLOCKED" and why if you are stuck. Never ` +
+    `invent URLs or paths.`
   );
 }

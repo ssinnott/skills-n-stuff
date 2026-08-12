@@ -24,6 +24,7 @@ assert.equal(getSessionId("---\npi-session: —\n---\n"), null, "placeholder das
 // task lines
 const doc = "# T\n\n- [ ] Build the chat view with [[rpc-notes]]\n- [x] Done thing\nnot a task\n";
 const t = taskAt(doc, 2);
+const t2 = t;
 assert.ok(t && !t.checked);
 assert.equal(t.slug, "build-the-chat-view-with-rpc-notes");
 assert.equal(taskAt(doc, 3).checked, true);
@@ -79,15 +80,15 @@ assert.equal(taskSessionRef(rs, 2), ".pi-sessions/xyz.jsonl");
 
 // outcome parsing
 assert.deepEqual(parseOutcome("all wrapped up\nDONE — review: reviews/plan.md"),
-  { status: "done", reviewPath: "reviews/plan.md", prs: [] });
+  { status: "done", reviewPath: "reviews/plan.md", repoPath: null, prs: [] });
 assert.deepEqual(parseOutcome("DONE - review: notes/x.qmd"),
-  { status: "done", reviewPath: "notes/x.qmd", prs: [] });
+  { status: "done", reviewPath: "notes/x.qmd", repoPath: null, prs: [] });
 assert.deepEqual(parseOutcome("refactor finished\nDONE"),
-  { status: "done", reviewPath: null, prs: [] });
+  { status: "done", reviewPath: null, repoPath: null, prs: [] });
 assert.deepEqual(parseOutcome("BLOCKED: missing credentials"),
-  { status: "failed", reviewPath: null, prs: [] });
+  { status: "failed", reviewPath: null, repoPath: null, prs: [] });
 assert.deepEqual(parseOutcome("did DONE things but BLOCKED on tests"),
-  { status: "failed", reviewPath: null, prs: [] });
+  { status: "failed", reviewPath: null, repoPath: null, prs: [] });
 
 // PR outcomes put the task in review
 const multi = parseOutcome(
@@ -100,6 +101,23 @@ assert.deepEqual(multi.prs, [
 assert.deepEqual(parseOutcome("DONE — pr: https://github.com/o/r/pull/9").prs,
   [{ url: "https://github.com/o/r/pull/9" }]);
 assert.equal(parseOutcome("PR: https://github.com/o/r/pull/9\nBLOCKED on CI").status, "failed");
+const withRepo = parseOutcome("REPO: /home/u/code/webapp\nPR: https://github.com/o/r/pull/7\nDONE");
+assert.equal(withRepo.repoPath, "/home/u/code/webapp");
+assert.equal(withRepo.status, "review");
+
+// generic markers: repo ref coexists with session ref, both survive status changes
+import { taskRepoRef, attachRepoRef, taskMarker } from "./docbind.mjs";
+let mdoc = attachSessionRef(doc, 2, ".pi-sessions/abc.jsonl");
+mdoc = attachRepoRef(mdoc, 2, "/home/u/code/webapp");
+assert.equal(taskSessionRef(mdoc, 2), ".pi-sessions/abc.jsonl");
+assert.equal(taskRepoRef(mdoc, 2), "/home/u/code/webapp");
+mdoc = setTaskStatus(mdoc, 2, "review");
+assert.equal(taskSessionRef(mdoc, 2), ".pi-sessions/abc.jsonl", "session ref survives");
+assert.equal(taskRepoRef(mdoc, 2), "/home/u/code/webapp", "repo ref survives");
+assert.ok(!taskAt(mdoc, 2).text.includes("pi:"), "hidden markers stripped from text");
+assert.ok(taskAt(mdoc, 2).text.endsWith("🔃"), "status marker stays visible");
+assert.equal(taskAt(mdoc, 2).slug, t2.slug, "slug unchanged by markers");
+assert.equal(taskMarker(mdoc, 2, "nope"), null);
 
 // PR children under a task line
 import { findPRChildren, appendPRChildren, setPRChildState, parentTaskOf } from "./docbind.mjs";

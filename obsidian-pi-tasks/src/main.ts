@@ -24,8 +24,6 @@ export interface PiTasksSettings {
     piBinaryPath: string;
     /** Command used to launch difit (the diff review UI); run with shell. */
     difitCommand: string;
-    /** Launch difit automatically when a task agent finishes with DONE. */
-    difitOnDone: boolean;
     /** Path to the GitHub CLI, used to refresh PR states. */
     ghPath: string;
 }
@@ -33,7 +31,6 @@ export interface PiTasksSettings {
 export const DEFAULT_SETTINGS: PiTasksSettings = {
     piBinaryPath: "pi",
     difitCommand: "npx difit",
-    difitOnDone: true,
     ghPath: "gh",
 };
 
@@ -219,8 +216,10 @@ export default class PiTasksPlugin extends Plugin {
     }
 
     /**
-     * Open the review target of the task line under the cursor: its
-     * [[review]] link in the review pane, else difit over the diff.
+     * Open the review target of the task line under the cursor. Documents
+     * (the task's [[review]] link) open in the review pane; a task with
+     * PRs and a repo ref gets difit over the PR's branch range in that
+     * repo. Diff review is only for PRs — never for documents.
      */
     private async openTaskReview(): Promise<void> {
         const ctx = this.taskLineContext();
@@ -232,8 +231,43 @@ export default class PiTasksPlugin extends Plugin {
             : null;
         if (target) {
             await this.openInReviewPane(target.path);
+            return;
+        }
+        const repo = docbind.taskRepoRef(ctx.text, ctx.line);
+        const child = docbind.findPRChildren(ctx.text)
+            .find((c) => docbind.parentTaskOf(ctx.text, c.line) === ctx.line && c.state === "open")
+            ?? docbind.findPRChildren(ctx.text)
+                .find((c) => docbind.parentTaskOf(ctx.text, c.line) === ctx.line);
+        if (repo && child) {
+            await this.reviewPRInDifit(repo, child.url);
+        } else if (child) {
+            window.open(child.url);
         } else {
-            this.launchDifit();
+            new Notice("No review link or PRs on this task line");
+        }
+    }
+
+    /** difit over a PR's branch range, in the repo where the work happened. */
+    private async reviewPRInDifit(repoPath: string, prUrl: string): Promise<void> {
+        const refs = await new Promise<{ head?: string; base?: string } | null>((resolve) => {
+            const child = spawn(this.settings.ghPath,
+                ["pr", "view", prUrl, "--json", "headRefName,baseRefName"], {});
+            let out = "";
+            child.stdout?.on("data", (d) => { out += String(d); });
+            child.on("error", () => resolve(null));
+            child.on("exit", (code) => {
+                if (code !== 0) return resolve(null);
+                try {
+                    const j = JSON.parse(out);
+                    resolve({ head: j.headRefName, base: j.baseRefName });
+                } catch { resolve(null); }
+            });
+        });
+        if (refs?.head && refs.base) {
+            this.launchDifit(`${refs.head} ${refs.base}`, repoPath);
+        } else {
+            new Notice("Could not resolve PR branches via gh — opening on the host");
+            window.open(prUrl);
         }
     }
 
@@ -281,13 +315,13 @@ export default class PiTasksPlugin extends Plugin {
     private difitProcess: ChildProcess | null = null;
 
     /**
-     * Launch difit over the vault's uncommitted changes ("difit ." — the
-     * changes a task agent just made). One difit at a time: relaunching
+     * Launch difit — the diff review surface, used for PRs only (documents
+     * are reviewed in the review pane). One difit at a time: relaunching
      * replaces the previous instance. difit opens the browser itself; its
      * line comments flow back via its Copy All Prompt button, pasted into
      * the task's session tab.
      */
-    launchDifit(target = "."): void {
+    launchDifit(target = ".", cwd?: string): void {
         const adapter = this.app.vault.adapter as unknown as { getBasePath?: () => string };
         if (typeof adapter.getBasePath !== "function") {
             new Notice("difit review requires the desktop app");
@@ -295,7 +329,7 @@ export default class PiTasksPlugin extends Plugin {
         }
         this.stopDifit();
         const cmd = `${this.settings.difitCommand} ${target}`;
-        const child = spawn(cmd, { shell: true, cwd: adapter.getBasePath() });
+        const child = spawn(cmd, { shell: true, cwd: cwd ?? adapter.getBasePath() });
         this.difitProcess = child;
         child.on("error", (err) => {
             new Notice(`difit failed to start: ${err.message}`);
@@ -426,31 +460,27 @@ export default class PiTasksPlugin extends Plugin {
                     console.warn("[pi-tasks] get_last_assistant_text failed:", err);
                 }
 
-                const { status, reviewPath, prs } = docbind.parseOutcome(text);
+                const { status, reviewPath, repoPath, prs } = docbind.parseOutcome(text);
                 const suffix = reviewPath
                     ? `([[${reviewPath.replace(/\.md$/, "")}|review]])`
                     : undefined;
                 try {
-                    await this.app.vault.process(file, (t) =>
-                        docbind.appendPRChildren(
-                            docbind.setTaskStatus(t, line, status, suffix),
-                            line, prs,
-                        ),
-                    );
+                    await this.app.vault.process(file, (t) => {
+                        t = docbind.setTaskStatus(t, line, status, suffix);
+                        if (repoPath) t = docbind.attachRepoRef(t, line, repoPath);
+                        return docbind.appendPRChildren(t, line, prs);
+                    });
                 } catch (err) {
                     console.error("[pi-tasks] Failed to write task status:", err);
                 }
                 new Notice(status === "done" ? `Task done: ${file.basename}`
                     : status === "review" ? `Task in review (${prs.length} PR${prs.length === 1 ? "" : "s"}): ${file.basename}`
                     : `Task did not complete: ${file.basename}`);
-                if (status === "done") {
-                    // Context-dependent review surface: a declared document
-                    // opens in the review pane; code changes go to difit.
-                    if (reviewPath) {
-                        await this.openInReviewPane(reviewPath);
-                    } else if (this.settings.difitOnDone) {
-                        this.launchDifit();
-                    }
+                // Documents open in the review pane. Diff review is only
+                // for PRs (via "Open review for task"); nothing auto-opens
+                // for plain DONE.
+                if (status === "done" && reviewPath) {
+                    await this.openInReviewPane(reviewPath);
                 }
             })();
         });
@@ -655,16 +685,5 @@ class PiTasksSettingTab extends PluginSettingTab {
                     })
             );
 
-        new Setting(containerEl)
-            .setName("Review in difit when a task finishes")
-            .setDesc("Automatically open difit on the vault's uncommitted changes when a task agent reports DONE")
-            .addToggle((toggle) =>
-                toggle
-                    .setValue(this.plugin.settings.difitOnDone)
-                    .onChange(async (value) => {
-                        this.plugin.settings.difitOnDone = value;
-                        await this.plugin.saveSettings();
-                    })
-            );
     }
 }

@@ -64,12 +64,13 @@ document is the durable artifact — sessions are its working memory.
   honored by the seed prompt — the plugin adds no workflow machinery.
   Rejected: background polling (a command the user runs keeps the plugin
   serverless and the doc authoritative).
-- difit is the code-review surface: on a task agent's DONE (or the
-  "Review changes in difit" command), the plugin launches `difit .` over
-  the vault's uncommitted changes; line comments flow back via difit's
-  Copy All Prompt into the task's session tab. Prose review stays `@pi`
-  markers in the doc — line-anchored code comments and text-anchored doc
-  comments, one agent behind both.
+- Diff review is only for PRs, never for documents. difit runs in the
+  repo where the work happened (agents report "REPO: <path>", stored as a
+  hidden marker), over the PR's branch range resolved via gh; its line
+  comments flow back via Copy All Prompt into the task's session tab.
+  Documents are always reviewed as documents — review pane plus `@pi`
+  markers. Plain DONE opens nothing. Rejected: auto-difit over the vault
+  on DONE (it diffed prose, and the vault isn't where code work lives).
 
 ## Build plan
 
