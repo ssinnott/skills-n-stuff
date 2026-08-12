@@ -129,8 +129,10 @@ export default class PiTasksPlugin extends Plugin {
     // --- PR tracking ---
 
     /**
-     * Sweep the note's PR child lines, ask `gh` for each PR's state, write
-     * changes back, and complete any parent task whose PRs are all merged.
+     * Sweep the note's PR/Issue child lines, ask `gh` for each one's state,
+     * write changes back, and complete any parent task whose PRs are all
+     * merged. Only PR children gate the parent — an Issue child is a
+     * produced artifact whose closing isn't the task's obligation.
      */
     private async refreshPRStatuses(): Promise<void> {
         const file = this.getActiveMarkdownFile();
@@ -138,13 +140,13 @@ export default class PiTasksPlugin extends Plugin {
         const text = await this.app.vault.read(file);
         const children = docbind.findPRChildren(text);
         if (children.length === 0) {
-            new Notice("No PR lines in this note");
+            new Notice("No PR or issue lines in this note");
             return;
         }
-        new Notice(`Checking ${children.length} PR${children.length === 1 ? "" : "s"}…`);
+        new Notice(`Checking ${children.length} PR/issue line${children.length === 1 ? "" : "s"}…`);
         const states = new Map<string, "open" | "merged" | "closed">();
         for (const child of children) {
-            const state = await this.ghPRState(child.url);
+            const state = await this.ghChildState(child.kind, child.url);
             if (state) states.set(child.url, state);
         }
         if (states.size === 0) {
@@ -167,7 +169,8 @@ export default class PiTasksPlugin extends Plugin {
                 if (parent !== null) parents.add(parent);
             }
             for (const parent of parents) {
-                const kids = updated.filter((c) => docbind.parentTaskOf(t, c.line) === parent);
+                const kids = updated.filter((c) =>
+                    c.kind === "PR" && docbind.parentTaskOf(t, c.line) === parent);
                 if (kids.length && kids.every((c) => c.state === "merged")) {
                     t = docbind.setTaskStatus(t, parent, "done");
                 }
@@ -177,10 +180,11 @@ export default class PiTasksPlugin extends Plugin {
         new Notice("PR statuses updated");
     }
 
-    /** Query one PR's state via the gh CLI; null if unavailable. */
-    private ghPRState(url: string): Promise<"open" | "merged" | "closed" | null> {
+    /** Query one PR's or issue's state via the gh CLI; null if unavailable. */
+    private ghChildState(kind: "PR" | "Issue", url: string): Promise<"open" | "merged" | "closed" | null> {
         return new Promise((resolve) => {
-            const child = spawn(this.settings.ghPath, ["pr", "view", url, "--json", "state"], {});
+            const sub = kind === "PR" ? "pr" : "issue";
+            const child = spawn(this.settings.ghPath, [sub, "view", url, "--json", "state"], {});
             let out = "";
             child.stdout?.on("data", (d) => { out += String(d); });
             child.on("error", () => resolve(null));
@@ -234,16 +238,17 @@ export default class PiTasksPlugin extends Plugin {
             return;
         }
         const repo = docbind.taskRepoRef(ctx.text, ctx.line);
-        const child = docbind.findPRChildren(ctx.text)
-            .find((c) => docbind.parentTaskOf(ctx.text, c.line) === ctx.line && c.state === "open")
-            ?? docbind.findPRChildren(ctx.text)
-                .find((c) => docbind.parentTaskOf(ctx.text, c.line) === ctx.line);
-        if (repo && child) {
-            await this.reviewPRInDifit(repo, child.url);
-        } else if (child) {
-            window.open(child.url);
+        const kids = docbind.findPRChildren(ctx.text)
+            .filter((c) => docbind.parentTaskOf(ctx.text, c.line) === ctx.line);
+        // Diff review is only for PRs; an Issue child just opens on the host.
+        const pr = kids.find((c) => c.kind === "PR" && c.state === "open")
+            ?? kids.find((c) => c.kind === "PR");
+        if (repo && pr) {
+            await this.reviewPRInDifit(repo, pr.url);
+        } else if (pr ?? kids[0]) {
+            window.open((pr ?? kids[0]).url);
         } else {
-            new Notice("No review link or PRs on this task line");
+            new Notice("No review link, PRs, or issues on this task line");
         }
     }
 
@@ -460,7 +465,7 @@ export default class PiTasksPlugin extends Plugin {
                     console.warn("[pi-tasks] get_last_assistant_text failed:", err);
                 }
 
-                const { status, reviewPath, repoPath, prs } = docbind.parseOutcome(text);
+                const { status, reviewPath, repoPath, prs, issues, next } = docbind.parseOutcome(text);
                 const suffix = reviewPath
                     ? `([[${reviewPath.replace(/\.md$/, "")}|review]])`
                     : undefined;
@@ -468,7 +473,8 @@ export default class PiTasksPlugin extends Plugin {
                     await this.app.vault.process(file, (t) => {
                         t = docbind.setTaskStatus(t, line, status, suffix);
                         if (repoPath) t = docbind.attachRepoRef(t, line, repoPath);
-                        return docbind.appendPRChildren(t, line, prs);
+                        t = docbind.appendPRChildren(t, line, prs, issues);
+                        return docbind.appendNextTasks(t, line, next);
                     });
                 } catch (err) {
                     console.error("[pi-tasks] Failed to write task status:", err);

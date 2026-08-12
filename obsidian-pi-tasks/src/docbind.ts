@@ -85,6 +85,8 @@ export function parseOutcome(text: string): {
   reviewPath: string | null;
   repoPath: string | null;
   prs: { url: string; title?: string }[];
+  issues: { url: string; title?: string }[];
+  next: string[];
 } {
   const done = !/\bBLOCKED\b/.test(text) && /\bDONE\b/.test(text);
   const rm = text.match(/\bDONE\b\s*[—–-]*\s*review:\s*(\S+)/i);
@@ -95,8 +97,21 @@ export function parseOutcome(text: string): {
   }
   const dm = text.match(/\bDONE\b\s*[—–-]*\s*pr:\s*(https?:\/\/\S+)/i);
   if (dm && !prs.some((p) => p.url === dm[1])) prs.push({ url: dm[1] });
+  const issues: { url: string; title?: string }[] = [];
+  for (const m of text.matchAll(/^\s*ISSUE:\s*(https?:\/\/\S+?)(?:\s+—\s+(.+?))?\s*$/gim)) {
+    issues.push({ url: m[1], title: m[2]?.trim() });
+  }
+  const next: string[] = [];
+  for (const m of text.matchAll(/^\s*NEXT:\s*(.+?)\s*$/gim)) {
+    next.push(m[1]);
+  }
+  // Only PRs gate completion: a created issue is a produced artifact, a
+  // shipped PR is an obligation still in flight.
   const status = !done ? "failed" : prs.length > 0 ? "review" : "done";
-  return { status, reviewPath: rm ? rm[1] : null, repoPath: repo ? repo[1] : null, prs };
+  return {
+    status, reviewPath: rm ? rm[1] : null, repoPath: repo ? repo[1] : null,
+    prs, issues, next,
+  };
 }
 
 export function slugify(text: string): string {
@@ -131,12 +146,13 @@ export function setTaskStatus(
 
 export interface PRChild {
   line: number;
+  kind: "PR" | "Issue";
   title: string;
   url: string;
   state: "open" | "merged" | "closed";
 }
 
-const PR_CHILD = /^(\s*)- \[([ xX])\] PR: \[([^\]]+)\]\((\S+?)\)(?:\s+—\s+(open|merged|closed))?\s*$/;
+const PR_CHILD = /^(\s*)- \[([ xX])\] (PR|Issue): \[([^\]]+)\]\((\S+?)\)(?:\s+—\s+(open|merged|closed))?\s*$/;
 
 /** All PR child lines in a note. */
 export function findPRChildren(noteText: string): PRChild[] {
@@ -145,28 +161,34 @@ export function findPRChildren(noteText: string): PRChild[] {
     const m = raw.match(PR_CHILD);
     if (m) {
       out.push({
-        line: i, title: m[3], url: m[4],
-        state: (m[5] as PRChild["state"]) ?? (m[2] !== " " ? "merged" : "open"),
+        line: i, kind: m[3] as PRChild["kind"], title: m[4], url: m[5],
+        state: (m[6] as PRChild["state"]) ?? (m[2] !== " " ? "merged" : "open"),
       });
     }
   });
   return out;
 }
 
-/** Insert PR child lines under a task (skipping already-listed URLs). */
+/** Insert PR/Issue child lines under a task (skipping already-listed URLs). */
 export function appendPRChildren(
-  noteText: string, taskLine: number, prs: { url: string; title?: string }[],
+  noteText: string, taskLine: number,
+  prs: { url: string; title?: string }[],
+  issues: { url: string; title?: string }[] = [],
 ): string {
   const lines = noteText.split("\n");
   const m = lines[taskLine]?.match(TASK);
   if (!m) return noteText;
   const existing = new Set(findPRChildren(noteText).map((c) => c.url));
   const indent = m[1] + "  ";
-  const fresh = prs.filter((pr) => !existing.has(pr.url)).map((pr) => {
-    const n = pr.url.match(/\/(?:pull|merge_requests)\/(\d+)/);
-    const title = pr.title ?? (n ? `#${n[1]}` : pr.url);
-    return `${indent}- [ ] PR: [${title}](${pr.url}) — open`;
-  });
+  const render = (kind: "PR" | "Issue") => (item: { url: string; title?: string }) => {
+    const n = item.url.match(/\/(?:pull|merge_requests|issues)\/(\d+)/);
+    const title = item.title ?? (n ? `#${n[1]}` : item.url);
+    return `${indent}- [ ] ${kind}: [${title}](${item.url}) — open`;
+  };
+  const fresh = [
+    ...prs.filter((x) => !existing.has(x.url)).map(render("PR")),
+    ...issues.filter((x) => !existing.has(x.url)).map(render("Issue")),
+  ];
   if (fresh.length) lines.splice(taskLine + 1, 0, ...fresh);
   return lines.join("\n");
 }
@@ -176,8 +198,35 @@ export function setPRChildState(noteText: string, line: number, state: PRChild["
   const lines = noteText.split("\n");
   const m = lines[line]?.match(PR_CHILD);
   if (!m) return noteText;
-  const box = state === "merged" ? "x" : " ";
-  lines[line] = `${m[1]}- [${box}] PR: [${m[3]}](${m[4]}) — ${state}`;
+  const kind = m[3] as PRChild["kind"];
+  const complete = state === "merged" || (kind === "Issue" && state === "closed");
+  const box = complete ? "x" : " ";
+  lines[line] = `${m[1]}- [${box}] ${kind}: [${m[4]}](${m[5]}) — ${state}`;
+  return lines.join("\n");
+}
+
+/**
+ * Materialize NEXT: follow-ups as sibling task lines after the task and
+ * its children — the chaining primitive: one workflow's outcome becomes
+ * the next launchable task, with artifact links carried in the text.
+ */
+export function appendNextTasks(noteText: string, taskLine: number, next: string[]): string {
+  if (next.length === 0) return noteText;
+  const lines = noteText.split("\n");
+  const m = lines[taskLine]?.match(TASK);
+  if (!m) return noteText;
+  const indent = m[1];
+  let insert = taskLine + 1;
+  while (insert < lines.length) {
+    const ind = (lines[insert].match(/^\s*/) ?? [""])[0];
+    if (lines[insert].trim() === "" || ind.length <= indent.length) break;
+    insert++;
+  }
+  const existing = new Set(
+    lines.map((l) => l.match(TASK)?.[3]?.replace(PI_MARKER, "").trim()).filter(Boolean),
+  );
+  const fresh = next.filter((n) => !existing.has(n)).map((n) => `${indent}- [ ] ${n}`);
+  if (fresh.length) lines.splice(insert, 0, ...fresh);
   return lines.join("\n");
 }
 
@@ -233,8 +282,11 @@ export function taskPrompt(task: TaskLine, notePath: string, linkedPaths: string
     `is a document a reviewer should read (vault-relative path); one ` +
     `"PR: <url> — <title>" line per pull request you opened plus one ` +
     `"REPO: <absolute path>" line naming the repository you worked in, ` +
-    `then "DONE", if the work went out as pull requests; plain "DONE" for ` +
-    `direct code changes; "BLOCKED" and why if you are stuck. Never ` +
-    `invent URLs or paths.`
+    `then "DONE", if the work went out as pull requests; one ` +
+    `"ISSUE: <url> — <title>" line per issue you filed; one ` +
+    `"NEXT: <task text>" line per follow-up task the outcome calls for ` +
+    `(include the artifact's link in the text so the next agent starts ` +
+    `from it); plain "DONE" for direct code changes; "BLOCKED" and why ` +
+    `if you are stuck. Never invent URLs or paths.`
   );
 }

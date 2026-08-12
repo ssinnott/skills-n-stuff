@@ -64,6 +64,19 @@ document is the durable artifact — sessions are its working memory.
   honored by the seed prompt — the plugin adds no workflow machinery.
   Rejected: background polling (a command the user runs keeps the plugin
   serverless and the doc authoritative).
+- Workflows unify through the outcome protocol, not a workflow engine.
+  A workflow (plan-to-pr, issue research, build-failure triage, snyk
+  update, support triage) is a skill named in the task text; all of them
+  end in the same verbs. `ISSUE: <url> — <title>` records a filed issue
+  as a child line — tracked, box checked when closed, but never gating
+  completion, because creating the issue was the task. `NEXT: <task
+  text>` materializes a fresh sibling task carrying the artifact's links
+  — the "cache" that lets one workflow's result seed the next
+  (issue-research ends with NEXT: fix via /plan-to-pr; that task ends
+  with PR: lines). Chains stay human-launched and doc-visible. Rejected:
+  auto-launching NEXT tasks (silent fan-out, no review gate) and
+  plugin-side workflow definitions (judgment belongs in evaluable
+  skills, drawer pattern).
 - Diff review is only for PRs, never for documents. difit runs in the
   repo where the work happened (agents report "REPO: <path>", stored as a
   hidden marker), over the PR's branch range resolved via gh; its line

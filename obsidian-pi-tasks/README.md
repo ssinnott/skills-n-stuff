@@ -92,8 +92,9 @@ Then in Obsidian: Settings → Community plugins → enable **Pi Tasks**.
 - **Resolve @pi comments in this note** — send the resolution instruction
   to the note's bound session.
 - **Review changes in difit** — manual difit launch, any time.
-- **Update PR statuses in this note** — sweep PR child lines via the gh
-  CLI; tasks complete when all their PRs merge.
+- **Update PR statuses in this note** — sweep PR and Issue child lines
+  via the gh CLI; tasks complete when all their PRs merge (issues are
+  tracked but never block completion).
 - **Switch model (active pi tab)** — change the model for the focused
   session.
 
@@ -104,6 +105,35 @@ Then in Obsidian: Settings → Community plugins → enable **Pi Tasks**.
 - **gh path** (default `gh`) — used for PR status refresh and resolving
   PR branches for difit review.
 
+## Workflows
+
+The plugin has no workflow engine — a workflow is a skill or slash
+command named in the task text, and the seed prompt tells the agent to
+follow it. What unifies them is the outcome protocol every agent speaks
+on its final lines:
+
+- `DONE — review: <path>` — the deliverable is a document; it opens in
+  the review pane.
+- `PR: <url> — <title>` (+ `REPO: <path>`) — work shipped as pull
+  requests; the task enters review (🔃) with one child line per PR and
+  completes only when they all merge.
+- `ISSUE: <url> — <title>` — an issue the agent filed. Tracked as a
+  child line, box checked when it closes, but it never blocks the task:
+  creating the issue *was* the work.
+- `NEXT: <task text>` — a follow-up the outcome calls for. It
+  materializes as a fresh sibling task line carrying the artifact's
+  links, so one workflow's result is cached in the doc as the next
+  workflow's launchable starting point.
+- `DONE` / `BLOCKED` — direct completion or a stuck report.
+
+That's the mixin: an issue-research task ends with `ISSUE:` + `NEXT: fix
+it via /plan-to-pr`, you launch the materialized task when ready, and it
+ends with `PR:` lines that track to merged. Build-failure triage, snyk
+updates, and support tickets all fit the same loop — each is a task line
+naming its workflow, each leaves artifacts and optionally the next task
+behind. Chains stay human-launched: nothing auto-fires, the doc shows
+every step.
+
 ## How it fits together
 
 Task lines carry their own wiring — a visible review link and a hidden
@@ -111,7 +141,6 @@ session comment — so the document, not the plugin, stores the
 task↔session↔review relationships; everything survives sync, rename, and
 restarts. Sessions are `.jsonl` files under `.pi-sessions/`; closing a tab
 kills its pi process, reopening resumes from the file. Agents declare
-their outcome: `DONE — review: <path>` for a document, `PR:` lines plus a
-`REPO:` line for pull requests (tracked as child lines to merge), plain
-DONE otherwise. Diff review is only for PRs. Design decisions and their
-rejected alternatives are in [DESIGN.md](DESIGN.md).
+their outcome via the protocol above; the plugin only routes and records.
+Diff review is only for PRs. Design decisions and their rejected
+alternatives are in [DESIGN.md](DESIGN.md).

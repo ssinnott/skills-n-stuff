@@ -79,16 +79,17 @@ assert.ok(rline.includes("([[reviews/out]])"));
 assert.equal(taskSessionRef(rs, 2), ".pi-sessions/xyz.jsonl");
 
 // outcome parsing
+const empty = { repoPath: null, prs: [], issues: [], next: [] };
 assert.deepEqual(parseOutcome("all wrapped up\nDONE — review: reviews/plan.md"),
-  { status: "done", reviewPath: "reviews/plan.md", repoPath: null, prs: [] });
+  { status: "done", reviewPath: "reviews/plan.md", ...empty });
 assert.deepEqual(parseOutcome("DONE - review: notes/x.qmd"),
-  { status: "done", reviewPath: "notes/x.qmd", repoPath: null, prs: [] });
+  { status: "done", reviewPath: "notes/x.qmd", ...empty });
 assert.deepEqual(parseOutcome("refactor finished\nDONE"),
-  { status: "done", reviewPath: null, repoPath: null, prs: [] });
+  { status: "done", reviewPath: null, ...empty });
 assert.deepEqual(parseOutcome("BLOCKED: missing credentials"),
-  { status: "failed", reviewPath: null, repoPath: null, prs: [] });
+  { status: "failed", reviewPath: null, ...empty });
 assert.deepEqual(parseOutcome("did DONE things but BLOCKED on tests"),
-  { status: "failed", reviewPath: null, repoPath: null, prs: [] });
+  { status: "failed", reviewPath: null, ...empty });
 
 // PR outcomes put the task in review
 const multi = parseOutcome(
@@ -104,6 +105,29 @@ assert.equal(parseOutcome("PR: https://github.com/o/r/pull/9\nBLOCKED on CI").st
 const withRepo = parseOutcome("REPO: /home/u/code/webapp\nPR: https://github.com/o/r/pull/7\nDONE");
 assert.equal(withRepo.repoPath, "/home/u/code/webapp");
 assert.equal(withRepo.status, "review");
+
+// issues are produced artifacts — they do NOT gate completion
+const issued = parseOutcome(
+  "ISSUE: https://github.com/o/r/issues/41 — flaky login test\nISSUE: https://github.com/o/r/issues/42\nDONE");
+assert.equal(issued.status, "done", "issues alone leave the task done, not in review");
+assert.deepEqual(issued.issues, [
+  { url: "https://github.com/o/r/issues/41", title: "flaky login test" },
+  { url: "https://github.com/o/r/issues/42", title: undefined },
+]);
+// NEXT lines are follow-up tasks; they chain, they don't gate
+const chained = parseOutcome(
+  "NEXT: Fix the flaky login test from https://github.com/o/r/issues/41\nNEXT: Audit the other auth tests\nDONE");
+assert.equal(chained.status, "done");
+assert.deepEqual(chained.next, [
+  "Fix the flaky login test from https://github.com/o/r/issues/41",
+  "Audit the other auth tests",
+]);
+// mixed outcome: PR gates, issue and next ride along
+const mixed = parseOutcome(
+  "PR: https://github.com/o/r/pull/50 — the fix\nISSUE: https://github.com/o/r/issues/51 — follow-up refactor\nNEXT: Land the refactor from https://github.com/o/r/issues/51\nDONE");
+assert.equal(mixed.status, "review", "the PR still gates");
+assert.equal(mixed.issues.length, 1);
+assert.equal(mixed.next.length, 1);
 
 // generic markers: repo ref coexists with session ref, both survive status changes
 import { taskRepoRef, attachRepoRef, taskMarker } from "./docbind.mjs";
@@ -143,6 +167,40 @@ assert.ok(!finished.split("\n")[2].includes("🔃"));
 assert.ok(finished.split("\n")[2].startsWith("- [x] Ship dark mode"));
 const inReview = setTaskStatus(pdoc, 2, "review");
 assert.ok(inReview.split("\n")[2].endsWith("🔃"));
+
+// Issue children: tracked like PRs but closed (not merged) checks the box
+let idoc = "# T\n\n- [ ] Research the login flakiness\n";
+idoc = appendPRChildren(idoc, 2, [], [{ url: "https://github.com/o/r/issues/41", title: "flaky login" }]);
+let ikids = findPRChildren(idoc);
+assert.equal(ikids.length, 1);
+assert.equal(ikids[0].kind, "Issue");
+assert.equal(ikids[0].title, "flaky login");
+assert.equal(ikids[0].state, "open");
+assert.ok(idoc.split("\n")[3].startsWith("  - [ ] Issue:"));
+idoc = appendPRChildren(idoc, 2, [], [{ url: "https://github.com/o/r/issues/41" }]);   // idempotent
+assert.equal(findPRChildren(idoc).length, 1);
+idoc = setPRChildState(idoc, 3, "closed");
+ikids = findPRChildren(idoc);
+assert.equal(ikids[0].state, "closed");
+assert.ok(idoc.split("\n")[3].includes("- [x]"), "closed checks an issue's box");
+// untitled issue falls back to #number
+const untitled = appendPRChildren("- [ ] T\n", 0, [], [{ url: "https://github.com/o/r/issues/9" }]);
+assert.ok(untitled.includes("Issue: [#9](https://github.com/o/r/issues/9)"));
+
+// NEXT chaining: follow-ups materialize as sibling tasks after the children block
+import { appendNextTasks } from "./docbind.mjs";
+let ndoc = "# T\n\n- [x] Research flakiness\n  - [x] Issue: [#41](https://github.com/o/r/issues/41) — closed\n- [ ] Unrelated task\n";
+ndoc = appendNextTasks(ndoc, 2, ["Fix the flaky test from https://github.com/o/r/issues/41"]);
+let nlines = ndoc.split("\n");
+assert.equal(nlines[4], "- [ ] Fix the flaky test from https://github.com/o/r/issues/41",
+  "inserted after the child block, before the sibling");
+assert.equal(nlines[5], "- [ ] Unrelated task");
+ndoc = appendNextTasks(ndoc, 2, ["Fix the flaky test from https://github.com/o/r/issues/41"]);   // dedup
+assert.equal(ndoc.split("\n").filter((l) => l.includes("Fix the flaky test")).length, 1);
+assert.equal(appendNextTasks(ndoc, 2, []), ndoc, "no-op on empty");
+// indented parent keeps its indent for the new sibling
+const nested = appendNextTasks("- [ ] Outer\n  - [x] Inner done\n", 1, ["Follow up"]);
+assert.equal(nested.split("\n")[2], "  - [ ] Follow up");
 
 // slug + prompt
 assert.equal(slugify("Fix the %%weird%% thing!!"), "fix-the-weird-thing");
