@@ -105,17 +105,38 @@ def check(assertion, text):
         if not m:
             return ("fail", "no Commits section found")
         lines = [l.strip().lstrip("-* ").strip() for l in m.group(1).splitlines() if l.strip()]
-        bad = [l for l in lines if not re.match(r"^`?[0-9a-f]{7,12}`?\s+-\s+\S", l)]
+        LINE = re.compile(r"^(?:\[`?([0-9a-f]{7,12})`?\]\((\S+)\)|`?([0-9a-f]{7,12})`?)\s+-\s+\S")
+        bad = [l for l in lines if not LINE.match(l)]
         if bad:
             return ("fail", f"malformed commit lines: {bad[:3]}")
-        shas = {re.match(r"^`?([0-9a-f]{7,12})", l).group(1) for l in lines}
-        commits_files = list(HERE.glob("fixtures/*commits.txt"))
-        expected = set()
-        for cf in commits_files:
-            expected |= {l.split()[0] for l in cf.read_text().splitlines() if l.strip()}
+        matches = [LINE.match(l) for l in lines]
+        shas = {m2.group(1) or m2.group(3) for m2 in matches}
+        expected, repo_urls = set(), set()
+        for cf in HERE.glob("fixtures/*commits.txt"):
+            for l in cf.read_text().splitlines():
+                if not l.strip():
+                    continue
+                if l.startswith("repo:"):
+                    repo_urls.add(l.split(None, 1)[1].strip())
+                else:
+                    expected.add(l.split()[0])
         unknown = shas - expected if expected else set()
         if unknown:
             return ("fail", f"shas not in any input commit list: {sorted(unknown)}")
+        if "bare-form" in a or "no markdown links" in a:
+            linked = [l for l in lines if LINE.match(l).group(2)]
+            return ("pass" if not linked else "fail",
+                    f"fabricated links: {linked[:3]}" if linked else f"{len(lines)} bare commit lines, shas verified")
+
+        if "markdown link" in a:
+            unlinked = [l for l in lines if not LINE.match(l).group(2)]
+            if unlinked:
+                return ("fail", f"unlinked commit lines: {unlinked[:3]}")
+            bad_urls = [m2.group(2) for m2 in matches
+                        if not any(m2.group(2).startswith(u) for u in repo_urls)]
+            if bad_urls:
+                return ("fail", f"link URLs not under the declared repo: {bad_urls[:3]}")
+            return ("pass", f"{len(lines)} linked commit lines, shas and URLs verified")
         return ("pass", f"{len(lines)} commit lines, shas verified")
 
     if "status codes" in a or "wire-level" in a or "jargon" in a:

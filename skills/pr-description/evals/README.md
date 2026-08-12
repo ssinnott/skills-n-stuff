@@ -93,7 +93,7 @@ Rebuild the fixture any time with
 2. Add an entry to `evals.json`: realistic prompt, files, assertions.
    Phrase mechanical assertions with the recognized patterns ("under N
    words", "at most N file paths", "no section headings", "status codes",
-   "scannable", "commits section") so `checks.py` picks them up.
+   "scannable", "commits section", "markdown link") so `checks.py` picks them up.
 3. `python3 checks.py --test` to validate the schema.
 4. Prefer fixtures the skill's examples have never seen — that's what keeps
    the suite an overfitting check rather than a mirror.

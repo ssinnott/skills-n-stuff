@@ -21,9 +21,13 @@
 {testing_notes}
 
 <!-- REQUIRED whenever the input carries commits (a branch or range — not
-     a bare diff): one line per commit, oldest first, exactly this shape.
-     Code hosts autolink the short sha into a working link. Omit the whole
-     section for a bare diff — never invent shas.
+     a bare diff): one line per commit, oldest first. When the repository's
+     URL is known (a remote, a host context), link the sha explicitly:
+     `[<short sha>](<repo-url>/commit/<short sha>) - <subject>` — bare shas
+     only autolink inside PR/issue bodies on the host, nowhere else. With
+     no known repo URL, fall back to bare `<short sha> - <subject>` and
+     never fabricate a URL. Omit the whole section for a bare diff — never
+     invent shas.
 
      Before writing anything, judge the history. Wip/fixup commits, vague
      subjects ("updates", "fix"), or several commits reworking the same

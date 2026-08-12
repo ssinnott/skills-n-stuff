@@ -24,8 +24,9 @@ what the new tests cover. Bullets state facts, not orders to the reviewer.
 
 With commits in the input, judge the history first: wip or fixup commits,
 vague subjects, or several commits reworking one spot earn an offer to
-reorganize before describing. End with a Commits section, `<short sha> -
-<subject>` per line — offer mechanics in the template; never invent shas.
+reorganize before describing. End with a Commits section, one linked
+`<short sha> - <subject>` per line — mechanics in the template; never
+invent shas or commit URLs.
 
 Describe effect, not mechanism: what the user or caller experiences, in
 words they'd use aloud — the constants, codes, and identifiers already sit

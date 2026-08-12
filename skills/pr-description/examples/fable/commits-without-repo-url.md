@@ -1,5 +1,5 @@
 <!-- Example output for the input diff at evals/fixtures/complex-call-flow.diff
-     plus the commit list at evals/fixtures/complex-call-flow.commits.txt -->
+     plus the plain commit list at evals/fixtures/complex-call-flow.plain-commits.txt -->
 # Make order submission idempotent end to end
 
 Retried order submissions could charge and ship the same order twice; clients must now send an idempotency key, which dedupes both the API call and downstream fulfillment.
@@ -16,7 +16,7 @@ New tests cover replaying the original receipt for a repeated key (charging only
 
 ## Commits
 
-- [b3a91f2](https://github.com/acme/orderflow/commit/b3a91f2) - Add redis-backed idempotency store
-- [7c40de8](https://github.com/acme/orderflow/commit/7c40de8) - Require idempotency key on order submission and replay stored receipts
-- [e19f4a6](https://github.com/acme/orderflow/commit/e19f4a6) - Thread key through fulfillment queue and dedupe redeliveries
-- [f52c7b9](https://github.com/acme/orderflow/commit/f52c7b9) - Cover replay, missing-key, and redelivery cases in tests
+- b3a91f2 - Add redis-backed idempotency store
+- 7c40de8 - Require idempotency key on order submission and replay stored receipts
+- e19f4a6 - Thread key through fulfillment queue and dedupe redeliveries
+- f52c7b9 - Cover replay, missing-key, and redelivery cases in tests

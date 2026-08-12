@@ -20,10 +20,10 @@ A new test file covers the three paths: a repeated key returns the identical rec
 
 ## Commits
 
-- a11c9f0 - wip
-- 3f8e2d1 - idempotency store
-- 9b7d4c2 - fix
-- c5e1a83 - thread key thru queue
-- d94f7b6 - oops typo
-- e2a6c15 - tests
-- f81b3d9 - more tests + fix worker claim again
+- [a11c9f0](https://github.com/acme/orderflow/commit/a11c9f0) - wip
+- [3f8e2d1](https://github.com/acme/orderflow/commit/3f8e2d1) - idempotency store
+- [9b7d4c2](https://github.com/acme/orderflow/commit/9b7d4c2) - fix
+- [c5e1a83](https://github.com/acme/orderflow/commit/c5e1a83) - thread key thru queue
+- [d94f7b6](https://github.com/acme/orderflow/commit/d94f7b6) - oops typo
+- [e2a6c15](https://github.com/acme/orderflow/commit/e2a6c15) - tests
+- [f81b3d9](https://github.com/acme/orderflow/commit/f81b3d9) - more tests + fix worker claim again
