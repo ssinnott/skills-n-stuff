@@ -53,7 +53,8 @@ def split_output(text):
 
 
 def word_count(text):
-    return len([t for t in re.split(r"\s+", text) if re.search(r"[A-Za-z0-9]", t)])
+    lines = [l for l in text.splitlines() if not re.match(r"\s*-\s*\[[ xX]\]", l)]
+    return len([t for t in re.split(r"\s+", "\n".join(lines)) if re.search(r"[A-Za-z0-9]", t)])
 
 
 def check(assertion, text):
@@ -80,6 +81,18 @@ def check(assertion, text):
         ok = not extra and not callouts
         return ("pass" if ok else "fail",
                 f"disallowed headings: {extra}, {len(callouts)} bold callouts")
+
+    if "repo template" in a and "headings" in a:
+        want = re.findall(r"^##\s*(.+?)\s*$", (HERE / "fixtures" / "repo-pr-template.md").read_text(), re.MULTILINE)
+        got = re.findall(r"^##\s*(.+?)\s*$", text, re.MULTILINE)
+        return ("pass" if got == want else "fail",
+                f"headings {got} vs template {want}")
+
+    if "checkbox" in a and "unsupported" in a:
+        checked = re.findall(r"-\s*\[[xX]\]\s*(.+)", text)
+        bad = [c for c in checked if re.search(r"existing tests passed", c, re.IGNORECASE)]
+        return ("pass" if not bad else "fail",
+                f"claims unverifiable from a diff: {bad}" if bad else f"{len(checked)} boxes ticked, none unverifiable")
 
     if "no blockquote" in a:
         quotes = [l for l in text.splitlines() if l.lstrip().startswith(">")]

@@ -186,6 +186,24 @@
         "No section headings beyond the title except Testing and an optional Commits list, and no bolded callout sentences",
         "Contains no blockquote lines \u2014 the input history is clean, so no reorganization offer"
       ]
+    },
+    {
+      "id": 10,
+      "name": "repo-pr-template",
+      "prompt": "our repo enforces a PR template \u2014 it's in repo-pr-template.md. write the PR description for my branch diff in feature-with-noise.diff following the repo's template, and save it as pr-description.md",
+      "expected_output": "The repo template's five sections kept verbatim and in order, filled with the skill's judgment: Description leads with the retry behavior, noise compressed, honest testing section, 'New feature' ticked, 'All new and existing tests passed' left unticked (unverifiable from a diff).",
+      "files": [
+        "fixtures/feature-with-noise.diff",
+        "fixtures/repo-pr-template.md"
+      ],
+      "assertions": [
+        "Uses the repo template's section headings verbatim and in order, instead of the skill's default shape",
+        "The Description section leads with the retry behavior and compresses the lockfile/formatting churn to a passing mention",
+        "Body (excluding title and checklist items) is under 160 words",
+        "No tuning constants or wire-level jargon in the body: no millisecond values, jitter percentages, HTTP status codes (429, 4xx/5xx, etc.), or identifiers like ECONNRESET",
+        "Ticks no checkbox the diff can't support \u2014 'All new and existing tests passed' stays unsupported/unticked since a diff can't prove test execution",
+        "Contains no Commits section \u2014 the input is a bare diff with no commit history, and shas are never invented"
+      ]
     }
   ]
 }
