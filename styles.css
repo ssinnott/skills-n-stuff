@@ -1,0 +1,600 @@
+/* Pi Plugin — Chat View Styles */
+
+/* ── Layout ── */
+.pi-chat-container {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+/* ── Header Bar ── */
+.pi-header-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 12px;
+    border-bottom: 1px solid var(--background-modifier-border);
+    background: var(--background-secondary);
+    flex-shrink: 0;
+    min-height: 32px;
+    gap: 8px;
+}
+
+.pi-header-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    flex: 1;
+}
+
+.pi-header-right {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+.pi-header-session-name {
+    font-weight: 600;
+    font-size: 0.9em;
+    cursor: pointer;
+    padding: 2px 4px;
+    border-radius: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 200px;
+}
+
+.pi-header-session-name:hover {
+    background: var(--background-modifier-hover);
+}
+
+.pi-header-name-input {
+    font-weight: 600;
+    font-size: 0.9em;
+    border: 1px solid var(--interactive-accent);
+    border-radius: 4px;
+    padding: 1px 4px;
+    background: var(--background-primary);
+    color: var(--text-normal);
+    width: 180px;
+    outline: none;
+}
+
+.pi-header-model {
+    font-size: 0.75em;
+    color: var(--text-muted);
+    background: var(--background-primary-alt);
+    padding: 1px 6px;
+    border-radius: 8px;
+    white-space: nowrap;
+}
+
+.pi-header-cwd {
+    font-size: 0.75em;
+    color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 150px;
+}
+
+.pi-header-new-btn {
+    font-size: 0.8em;
+    padding: 2px 10px;
+    border-radius: 4px;
+    border: 1px solid var(--background-modifier-border);
+    background: var(--background-primary);
+    color: var(--text-muted);
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.pi-header-new-btn:hover {
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
+}
+
+/* ── Chat Body (panel + messages) ── */
+.pi-chat-body {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+}
+
+/* ── Session Panel ── */
+.pi-session-panel {
+    width: 280px;
+    min-width: 280px;
+    border-right: 1px solid var(--background-modifier-border);
+    display: flex;
+    flex-direction: column;
+    background: var(--background-primary);
+    overflow: hidden;
+}
+
+.pi-session-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--background-modifier-border);
+    flex-shrink: 0;
+}
+
+.pi-session-panel-title {
+    font-weight: 600;
+    font-size: 0.9em;
+}
+
+.pi-session-panel-close {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--text-muted);
+    font-size: 1.1em;
+    padding: 0 4px;
+    line-height: 1;
+}
+
+.pi-session-panel-close:hover {
+    color: var(--text-normal);
+}
+
+.pi-session-panel-search {
+    margin: 8px;
+    padding: 4px 8px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    background: var(--background-primary);
+    color: var(--text-normal);
+    font-size: 0.85em;
+    flex-shrink: 0;
+}
+
+.pi-session-panel-search:focus {
+    outline: none;
+    border-color: var(--interactive-accent);
+}
+
+.pi-session-panel-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0 4px 8px;
+}
+
+.pi-session-panel-empty {
+    padding: 16px 12px;
+    color: var(--text-muted);
+    font-size: 0.85em;
+    text-align: center;
+}
+
+.pi-session-entry {
+    display: flex;
+    align-items: flex-start;
+    padding: 8px;
+    margin: 2px 0;
+    border-radius: 4px;
+    cursor: pointer;
+    gap: 4px;
+}
+
+.pi-session-entry:hover {
+    background: var(--background-modifier-hover);
+}
+
+.pi-session-entry-active {
+    background: var(--background-modifier-active-hover);
+    border-left: 3px solid var(--interactive-accent);
+}
+
+.pi-session-entry-content {
+    flex: 1;
+    min-width: 0;
+}
+
+.pi-session-entry-name {
+    font-weight: 600;
+    font-size: 0.85em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.pi-session-entry-meta {
+    font-size: 0.75em;
+    color: var(--text-muted);
+    margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.pi-session-entry-cwd {
+    opacity: 0.7;
+}
+
+.pi-session-entry-preview {
+    font-size: 0.75em;
+    color: var(--text-faint);
+    margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.pi-session-entry-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    opacity: 0;
+    transition: opacity 0.15s;
+    flex-shrink: 0;
+}
+
+.pi-session-entry:hover .pi-session-entry-actions {
+    opacity: 1;
+}
+
+.pi-session-action-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 2px;
+    font-size: 0.8em;
+    border-radius: 2px;
+    line-height: 1;
+}
+
+.pi-session-action-btn:hover {
+    background: var(--background-modifier-hover);
+}
+
+.pi-session-action-delete:hover {
+    background: var(--background-modifier-error-hover);
+}
+
+.pi-header-sessions-btn {
+    font-size: 0.85em;
+    padding: 2px 6px;
+    border-radius: 4px;
+    border: 1px solid var(--background-modifier-border);
+    background: var(--background-primary);
+    color: var(--text-muted);
+    cursor: pointer;
+    margin-right: 4px;
+}
+
+.pi-header-sessions-btn:hover {
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
+}
+
+.pi-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px;
+}
+
+.pi-input-container {
+    border-top: 1px solid var(--background-modifier-border);
+    padding: 8px 12px;
+    min-height: 40px;
+}
+
+/* ── Messages ── */
+.pi-message {
+    margin-bottom: 20px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.pi-message:last-child {
+    border-bottom: none;
+}
+
+.pi-message-label {
+    margin-bottom: 4px;
+}
+
+.pi-message-label-text {
+    font-size: 0.8em;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+/* ── User messages ── */
+.pi-message-user .pi-message-content {
+    background: var(--background-modifier-form-field);
+    border-radius: 8px;
+    padding: 8px 12px;
+}
+
+.pi-message-user .pi-message-content p {
+    margin: 0;
+}
+
+/* ── Steering messages ── */
+.pi-message-steer .pi-message-content {
+    background: var(--background-modifier-error-hover);
+    border-left: 3px solid var(--text-accent);
+}
+
+.pi-message-steer .pi-message-label-text {
+    color: var(--text-accent);
+}
+
+/* ── Assistant messages ── */
+.pi-message-assistant .pi-message-content {
+    padding: 4px 0;
+}
+
+/* Tighten markdown spacing inside assistant messages */
+.pi-message-assistant .pi-message-content > *:first-child {
+    margin-top: 0;
+}
+
+.pi-message-assistant .pi-message-content > *:last-child {
+    margin-bottom: 0;
+}
+
+/* ── Tool call messages ── */
+.pi-message-tool details {
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    padding: 4px 8px;
+}
+
+.pi-message-tool summary {
+    cursor: pointer;
+    font-family: var(--font-monospace);
+    font-size: 0.85em;
+    padding: 4px 0;
+    user-select: none;
+}
+
+.pi-message-tool summary:hover {
+    color: var(--text-accent);
+}
+
+.pi-tool-name {
+    color: var(--text-normal);
+}
+
+.pi-tool-error-indicator {
+    color: var(--text-error);
+    margin-left: 4px;
+}
+
+.pi-message-tool-error details {
+    border-color: var(--text-error);
+}
+
+.pi-tool-body {
+    padding: 8px 0 4px;
+}
+
+.pi-tool-section-label {
+    font-size: 0.75em;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 4px;
+}
+
+.pi-tool-args pre,
+.pi-tool-result pre {
+    font-size: 0.85em;
+    margin: 0;
+    padding: 6px 8px;
+    background: var(--background-primary-alt);
+    border-radius: 4px;
+    overflow-x: auto;
+}
+
+.pi-tool-result {
+    margin-top: 8px;
+}
+
+.pi-tool-result-content {
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+/* ── Input area ── */
+.pi-input-area {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+}
+
+.pi-input-textarea {
+    flex: 1;
+    resize: none;
+    min-height: 36px;
+    max-height: 200px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 6px;
+    padding: 8px;
+    background: var(--background-primary);
+    color: var(--text-normal);
+    font-family: var(--font-text);
+    font-size: var(--font-text-size);
+    line-height: 1.4;
+    overflow-y: auto;
+}
+
+.pi-input-textarea:focus {
+    outline: none;
+    border-color: var(--interactive-accent);
+}
+
+.pi-input-textarea.pi-input-disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* ── Abort button ── */
+.pi-abort-btn {
+    padding: 4px 12px;
+    border-radius: 4px;
+    background: var(--color-red);
+    color: var(--text-on-accent);
+    border: none;
+    cursor: pointer;
+    font-size: 0.85em;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.pi-abort-btn:hover {
+    background: var(--color-red);
+    filter: brightness(0.85);
+}
+
+/* ── Attachment chips ── */
+.pi-attachments {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 4px 0;
+}
+
+.pi-attachment-chip {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    background: var(--background-secondary);
+    border-radius: 12px;
+    padding: 2px 8px;
+    font-size: 0.8em;
+}
+
+.pi-attachment-name {
+    max-width: 150px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.pi-attachment-remove {
+    cursor: pointer;
+    opacity: 0.6;
+    font-size: 1.1em;
+    line-height: 1;
+}
+
+.pi-attachment-remove:hover {
+    opacity: 1;
+}
+
+.pi-attachment-thumb {
+    flex-shrink: 0;
+}
+
+/* ── Thinking ── */
+.pi-thinking {
+    margin-bottom: 8px;
+    font-size: 0.85em;
+    color: var(--text-muted);
+}
+
+.pi-thinking summary {
+    cursor: pointer;
+    user-select: none;
+    font-style: italic;
+}
+
+.pi-thinking-content {
+    padding: 4px 0 4px 12px;
+    border-left: 2px solid var(--background-modifier-border);
+    margin-top: 4px;
+    white-space: pre-wrap;
+}
+
+/* Live thinking — pulsing summary while streaming */
+.pi-thinking-live summary {
+    animation: pi-pulse 1.5s ease-in-out infinite;
+}
+
+.pi-thinking-live .pi-thinking-content {
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+@keyframes pi-pulse {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 1; }
+}
+
+/* ── Status bar ── */
+.pi-status-bar {
+    padding: 0 8px;
+}
+
+/* ── Command suggest ── */
+.pi-command-suggest-item {
+    padding: 4px 0;
+}
+
+.pi-command-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.pi-command-name {
+    font-weight: 600;
+    font-family: var(--font-monospace);
+    font-size: 0.9em;
+}
+
+.pi-command-source {
+    font-size: 0.7em;
+    color: var(--text-faint);
+    background: var(--background-primary-alt);
+    padding: 0 4px;
+    border-radius: 4px;
+}
+
+.pi-command-desc {
+    color: var(--text-muted);
+    font-size: 0.8em;
+    margin-top: 2px;
+}
+
+/* ── Read-only banner ── */
+.pi-readonly-banner {
+    padding: 6px 12px;
+    background: var(--background-secondary);
+    border-top: 1px solid var(--background-modifier-border);
+    color: var(--text-muted);
+    font-size: 0.85em;
+    text-align: center;
+}
+
+/* ── Session list modal ── */
+.pi-session-suggest-item {
+    padding: 4px 0;
+}
+
+.pi-session-date {
+    font-weight: 600;
+    font-size: 0.9em;
+    color: var(--text-normal);
+}
+
+.pi-session-preview {
+    color: var(--text-muted);
+    font-size: 0.8em;
+    margin-top: 2px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
