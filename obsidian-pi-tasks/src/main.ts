@@ -13,6 +13,7 @@
 import { App, FuzzySuggestModal, MarkdownView, Notice, Plugin, PluginSettingTab, Setting, TFile, WorkspaceLeaf } from "obsidian";
 import { randomUUID } from "crypto";
 import { spawn, type ChildProcess } from "child_process";
+import { homedir } from "os";
 
 import { PiChatView, VIEW_TYPE_PI_TASKS_CHAT } from "./view";
 import type { SessionBinding } from "./view";
@@ -26,12 +27,22 @@ export interface PiTasksSettings {
     difitCommand: string;
     /** Path to the GitHub CLI, used to refresh PR states. */
     ghPath: string;
+    /**
+     * Named pi profiles: profile name -> config directory passed to pi as
+     * PI_CODING_AGENT_DIR. Each directory is a full ~/.pi/agent equivalent
+     * (its settings.json decides packages/skills/extensions).
+     */
+    profiles: Record<string, string>;
+    /** Profile used when a task/note names none. Empty = pi's default dir. */
+    defaultProfile: string;
 }
 
 export const DEFAULT_SETTINGS: PiTasksSettings = {
     piBinaryPath: "pi",
     difitCommand: "npx difit",
     ghPath: "gh",
+    profiles: {},
+    defaultProfile: "",
 };
 
 interface ModelOption {
@@ -216,6 +227,7 @@ export default class PiTasksPlugin extends Plugin {
             sessionId: ref,
             notePath: null,
             title: task?.slug ?? "pi task",
+            profile: docbind.taskProfileRef(ctx.text, ctx.line) ?? this.noteProfile(ctx.text),
         });
     }
 
@@ -379,10 +391,12 @@ export default class PiTasksPlugin extends Plugin {
 
         try {
             const sessionId = await this.resolveOrCreateBinding(file);
+            const profile = this.noteProfile(await this.app.vault.read(file));
             await this.openChatTab({
                 sessionId,
                 notePath: file.path,
                 title: file.basename,
+                profile,
             });
         } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
@@ -411,13 +425,19 @@ export default class PiTasksPlugin extends Plugin {
         }
 
         try {
+            const noteText = mdView.editor.getValue();
+            // Profile precedence: task-line marker, note frontmatter, default.
+            // Record the resolved name on the line so reopening matches.
+            const profile = docbind.taskProfileRef(noteText, line)
+                ?? this.noteProfile(noteText);
             const sessionId = await this.newSessionPath();
-            await this.app.vault.process(file, (text) =>
-                docbind.attachSessionRef(
+            await this.app.vault.process(file, (text) => {
+                text = docbind.attachSessionRef(
                     docbind.setTaskStatus(text, line, "running"),
                     line, sessionId,
-                ),
-            );
+                );
+                return profile ? docbind.attachProfileRef(text, line, profile) : text;
+            });
 
             // Resolve [[links]] in the task text to vault paths
             const linkedPaths = docbind.wikiLinks(task.text)
@@ -428,6 +448,7 @@ export default class PiTasksPlugin extends Plugin {
                 sessionId,
                 notePath: null,
                 title: task.slug,
+                profile,
             });
             await view.whenReady();
             view.sendMessage(docbind.taskPrompt(task, file.path, linkedPaths));
@@ -512,6 +533,7 @@ export default class PiTasksPlugin extends Plugin {
                 sessionId,
                 notePath: file.path,
                 title: file.basename,
+                profile: this.noteProfile(text),
             });
             await view.whenReady();
             view.sendMessage(
@@ -568,6 +590,30 @@ export default class PiTasksPlugin extends Plugin {
             const msg = err instanceof Error ? err.message : String(err);
             new Notice(`Failed to fetch models: ${msg}`);
         }
+    }
+
+    // --- Profiles ---
+
+    /**
+     * Resolve a profile name to its config directory (PI_CODING_AGENT_DIR).
+     * Falls back to the default profile when no name is given; returns null
+     * (pi's own ~/.pi/agent) when neither applies. An unknown name warns
+     * rather than silently running with a different toolset.
+     */
+    resolveProfileDir(name: string | null): string | null {
+        const effective = name || this.settings.defaultProfile;
+        if (!effective) return null;
+        const dir = this.settings.profiles[effective];
+        if (!dir) {
+            new Notice(`pi-tasks: unknown profile "${effective}" — using pi's default config`);
+            return null;
+        }
+        return dir.replace(/^~(?=\/|$)/, homedir());
+    }
+
+    /** The profile a note's sessions should use: frontmatter, else default. */
+    private noteProfile(noteText: string): string | null {
+        return docbind.getProfile(noteText) ?? (this.settings.defaultProfile || null);
     }
 
     // --- Session binding helpers ---
@@ -691,5 +737,43 @@ class PiTasksSettingTab extends PluginSettingTab {
                     })
             );
 
+        new Setting(containerEl)
+            .setName("Profiles")
+            .setDesc(
+                "One per line: name = config directory (used as PI_CODING_AGENT_DIR; " +
+                "each is a full ~/.pi/agent equivalent whose settings.json decides " +
+                "packages, skills, and extensions). Tasks pick one via a " +
+                "%% pi:profile=name %% marker or pi-profile frontmatter.",
+            )
+            .addTextArea((text) => {
+                text
+                    .setPlaceholder("research = ~/.pi-profiles/research\nshipping = ~/.pi-profiles/shipping")
+                    .setValue(Object.entries(this.plugin.settings.profiles)
+                        .map(([k, v]) => `${k} = ${v}`).join("\n"))
+                    .onChange(async (value) => {
+                        const profiles: Record<string, string> = {};
+                        for (const line of value.split("\n")) {
+                            const m = line.match(/^\s*([\w-]+)\s*=\s*(.+?)\s*$/);
+                            if (m) profiles[m[1]] = m[2];
+                        }
+                        this.plugin.settings.profiles = profiles;
+                        await this.plugin.saveSettings();
+                    });
+                text.inputEl.rows = 4;
+                text.inputEl.style.width = "100%";
+            });
+
+        new Setting(containerEl)
+            .setName("Default profile")
+            .setDesc("Profile used when a task or note names none. Empty = pi's own ~/.pi/agent.")
+            .addText((text) =>
+                text
+                    .setPlaceholder("")
+                    .setValue(this.plugin.settings.defaultProfile)
+                    .onChange(async (value) => {
+                        this.plugin.settings.defaultProfile = value.trim();
+                        await this.plugin.saveSettings();
+                    })
+            );
     }
 }

@@ -26,6 +26,10 @@ Check, in order (ask for the vault path if you don't know it):
   plugin folder (`npm install && npm run build`) and copy them in.
   Enabling under Community plugins can't be verified from a shell — tell
   the user to check it, don't claim it.
+- **profiles**, when the plugin's `data.json` names any: each mapped
+  directory exists and holds a `settings.json`; an empty profile dir
+  runs pi with no packages at all. Fix by
+  `PI_CODING_AGENT_DIR=<dir> pi install <package>` per profile.
 
 Fix what failed, verify again, and only then move on: install steps for
 missing tools, `git init` for the vault (with consent — it's their

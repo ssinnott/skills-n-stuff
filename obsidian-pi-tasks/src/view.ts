@@ -35,6 +35,8 @@ export interface SessionBinding {
     notePath: string | null;
     /** Tab title */
     title: string;
+    /** pi profile name (resolved to a config dir via plugin settings), or null */
+    profile?: string | null;
 }
 
 type RpcEvent = Record<string, unknown>;
@@ -110,6 +112,7 @@ export class PiChatView extends ItemView {
             sessionId: this.binding.sessionId,
             notePath: this.binding.notePath,
             title: this.binding.title,
+            profile: this.binding.profile ?? null,
         };
     }
 
@@ -120,6 +123,7 @@ export class PiChatView extends ItemView {
                 sessionId: s.sessionId,
                 notePath: typeof s.notePath === "string" ? s.notePath : null,
                 title: typeof s.title === "string" && s.title ? s.title : "Pi Session",
+                profile: typeof s.profile === "string" && s.profile ? s.profile : null,
             };
         }
         await super.setState(state, result);
@@ -265,6 +269,7 @@ export class PiChatView extends ItemView {
             ["--session", sessionArg],
         );
         this.connection = conn;
+        const profileDir = this.plugin.resolveProfileDir(this.binding.profile ?? null);
 
         this.connectionHandler = (event: RpcEvent) => {
             this.streamHandler.handleEvent(event);
@@ -283,7 +288,22 @@ export class PiChatView extends ItemView {
         };
         conn.onEvent(this.connectionHandler);
         conn.onDisconnect(() => this.handleDisconnect());
-        conn.connect();
+        // Upstream's PiConnection spawns with { ...process.env } and no env
+        // parameter, and connect() spawns synchronously — so a profile's
+        // config dir is passed by setting PI_CODING_AGENT_DIR around the
+        // call. Single-threaded, so this cannot leak into other spawns.
+        if (profileDir) {
+            const prev = process.env.PI_CODING_AGENT_DIR;
+            process.env.PI_CODING_AGENT_DIR = profileDir;
+            try {
+                conn.connect();
+            } finally {
+                if (prev === undefined) delete process.env.PI_CODING_AGENT_DIR;
+                else process.env.PI_CODING_AGENT_DIR = prev;
+            }
+        } else {
+            conn.connect();
+        }
 
         void this.restoreHistory();
     }

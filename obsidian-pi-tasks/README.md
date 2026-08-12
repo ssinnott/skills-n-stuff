@@ -104,6 +104,9 @@ Then in Obsidian: Settings → Community plugins → enable **Pi Tasks**.
 - **difit command** (default `npx difit`)
 - **gh path** (default `gh`) — used for PR status refresh and resolving
   PR branches for difit review.
+- **Profiles** — `name = config dir` lines; each directory is passed to
+  that session's pi as `PI_CODING_AGENT_DIR`.
+- **Default profile** — used when a task or note names none.
 
 ## Workflows
 
@@ -136,11 +139,34 @@ every step.
 
 No workflow is baked into the plugin — a workflow is just a skill the
 agent can see, named in the task text. Which skills a session sees is a
-pi loading question (settings, packages, per-profile config dirs), not
-a plugin one: defining a workflow is one `SKILL.md` that describes the
-judgment and ends with the protocol verbs above — nothing needs
-registering with the plugin. The drawer ships **pi-tasks-setup**, a
-meta skill that verifies and repairs this whole toolchain.
+pi loading question, answered per task by profiles (below): defining a
+workflow is one `SKILL.md` that describes the judgment and ends with
+the protocol verbs above — nothing needs registering with the plugin.
+The drawer ships **pi-tasks-setup**, a meta skill that verifies and
+repairs this whole toolchain.
+
+## Profiles
+
+pi has no native profile concept, but it has the seam for one:
+`PI_CODING_AGENT_DIR` overrides its entire config directory (default
+`~/.pi/agent`) — and that directory's `settings.json` owns the
+installed-packages list, so a directory *is* a profile: its own
+packages, skills, extensions, prompts.
+
+The plugin makes profiles per-task. Name them in settings
+(`research = ~/.pi-profiles/research`, one per line), then pick one:
+
+- per task line, with a hidden `%% pi:profile=research %%` marker;
+- per document, with `pi-profile: research` in frontmatter;
+- globally, via the default-profile setting (empty = pi's own config).
+
+Precedence is task line → frontmatter → default. Launching a task
+records the resolved profile on its line, so reopening the session
+later spawns the same kind of agent. To create a profile, make the
+directory and `PI_CODING_AGENT_DIR=~/.pi-profiles/research pi install
+<packages>` into it — each profile is set up exactly like a normal pi
+install. Unknown profile names warn and fall back to pi's default
+config rather than silently running with the wrong toolset.
 
 ## How it fits together
 

@@ -6,12 +6,21 @@
 
 const FRONTMATTER = /^---\n([\s\S]*?)\n---\n?/;
 const SESSION_KEY = /^pi-session:\s*(\S+)\s*$/m;
+const PROFILE_KEY = /^pi-profile:\s*(\S+)\s*$/m;
 
 /** Read the pi-session id from a note's frontmatter, if bound. */
 export function getSessionId(noteText: string): string | null {
   const fm = noteText.match(FRONTMATTER);
   if (!fm) return null;
   const m = fm[1].match(SESSION_KEY);
+  return m && m[1] !== "—" ? m[1] : null;
+}
+
+/** Read the note's default pi profile name from frontmatter, if set. */
+export function getProfile(noteText: string): string | null {
+  const fm = noteText.match(FRONTMATTER);
+  if (!fm) return null;
+  const m = fm[1].match(PROFILE_KEY);
   return m && m[1] !== "—" ? m[1] : null;
 }
 
@@ -73,6 +82,8 @@ export const taskSessionRef = (t: string, l: number) => taskMarker(t, l, "sessio
 export const attachSessionRef = (t: string, l: number, v: string) => attachMarker(t, l, "session", v);
 export const taskRepoRef = (t: string, l: number) => taskMarker(t, l, "repo");
 export const attachRepoRef = (t: string, l: number, v: string) => attachMarker(t, l, "repo", v);
+export const taskProfileRef = (t: string, l: number) => taskMarker(t, l, "profile");
+export const attachProfileRef = (t: string, l: number, v: string) => attachMarker(t, l, "profile", v);
 
 /**
  * Parse a task agent's final text. DONE/BLOCKED decide done vs failed;

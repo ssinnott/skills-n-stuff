@@ -130,7 +130,7 @@ assert.equal(mixed.issues.length, 1);
 assert.equal(mixed.next.length, 1);
 
 // generic markers: repo ref coexists with session ref, both survive status changes
-import { taskRepoRef, attachRepoRef, taskMarker } from "./docbind.mjs";
+import { taskRepoRef, attachRepoRef, taskMarker, taskProfileRef, attachProfileRef, getProfile } from "./docbind.mjs";
 let mdoc = attachSessionRef(doc, 2, ".pi-sessions/abc.jsonl");
 mdoc = attachRepoRef(mdoc, 2, "/home/u/code/webapp");
 assert.equal(taskSessionRef(mdoc, 2), ".pi-sessions/abc.jsonl");
@@ -142,6 +142,21 @@ assert.ok(!taskAt(mdoc, 2).text.includes("pi:"), "hidden markers stripped from t
 assert.ok(taskAt(mdoc, 2).text.endsWith("🔃"), "status marker stays visible");
 assert.equal(taskAt(mdoc, 2).slug, t2.slug, "slug unchanged by markers");
 assert.equal(taskMarker(mdoc, 2, "nope"), null);
+
+// profile: task-line marker and note-level frontmatter default
+assert.equal(taskProfileRef(mdoc, 2), null);
+mdoc = attachProfileRef(mdoc, 2, "research");
+assert.equal(taskProfileRef(mdoc, 2), "research");
+mdoc = setTaskStatus(mdoc, 2, "done");
+assert.equal(taskProfileRef(mdoc, 2), "research", "profile ref survives status change");
+assert.equal(taskSessionRef(mdoc, 2), ".pi-sessions/abc.jsonl", "session ref still intact");
+mdoc = attachProfileRef(mdoc, 2, "shipping");   // idempotent replace
+assert.equal(taskProfileRef(mdoc, 2), "shipping");
+assert.equal((mdoc.split("\n")[2].match(/pi:profile/g) || []).length, 1);
+assert.equal(getProfile(bare), null);
+assert.equal(getProfile("---\npi-profile: research\n---\n# T\n"), "research");
+assert.equal(getProfile("---\npi-session: s1\npi-profile: research\n---\n"), "research");
+assert.equal(getProfile("---\npi-profile: —\n---\n"), null, "placeholder dash is unset");
 
 // PR children under a task line
 import { findPRChildren, appendPRChildren, setPRChildState, parentTaskOf } from "./docbind.mjs";

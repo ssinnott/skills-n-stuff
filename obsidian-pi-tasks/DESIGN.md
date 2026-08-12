@@ -77,6 +77,18 @@ document is the durable artifact — sessions are its working memory.
   auto-launching NEXT tasks (silent fan-out, no review gate) and
   plugin-side workflow definitions (judgment belongs in evaluable
   skills, drawer pattern).
+- Profiles are pi config directories, selected per task. pi has no
+  native profiles, but `PI_CODING_AGENT_DIR` swaps the whole config dir
+  (settings.json = the package list), so a profile is a directory the
+  user `pi install`s into. The plugin maps names to dirs in settings and
+  resolves task line marker → note frontmatter → default; launching
+  records the name on the task line. The env var is set around the
+  synchronous `connect()` call, so the pristine upstream needs no patch.
+  Rejected: shipping workflow skills in this repo (which workflows an
+  agent sees is the user's profile, not the drawer's business — two
+  starter skills were built and removed); an extension for profile
+  switching (extensions load after the config is resolved — selection
+  must happen at spawn, and the spawner is this plugin).
 - Diff review is only for PRs, never for documents. difit runs in the
   repo where the work happened (agents report "REPO: <path>", stored as a
   hidden marker), over the PR's branch range resolved via gh; its line
