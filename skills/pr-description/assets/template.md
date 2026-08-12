@@ -1,3 +1,13 @@
+<!-- If the repository has its own PR template, IT outranks this file:
+     keep its headings verbatim and in order. Precedence when they clash —
+     honesty never yields (no invented claims, no unverifiable checkboxes
+     ticked, no fabricated shas or URLs); then a section's explicit demand
+     (a required file list or error-code list is compliance, not the
+     changelog trap — but satisfy it only inside that section); then this
+     skill's format and voice defaults, which govern everything the repo
+     template doesn't explicitly demand. Sections that don't apply stay,
+     marked "Not applicable" — never deleted, never padded. -->
+
 <!-- Title: imperative, ≤ 70 chars, names the point of the PR -->
 # {title}
 

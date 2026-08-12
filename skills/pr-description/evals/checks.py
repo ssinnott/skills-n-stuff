@@ -53,10 +53,17 @@ def split_output(text):
 
 
 def word_count(text):
-    return len([t for t in re.split(r"\s+", text) if re.search(r"[A-Za-z0-9]", t)])
+    lines = [l for l in text.splitlines() if not re.match(r"\s*-\s*\[[ xX]\]", l)]
+    return len([t for t in re.split(r"\s+", "\n".join(lines)) if re.search(r"[A-Za-z0-9]", t)])
 
 
-def check(assertion, text):
+def get_section(text, title):
+    m = re.search(rf"^##\s*{re.escape(title)}\s*$(.*?)(?=^##\s|\Z)", text,
+                  re.MULTILINE | re.DOTALL)
+    return m.group(1) if m else None
+
+
+def check(assertion, text, ev=None):
     """Return (status, detail): status is 'pass' | 'fail' | 'judge'."""
     body, _ = split_output(text)
     a = assertion.lower()
@@ -80,6 +87,47 @@ def check(assertion, text):
         ok = not extra and not callouts
         return ("pass" if ok else "fail",
                 f"disallowed headings: {extra}, {len(callouts)} bold callouts")
+
+    if "repo template" in a and "headings" in a:
+        tfile = next((f for f in (ev or {}).get("files", []) if "template" in f),
+                     "fixtures/repo-pr-template.md")
+        want = re.findall(r"^##\s*(.+?)\s*$", (HERE / tfile).read_text(), re.MULTILINE)
+        got = re.findall(r"^##\s*(.+?)\s*$", text, re.MULTILINE)
+        return ("pass" if got == want else "fail",
+                f"headings {got} vs template {want}")
+
+    if "checkbox" in a and ("unsupported" in a or "unverifiable" in a or "can't support" in a):
+        checked = re.findall(r"-\s*\[[xX]\]\s*(.+)", text)
+        bad = [c for c in checked
+               if re.search(r"existing tests passed|verified .* in production|code style", c, re.IGNORECASE)]
+        return ("pass" if not bad else "fail",
+                f"claims unverifiable from a diff: {bad}" if bad else f"{len(checked)} boxes ticked, none unverifiable")
+
+    m = re.search(r'"([^"]+)" section names all (\d+) changed files', assertion)
+    if m:
+        sec = get_section(text, m.group(1))
+        n = int(m.group(2))
+        paths = set(PATHLIKE.findall(sec or ""))
+        return ("pass" if sec and len(paths) >= n else "fail",
+                f"{len(paths)} paths in section (want >= {n})")
+
+    m = re.search(r'codes appear only inside the "([^"]+)" section', assertion)
+    if m:
+        sec = get_section(text, m.group(1)) or ""
+        inside = STATUS_CODE.findall(sec)
+        outside = STATUS_CODE.findall(text.replace(sec, ""))
+        ok = bool(inside) and not outside
+        return ("pass" if ok else "fail",
+                f"codes inside: {inside}, leaked outside: {outside}")
+
+    m = re.search(r'"([^"]+)" section (?:is )?(?:kept and )?marked not applicable', a)
+    if m:
+        sec = get_section(text, m.group(1).title() if m.group(1).islower() else m.group(1))
+        if sec is None:
+            sec = get_section(text, "Screenshots")
+        ok = sec is not None and re.search(r"not applicable|n/a", sec, re.IGNORECASE)
+        return ("pass" if ok else "fail",
+                "marked not applicable" if ok else "section missing or padded/invented")
 
     if "no blockquote" in a:
         quotes = [l for l in text.splitlines() if l.lstrip().startswith(">")]
@@ -200,7 +248,7 @@ def grade(output_path, ev):
         results = [(a, *check_repo(path, a)) for a in ev["assertions"]]
     else:
         text = path.read_text()
-        results = [(a, *check(a, text)) for a in ev["assertions"]]
+        results = [(a, *check(a, text, ev)) for a in ev["assertions"]]
     mech = [r for r in results if r[1] != "judge"]
     failed = [r for r in mech if r[1] == "fail"]
     return results, mech, failed
