@@ -46,6 +46,12 @@ document is the durable artifact — sessions are its working memory.
   resolution), not plugin code. The plugin's commands only route
   instructions into the right session; judgment stays in evaluable
   markdown (skills-n-stuff pattern).
+- difit is the code-review surface: on a task agent's DONE (or the
+  "Review changes in difit" command), the plugin launches `difit .` over
+  the vault's uncommitted changes; line comments flow back via difit's
+  Copy All Prompt into the task's session tab. Prose review stays `@pi`
+  markers in the doc — line-anchored code comments and text-anchored doc
+  comments, one agent behind both.
 
 ## Build plan
 
@@ -67,6 +73,8 @@ document is the durable artifact — sessions are its working memory.
       — state lives in the session file); unload closes views. Open: no
       concurrency cap yet, and the gentler stdin-close shutdown needs an
       upstream patch (process handle is private).
+- [x] difit integration: review-on-DONE (setting-gated), the review
+      command, one managed difit process killed on unload.
 - [ ] Drawer skills: task-doc + review-doc templates, comment-resolution
       skill, evals with mechanical checks (markers resolved and removed,
       checkbox structure, honest status).

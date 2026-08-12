@@ -12,6 +12,7 @@
 
 import { App, FuzzySuggestModal, MarkdownView, Notice, Plugin, PluginSettingTab, Setting, TFile, WorkspaceLeaf } from "obsidian";
 import { randomUUID } from "crypto";
+import { spawn, type ChildProcess } from "child_process";
 
 import { PiChatView, VIEW_TYPE_PI_TASKS_CHAT } from "./view";
 import type { SessionBinding } from "./view";
@@ -21,10 +22,16 @@ const SESSION_DIR = ".pi-sessions";
 
 export interface PiTasksSettings {
     piBinaryPath: string;
+    /** Command used to launch difit (the diff review UI); run with shell. */
+    difitCommand: string;
+    /** Launch difit automatically when a task agent finishes with DONE. */
+    difitOnDone: boolean;
 }
 
 export const DEFAULT_SETTINGS: PiTasksSettings = {
     piBinaryPath: "pi",
+    difitCommand: "npx difit",
+    difitOnDone: true,
 };
 
 interface ModelOption {
@@ -93,11 +100,61 @@ export default class PiTasksPlugin extends Plugin {
             name: "Switch model (active pi tab)",
             callback: () => void this.switchModel(),
         });
+
+        this.addCommand({
+            id: "review-in-difit",
+            name: "Review changes in difit",
+            callback: () => this.launchDifit(),
+        });
     }
 
     async onunload(): Promise<void> {
         // View instances are unloaded by Obsidian when the plugin unloads;
         // each PiChatView.onClose destroys its own pi process.
+        this.stopDifit();
+    }
+
+    // --- difit (diff review UI) ---
+
+    private difitProcess: ChildProcess | null = null;
+
+    /**
+     * Launch difit over the vault's uncommitted changes ("difit ." — the
+     * changes a task agent just made). One difit at a time: relaunching
+     * replaces the previous instance. difit opens the browser itself; its
+     * line comments flow back via its Copy All Prompt button, pasted into
+     * the task's session tab.
+     */
+    launchDifit(target = "."): void {
+        const adapter = this.app.vault.adapter as unknown as { getBasePath?: () => string };
+        if (typeof adapter.getBasePath !== "function") {
+            new Notice("difit review requires the desktop app");
+            return;
+        }
+        this.stopDifit();
+        const cmd = `${this.settings.difitCommand} ${target}`;
+        const child = spawn(cmd, { shell: true, cwd: adapter.getBasePath() });
+        this.difitProcess = child;
+        child.on("error", (err) => {
+            new Notice(`difit failed to start: ${err.message}`);
+            if (this.difitProcess === child) this.difitProcess = null;
+        });
+        child.on("exit", (code) => {
+            if (this.difitProcess === child) this.difitProcess = null;
+            // Non-zero without ever serving usually means not a git repo
+            // or difit missing; surface it once rather than silently.
+            if (code !== null && code !== 0) {
+                new Notice(`difit exited with code ${code} — is the vault a git repo?`);
+            }
+        });
+        new Notice("Launching difit review…");
+    }
+
+    private stopDifit(): void {
+        if (this.difitProcess) {
+            this.difitProcess.kill();
+            this.difitProcess = null;
+        }
     }
 
     async loadSettings(): Promise<void> {
@@ -217,6 +274,9 @@ export default class PiTasksPlugin extends Plugin {
                 new Notice(status === "done"
                     ? `Task done: ${file.basename}`
                     : `Task did not complete: ${file.basename}`);
+                if (status === "done" && this.settings.difitOnDone) {
+                    this.launchDifit();
+                }
             })();
         });
     }
@@ -390,6 +450,31 @@ class PiTasksSettingTab extends PluginSettingTab {
                     .setValue(this.plugin.settings.piBinaryPath)
                     .onChange(async (value) => {
                         this.plugin.settings.piBinaryPath = value || "pi";
+                        await this.plugin.saveSettings();
+                    })
+            );
+
+        new Setting(containerEl)
+            .setName("difit command")
+            .setDesc("Command used to launch the difit diff review UI")
+            .addText((text) =>
+                text
+                    .setPlaceholder("npx difit")
+                    .setValue(this.plugin.settings.difitCommand)
+                    .onChange(async (value) => {
+                        this.plugin.settings.difitCommand = value || "npx difit";
+                        await this.plugin.saveSettings();
+                    })
+            );
+
+        new Setting(containerEl)
+            .setName("Review in difit when a task finishes")
+            .setDesc("Automatically open difit on the vault's uncommitted changes when a task agent reports DONE")
+            .addToggle((toggle) =>
+                toggle
+                    .setValue(this.plugin.settings.difitOnDone)
+                    .onChange(async (value) => {
+                        this.plugin.settings.difitOnDone = value;
                         await this.plugin.saveSettings();
                     })
             );
