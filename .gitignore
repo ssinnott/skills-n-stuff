@@ -5,3 +5,4 @@ __pycache__/
 node_modules/
 main.js
 obsidian-pi-tasks/test/docbind.mjs
+obsidian-pi-tasks/styles.css
