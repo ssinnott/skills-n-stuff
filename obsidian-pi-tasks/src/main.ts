@@ -106,6 +106,89 @@ export default class PiTasksPlugin extends Plugin {
             name: "Review changes in difit",
             callback: () => this.launchDifit(),
         });
+
+        this.addCommand({
+            id: "open-task-session",
+            name: "Open session for task under cursor",
+            callback: () => void this.openTaskSession(),
+        });
+
+        this.addCommand({
+            id: "open-task-review",
+            name: "Open review for task under cursor",
+            callback: () => void this.openTaskReview(),
+        });
+    }
+
+    // --- Task-line hub: session and review from the cursor ---
+
+    /** Reopen the session recorded on the task line under the cursor. */
+    private async openTaskSession(): Promise<void> {
+        const ctx = this.taskLineContext();
+        if (!ctx) return;
+        const ref = docbind.taskSessionRef(ctx.text, ctx.line);
+        if (!ref) {
+            new Notice("No session recorded on this task line");
+            return;
+        }
+        const task = docbind.taskAt(ctx.text, ctx.line);
+        await this.openChatTab({
+            sessionId: ref,
+            notePath: null,
+            title: task?.slug ?? "pi task",
+        });
+    }
+
+    /**
+     * Open the review target of the task line under the cursor: its
+     * [[review]] link in the review pane, else difit over the diff.
+     */
+    private async openTaskReview(): Promise<void> {
+        const ctx = this.taskLineContext();
+        if (!ctx) return;
+        const task = docbind.taskAt(ctx.text, ctx.line);
+        const links = task ? docbind.wikiLinks(task.text) : [];
+        const target = links.length
+            ? this.app.metadataCache.getFirstLinkpathDest(links[links.length - 1], ctx.file.path)
+            : null;
+        if (target) {
+            await this.openInReviewPane(target.path);
+        } else {
+            this.launchDifit();
+        }
+    }
+
+    private taskLineContext(): { file: TFile; line: number; text: string } | null {
+        const mdView = this.app.workspace.getActiveViewOfType(MarkdownView);
+        const file = mdView?.file;
+        if (!mdView || !file) {
+            new Notice("No active markdown editor");
+            return null;
+        }
+        return { file, line: mdView.editor.getCursor().line, text: mdView.editor.getValue() };
+    }
+
+    // --- Review pane ---
+
+    private reviewLeaf: WorkspaceLeaf | null = null;
+
+    /**
+     * Open a document in the dedicated review pane — one right-side split
+     * reused across reviews, so "what we are reviewing" is a stable place.
+     */
+    async openInReviewPane(path: string): Promise<void> {
+        const file = this.app.vault.getFileByPath(path)
+            ?? this.app.metadataCache.getFirstLinkpathDest(path, "");
+        if (!file) {
+            new Notice(`Review target not found: ${path}`);
+            return;
+        }
+        const detached = !this.reviewLeaf
+            || (this.reviewLeaf as unknown as { parent?: unknown }).parent == null;
+        if (detached) {
+            this.reviewLeaf = this.app.workspace.getLeaf("split", "vertical");
+        }
+        await this.reviewLeaf!.openFile(file, { active: true });
     }
 
     async onunload(): Promise<void> {
@@ -212,7 +295,10 @@ export default class PiTasksPlugin extends Plugin {
         try {
             const sessionId = await this.newSessionPath();
             await this.app.vault.process(file, (text) =>
-                docbind.setTaskStatus(text, line, "running"),
+                docbind.attachSessionRef(
+                    docbind.setTaskStatus(text, line, "running"),
+                    line, sessionId,
+                ),
             );
 
             // Resolve [[links]] in the task text to vault paths
@@ -261,12 +347,13 @@ export default class PiTasksPlugin extends Plugin {
                     console.warn("[pi-tasks] get_last_assistant_text failed:", err);
                 }
 
-                const status = !/\bBLOCKED\b/.test(text) && /\bDONE\b/.test(text)
-                    ? "done" as const
-                    : "failed" as const;
+                const { status, reviewPath } = docbind.parseOutcome(text);
+                const suffix = reviewPath
+                    ? `([[${reviewPath.replace(/\.md$/, "")}|review]])`
+                    : undefined;
                 try {
                     await this.app.vault.process(file, (t) =>
-                        docbind.setTaskStatus(t, line, status),
+                        docbind.setTaskStatus(t, line, status, suffix),
                     );
                 } catch (err) {
                     console.error("[pi-tasks] Failed to write task status:", err);
@@ -274,8 +361,14 @@ export default class PiTasksPlugin extends Plugin {
                 new Notice(status === "done"
                     ? `Task done: ${file.basename}`
                     : `Task did not complete: ${file.basename}`);
-                if (status === "done" && this.settings.difitOnDone) {
-                    this.launchDifit();
+                if (status === "done") {
+                    // Context-dependent review surface: a declared document
+                    // opens in the review pane; code changes go to difit.
+                    if (reviewPath) {
+                        await this.openInReviewPane(reviewPath);
+                    } else if (this.settings.difitOnDone) {
+                        this.launchDifit();
+                    }
                 }
             })();
         });

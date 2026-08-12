@@ -34,6 +34,7 @@ export interface TaskLine {
 }
 
 const TASK = /^(\s*)- \[([ xX])\]\s+(.*)$/;
+const SESSION_REF = /\s*%%\s*pi:session=(\S+)\s*%%/;
 
 /** Parse the task line at a given line number, if it is one. */
 export function taskAt(noteText: string, line: number): TaskLine | null {
@@ -41,8 +42,33 @@ export function taskAt(noteText: string, line: number): TaskLine | null {
   if (raw === undefined) return null;
   const m = raw.match(TASK);
   if (!m) return null;
-  const text = m[3].trim();
+  const text = m[3].replace(SESSION_REF, "").trim();
   return { line, text, checked: m[2] !== " ", slug: slugify(text) };
+}
+
+/** Read the hidden session reference on a task line, if present. */
+export function taskSessionRef(noteText: string, line: number): string | null {
+  const raw = noteText.split("\n")[line];
+  const m = raw?.match(SESSION_REF);
+  return m ? m[1] : null;
+}
+
+/** Append a hidden %% pi:session=... %% marker to a task line (idempotent). */
+export function attachSessionRef(noteText: string, line: number, sessionPath: string): string {
+  const lines = noteText.split("\n");
+  const raw = lines[line];
+  if (raw === undefined || !TASK.test(raw)) return noteText;
+  lines[line] = SESSION_REF.test(raw)
+    ? raw.replace(SESSION_REF, ` %% pi:session=${sessionPath} %%`)
+    : `${raw} %% pi:session=${sessionPath} %%`;
+  return lines.join("\n");
+}
+
+/** Parse a task agent's final text: DONE / BLOCKED, optional review path. */
+export function parseOutcome(text: string): { status: "done" | "failed"; reviewPath: string | null } {
+  const done = !/\bBLOCKED\b/.test(text) && /\bDONE\b/.test(text);
+  const m = text.match(/\bDONE\b\s*[—–-]*\s*review:\s*(\S+)/i);
+  return { status: done ? "done" : "failed", reviewPath: m ? m[1] : null };
 }
 
 export function slugify(text: string): string {
@@ -62,10 +88,12 @@ export function setTaskStatus(
   const m = lines[line]?.match(TASK);
   if (!m) return noteText;
   const box = status === "done" ? "x" : " ";
-  const clean = m[3].replace(/\s*(⏳|❌)\s*$/u, "").trimEnd();
+  const refMatch = m[3].match(SESSION_REF);
+  const ref = refMatch ? refMatch[0].trim() : "";
+  const clean = m[3].replace(SESSION_REF, "").replace(/\s*(⏳|❌)\s*$/u, "").trimEnd();
   const marker = status === "running" ? " ⏳" : status === "failed" ? " ❌" : "";
   const tail = suffix ? ` ${suffix}` : "";
-  lines[line] = `${m[1]}- [${box}] ${clean}${marker}${tail}`;
+  lines[line] = `${m[1]}- [${box}] ${clean}${marker}${tail}${ref ? ` ${ref}` : ""}`;
   return lines.join("\n");
 }
 
@@ -103,7 +131,10 @@ export function taskPrompt(task: TaskLine, notePath: string, linkedPaths: string
   return (
     `Work on this task from ${notePath}:\n\n${task.text}\n${links}\n\n` +
     `The task document itself is at ${notePath} — read it for surrounding ` +
-    `context before starting. When the task is complete, say DONE on the ` +
-    `final line; if you are blocked, say BLOCKED and why.`
+    `context before starting. When the task is complete, end with a final ` +
+    `line of exactly "DONE — review: <path>" where <path> is the one ` +
+    `document a reviewer should read (vault-relative), or just "DONE" if ` +
+    `the result is code changes rather than a document. If you are ` +
+    `blocked, end with "BLOCKED" and why.`
   );
 }

@@ -56,6 +56,39 @@ assert.deepEqual(
   ["plans/alpha", "notes"],
 );
 
+// session refs on task lines
+import { taskSessionRef, attachSessionRef, parseOutcome } from "./docbind.mjs";
+let rdoc = attachSessionRef(doc, 2, ".pi-sessions/abc.jsonl");
+assert.equal(taskSessionRef(rdoc, 2), ".pi-sessions/abc.jsonl");
+assert.equal(taskSessionRef(rdoc, 3), null);
+rdoc = attachSessionRef(rdoc, 2, ".pi-sessions/xyz.jsonl");   // idempotent replace
+assert.equal(taskSessionRef(rdoc, 2), ".pi-sessions/xyz.jsonl");
+assert.equal((rdoc.split("\n")[2].match(/pi:session/g) || []).length, 1);
+assert.ok(taskAt(rdoc, 2).text === t.text, "hidden ref excluded from task text");
+assert.equal(taskAt(rdoc, 2).slug, t.slug, "hidden ref excluded from slug");
+// status transitions keep the ref at end of line
+let rs = setTaskStatus(rdoc, 2, "running");
+assert.ok(rs.split("\n")[2].includes("⏳"));
+assert.ok(rs.split("\n")[2].endsWith("%% pi:session=.pi-sessions/xyz.jsonl %%"));
+rs = setTaskStatus(rs, 2, "done", "([[reviews/out]])");
+const rline = rs.split("\n")[2];
+assert.ok(rline.startsWith("- [x] Build the chat view"));
+assert.ok(!rline.includes("⏳"));
+assert.ok(rline.includes("([[reviews/out]])"));
+assert.equal(taskSessionRef(rs, 2), ".pi-sessions/xyz.jsonl");
+
+// outcome parsing
+assert.deepEqual(parseOutcome("all wrapped up\nDONE — review: reviews/plan.md"),
+  { status: "done", reviewPath: "reviews/plan.md" });
+assert.deepEqual(parseOutcome("DONE - review: notes/x.qmd"),
+  { status: "done", reviewPath: "notes/x.qmd" });
+assert.deepEqual(parseOutcome("refactor finished\nDONE"),
+  { status: "done", reviewPath: null });
+assert.deepEqual(parseOutcome("BLOCKED: missing credentials"),
+  { status: "failed", reviewPath: null });
+assert.deepEqual(parseOutcome("did DONE things but BLOCKED on tests"),
+  { status: "failed", reviewPath: null });
+
 // slug + prompt
 assert.equal(slugify("Fix the %%weird%% thing!!"), "fix-the-weird-thing");
 const p = taskPrompt(t, "plans/build.md", ["rpc-notes.md"]);

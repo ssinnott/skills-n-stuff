@@ -46,6 +46,15 @@ document is the durable artifact — sessions are its working memory.
   resolution), not plugin code. The plugin's commands only route
   instructions into the right session; judgment stays in evaluable
   markdown (skills-n-stuff pattern).
+- The task line is the hub: it carries a visible [[review]] link and a
+  hidden `%% pi:session=... %%` comment, so the document itself stores the
+  task↔session↔review wiring. Cursor commands reopen either. Rejected:
+  plugin-side state keyed by file+line (breaks on edits, invisible in the
+  doc).
+- The review pane is polymorphic and agent-declared: task agents end with
+  "DONE — review: <path>" naming their primary artifact; a document path
+  opens in one stable right-side review pane, no path means code and goes
+  to difit. Rejected: git-status heuristics for guessing the surface.
 - difit is the code-review surface: on a task agent's DONE (or the
   "Review changes in difit" command), the plugin launches `difit .` over
   the vault's uncommitted changes; line comments flow back via difit's
