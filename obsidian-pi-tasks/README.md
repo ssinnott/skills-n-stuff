@@ -134,6 +134,15 @@ naming its workflow, each leaves artifacts and optionally the next task
 behind. Chains stay human-launched: nothing auto-fires, the doc shows
 every step.
 
+No workflow is baked into the plugin — a workflow is just a skill the
+agent can see, named in the task text. The drawer ships starters
+(`skills/` in this repo): **plan-to-pr** (worktree → plan → implement →
+PR) and **issue-research** (evidence → filed issue → chained fix), plus
+**pi-tasks-setup**, a meta skill that verifies and repairs this whole
+setup. Defining your own (ci-triage, snyk-update, support-triage) is
+one `SKILL.md`: describe the judgment, end with the protocol verbs
+above — nothing needs registering with the plugin.
+
 ## How it fits together
 
 Task lines carry their own wiring — a visible review link and a hidden

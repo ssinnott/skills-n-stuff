@@ -1,0 +1,46 @@
+{
+  "skill_name": "plan-to-pr",
+  "note": "A live run needs a repo, gh, and a reviewer, so these evals isolate the part pi-tasks depends on: the outcome protocol on the final lines. Each scenario file states what happened during the (simulated) run; the agent reports it. Assertions are mostly mechanical — line formats, and nothing invented beyond the scenario.",
+  "evals": [
+    {
+      "id": 0,
+      "name": "single-pr-shipped",
+      "prompt": "You ran the /plan-to-pr workflow for the task 'Add request-level caching to the feed endpoint'. What happened during the run is recorded in scenario.txt. Write the final message you would end the session with.",
+      "files": ["fixtures/single-pr-shipped.txt"],
+      "expected_output": "A brief wrap-up ending with exactly the protocol lines: one PR: line with the URL and title from the scenario, a REPO: line with the absolute path, then DONE on the final lines.",
+      "assertions": [
+        "Ends with a 'PR: <url> — <title>' line using the exact URL from the scenario",
+        "Includes a 'REPO: <absolute path>' line matching the scenario's repo path",
+        "Ends with DONE and contains no BLOCKED",
+        "Mentions the plan-first step and the repo's checks passing, consistent with the scenario",
+        "Invents no second PR, no issue, and no URLs not present in the scenario"
+      ]
+    },
+    {
+      "id": 1,
+      "name": "two-prs-plus-followup",
+      "prompt": "You ran /plan-to-pr for 'Split the auth middleware out of the monolith route file'. The run is recorded in scenario.txt — note the follow-up you decided was out of scope. Write your final session message.",
+      "files": ["fixtures/two-prs-plus-followup.txt"],
+      "expected_output": "Protocol lines: two PR: lines (extraction PR and tests PR), one REPO: line, a NEXT: line carrying the deprecation follow-up with the PR link, then DONE.",
+      "assertions": [
+        "Contains exactly two 'PR:' lines, matching the two URLs in the scenario",
+        "Contains one 'NEXT:' line describing the deprecation follow-up and carrying a link from the scenario",
+        "The NEXT: text is a launchable task statement, not a vague 'consider doing X later'",
+        "Ends with DONE"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "blocked-no-invention",
+      "prompt": "You ran /plan-to-pr for 'Upgrade the payment SDK to v4'. The run stalled — scenario.txt has the record. Write your final session message.",
+      "files": ["fixtures/blocked-no-invention.txt"],
+      "expected_output": "BLOCKED with the concrete reason (the repo's test suite fails on main before any change, so there is no green base to branch from), no PR: line, no DONE.",
+      "assertions": [
+        "Reports BLOCKED with the pre-existing failing test suite as the reason",
+        "Contains no 'PR:' line and no invented URL",
+        "Does not say DONE",
+        "States what would unblock it (a green default branch, or explicit direction to proceed anyway)"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+Run record — /plan-to-pr: "Add request-level caching to the feed endpoint"
+
+- Repo: /home/me/code/feedsvc (task carried a repo reference)
+- Branched feat/feed-request-cache off origin/main (up to date)
+- Plan written to the session before implementing: cache keyed on
+  user+cursor inside the request scope, invalidated per request; touch
+  handlers/feed.go and the middleware chain; prove with the existing
+  handler test suite plus one new cache-hit test
+- Implemented; repo checks run: `make test` green (417 passed),
+  `make lint` green
+- Two commits: "Add per-request cache to feed handler",
+  "Cover cache hit and miss in handler tests"
+- PR opened via gh: https://github.com/acme/feedsvc/pull/312
+  titled "Add request-level caching to the feed endpoint"
+  (body written with the pr-description skill)

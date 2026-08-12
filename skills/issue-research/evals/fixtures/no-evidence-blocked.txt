@@ -1,0 +1,15 @@
+Investigation record — /issue-research: "Customer-reported crash in the export flow"
+
+The report (via support): "app crashed when I exported" — no version,
+no OS, no export format, no timestamp beyond "yesterday".
+
+Attempted:
+- Exported every format (csv, xlsx, pdf) on current release and the two
+  prior releases: no crash
+- Searched crash reporter for export-related signatures in the last
+  7 days: zero hits
+- Searched server logs for failed export jobs in the window: none
+
+Nothing to file: no reproduction, no crash signature, no log evidence.
+Needed to proceed: the customer's app version and OS, the export format
+and rough dataset size, and a log bundle or crash report ID.

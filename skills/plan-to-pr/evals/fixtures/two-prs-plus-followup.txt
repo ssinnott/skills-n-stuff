@@ -1,0 +1,16 @@
+Run record — /plan-to-pr: "Split the auth middleware out of the monolith route file"
+
+- Repo: /home/me/code/webapp
+- Plan approved in session: two independent changes, so two PRs —
+  (1) extract auth middleware into middleware/auth.ts,
+  (2) move its inline tests into their own suite
+- Branches cut off origin/main; checks green on both
+  (npm test, npm run typecheck)
+- PR 1: https://github.com/acme/webapp/pull/88 — "Extract auth
+  middleware from routes"
+- PR 2: https://github.com/acme/webapp/pull/89 — "Give auth middleware
+  its own test suite"
+- Out of scope, noted during the extraction: routes.ts still exports a
+  deprecated `legacyAuth` shim that callers should migrate off; left
+  in place to keep PR 1 reviewable. Deprecation/removal deserves its
+  own task once #88 lands.

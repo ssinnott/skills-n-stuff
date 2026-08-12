@@ -1,0 +1,22 @@
+$ pi --version
+0.52.1
+
+$ pi models --available | head -3
+anthropic/claude-fable-5 (configured)
+anthropic/claude-sonnet-5
+openai/gpt-5.2
+
+$ npx --version
+11.4.0
+
+$ npx difit --version
+difit 3.2.0
+
+$ gh auth status
+You are not logged into any GitHub hosts. To log in, run: gh auth login
+
+$ git -C ~/vault rev-parse --git-dir
+/home/me/vault/.git
+
+$ ls ~/vault/.obsidian/plugins/pi-tasks/
+data.json  main.js  manifest.json  styles.css
