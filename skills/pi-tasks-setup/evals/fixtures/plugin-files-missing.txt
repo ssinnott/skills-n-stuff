@@ -1,0 +1,17 @@
+$ pi --version
+0.52.1
+
+$ pi models --available | head -1
+anthropic/claude-fable-5 (configured)
+
+$ npx difit --version
+difit 3.2.0
+
+$ gh auth status
+github.com: Logged in to github.com account me (keyring)
+
+$ git -C /home/me/vault rev-parse --git-dir
+/home/me/vault/.git
+
+$ ls /home/me/vault/.obsidian/plugins/pi-tasks/
+ls: cannot access '/home/me/vault/.obsidian/plugins/pi-tasks/': No such file or directory

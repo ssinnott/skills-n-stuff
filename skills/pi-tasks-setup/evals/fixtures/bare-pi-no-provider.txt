@@ -1,0 +1,17 @@
+$ pi --version
+0.52.1
+
+$ pi models --available
+No providers configured. Run `pi` to set up a provider and API key.
+
+$ npx difit --version
+difit 3.2.0
+
+$ gh auth status
+github.com: Logged in to github.com account me (keyring)
+
+$ git -C ~/vault rev-parse --git-dir
+/home/me/vault/.git
+
+$ ls ~/vault/.obsidian/plugins/pi-tasks/
+data.json  main.js  manifest.json  styles.css

@@ -12,6 +12,8 @@
 
 import { App, FuzzySuggestModal, MarkdownView, Notice, Plugin, PluginSettingTab, Setting, TFile, WorkspaceLeaf } from "obsidian";
 import { randomUUID } from "crypto";
+import { spawn, type ChildProcess } from "child_process";
+import { homedir } from "os";
 
 import { PiChatView, VIEW_TYPE_PI_TASKS_CHAT } from "./view";
 import type { SessionBinding } from "./view";
@@ -21,10 +23,26 @@ const SESSION_DIR = ".pi-sessions";
 
 export interface PiTasksSettings {
     piBinaryPath: string;
+    /** Command used to launch difit (the diff review UI); run with shell. */
+    difitCommand: string;
+    /** Path to the GitHub CLI, used to refresh PR states. */
+    ghPath: string;
+    /**
+     * Named pi profiles: profile name -> config directory passed to pi as
+     * PI_CODING_AGENT_DIR. Each directory is a full ~/.pi/agent equivalent
+     * (its settings.json decides packages/skills/extensions).
+     */
+    profiles: Record<string, string>;
+    /** Profile used when a task/note names none. Empty = pi's default dir. */
+    defaultProfile: string;
 }
 
 export const DEFAULT_SETTINGS: PiTasksSettings = {
     piBinaryPath: "pi",
+    difitCommand: "npx difit",
+    ghPath: "gh",
+    profiles: {},
+    defaultProfile: "",
 };
 
 interface ModelOption {
@@ -93,11 +111,263 @@ export default class PiTasksPlugin extends Plugin {
             name: "Switch model (active pi tab)",
             callback: () => void this.switchModel(),
         });
+
+        this.addCommand({
+            id: "review-in-difit",
+            name: "Review changes in difit",
+            callback: () => this.launchDifit(),
+        });
+
+        this.addCommand({
+            id: "open-task-session",
+            name: "Open session for task under cursor",
+            callback: () => void this.openTaskSession(),
+        });
+
+        this.addCommand({
+            id: "open-task-review",
+            name: "Open review for task under cursor",
+            callback: () => void this.openTaskReview(),
+        });
+
+        this.addCommand({
+            id: "refresh-pr-statuses",
+            name: "Update PR statuses in this note",
+            callback: () => void this.refreshPRStatuses(),
+        });
+    }
+
+    // --- PR tracking ---
+
+    /**
+     * Sweep the note's PR/Issue child lines, ask `gh` for each one's state,
+     * write changes back, and complete any parent task whose PRs are all
+     * merged. Only PR children gate the parent — an Issue child is a
+     * produced artifact whose closing isn't the task's obligation.
+     */
+    private async refreshPRStatuses(): Promise<void> {
+        const file = this.getActiveMarkdownFile();
+        if (!file) return;
+        const text = await this.app.vault.read(file);
+        const children = docbind.findPRChildren(text);
+        if (children.length === 0) {
+            new Notice("No PR or issue lines in this note");
+            return;
+        }
+        new Notice(`Checking ${children.length} PR/issue line${children.length === 1 ? "" : "s"}…`);
+        const states = new Map<string, "open" | "merged" | "closed">();
+        for (const child of children) {
+            const state = await this.ghChildState(child.kind, child.url);
+            if (state) states.set(child.url, state);
+        }
+        if (states.size === 0) {
+            new Notice("Could not read PR states — is `gh` installed and authenticated?");
+            return;
+        }
+        await this.app.vault.process(file, (t) => {
+            // Re-find lines against the current text, update each child,
+            // then complete parents whose children are all merged.
+            for (const child of docbind.findPRChildren(t)) {
+                const state = states.get(child.url);
+                if (state && state !== child.state) {
+                    t = docbind.setPRChildState(t, child.line, state);
+                }
+            }
+            const parents = new Set<number>();
+            const updated = docbind.findPRChildren(t);
+            for (const child of updated) {
+                const parent = docbind.parentTaskOf(t, child.line);
+                if (parent !== null) parents.add(parent);
+            }
+            for (const parent of parents) {
+                const kids = updated.filter((c) =>
+                    c.kind === "PR" && docbind.parentTaskOf(t, c.line) === parent);
+                if (kids.length && kids.every((c) => c.state === "merged")) {
+                    t = docbind.setTaskStatus(t, parent, "done");
+                }
+            }
+            return t;
+        });
+        new Notice("PR statuses updated");
+    }
+
+    /** Query one PR's or issue's state via the gh CLI; null if unavailable. */
+    private ghChildState(kind: "PR" | "Issue", url: string): Promise<"open" | "merged" | "closed" | null> {
+        return new Promise((resolve) => {
+            const sub = kind === "PR" ? "pr" : "issue";
+            const child = spawn(this.settings.ghPath, [sub, "view", url, "--json", "state"], {});
+            let out = "";
+            child.stdout?.on("data", (d) => { out += String(d); });
+            child.on("error", () => resolve(null));
+            child.on("exit", (code) => {
+                if (code !== 0) return resolve(null);
+                try {
+                    const state = String(JSON.parse(out).state ?? "").toUpperCase();
+                    resolve(state === "MERGED" ? "merged" : state === "CLOSED" ? "closed" : state === "OPEN" ? "open" : null);
+                } catch {
+                    resolve(null);
+                }
+            });
+        });
+    }
+
+    // --- Task-line hub: session and review from the cursor ---
+
+    /** Reopen the session recorded on the task line under the cursor. */
+    private async openTaskSession(): Promise<void> {
+        const ctx = this.taskLineContext();
+        if (!ctx) return;
+        const ref = docbind.taskSessionRef(ctx.text, ctx.line);
+        if (!ref) {
+            new Notice("No session recorded on this task line");
+            return;
+        }
+        const task = docbind.taskAt(ctx.text, ctx.line);
+        await this.openChatTab({
+            sessionId: ref,
+            notePath: null,
+            title: task?.slug ?? "pi task",
+            profile: docbind.taskProfileRef(ctx.text, ctx.line) ?? this.noteProfile(ctx.text),
+        });
+    }
+
+    /**
+     * Open the review target of the task line under the cursor. Documents
+     * (the task's [[review]] link) open in the review pane; a task with
+     * PRs and a repo ref gets difit over the PR's branch range in that
+     * repo. Diff review is only for PRs — never for documents.
+     */
+    private async openTaskReview(): Promise<void> {
+        const ctx = this.taskLineContext();
+        if (!ctx) return;
+        const task = docbind.taskAt(ctx.text, ctx.line);
+        const links = task ? docbind.wikiLinks(task.text) : [];
+        const target = links.length
+            ? this.app.metadataCache.getFirstLinkpathDest(links[links.length - 1], ctx.file.path)
+            : null;
+        if (target) {
+            await this.openInReviewPane(target.path);
+            return;
+        }
+        const repo = docbind.taskRepoRef(ctx.text, ctx.line);
+        const kids = docbind.findPRChildren(ctx.text)
+            .filter((c) => docbind.parentTaskOf(ctx.text, c.line) === ctx.line);
+        // Diff review is only for PRs; an Issue child just opens on the host.
+        const pr = kids.find((c) => c.kind === "PR" && c.state === "open")
+            ?? kids.find((c) => c.kind === "PR");
+        if (repo && pr) {
+            await this.reviewPRInDifit(repo, pr.url);
+        } else if (pr ?? kids[0]) {
+            window.open((pr ?? kids[0]).url);
+        } else {
+            new Notice("No review link, PRs, or issues on this task line");
+        }
+    }
+
+    /** difit over a PR's branch range, in the repo where the work happened. */
+    private async reviewPRInDifit(repoPath: string, prUrl: string): Promise<void> {
+        const refs = await new Promise<{ head?: string; base?: string } | null>((resolve) => {
+            const child = spawn(this.settings.ghPath,
+                ["pr", "view", prUrl, "--json", "headRefName,baseRefName"], {});
+            let out = "";
+            child.stdout?.on("data", (d) => { out += String(d); });
+            child.on("error", () => resolve(null));
+            child.on("exit", (code) => {
+                if (code !== 0) return resolve(null);
+                try {
+                    const j = JSON.parse(out);
+                    resolve({ head: j.headRefName, base: j.baseRefName });
+                } catch { resolve(null); }
+            });
+        });
+        if (refs?.head && refs.base) {
+            this.launchDifit(`${refs.head} ${refs.base}`, repoPath);
+        } else {
+            new Notice("Could not resolve PR branches via gh — opening on the host");
+            window.open(prUrl);
+        }
+    }
+
+    private taskLineContext(): { file: TFile; line: number; text: string } | null {
+        const mdView = this.app.workspace.getActiveViewOfType(MarkdownView);
+        const file = mdView?.file;
+        if (!mdView || !file) {
+            new Notice("No active markdown editor");
+            return null;
+        }
+        return { file, line: mdView.editor.getCursor().line, text: mdView.editor.getValue() };
+    }
+
+    // --- Review pane ---
+
+    private reviewLeaf: WorkspaceLeaf | null = null;
+
+    /**
+     * Open a document in the dedicated review pane — one right-side split
+     * reused across reviews, so "what we are reviewing" is a stable place.
+     */
+    async openInReviewPane(path: string): Promise<void> {
+        const file = this.app.vault.getFileByPath(path)
+            ?? this.app.metadataCache.getFirstLinkpathDest(path, "");
+        if (!file) {
+            new Notice(`Review target not found: ${path}`);
+            return;
+        }
+        const detached = !this.reviewLeaf
+            || (this.reviewLeaf as unknown as { parent?: unknown }).parent == null;
+        if (detached) {
+            this.reviewLeaf = this.app.workspace.getLeaf("split", "vertical");
+        }
+        await this.reviewLeaf!.openFile(file, { active: true });
     }
 
     async onunload(): Promise<void> {
         // View instances are unloaded by Obsidian when the plugin unloads;
         // each PiChatView.onClose destroys its own pi process.
+        this.stopDifit();
+    }
+
+    // --- difit (diff review UI) ---
+
+    private difitProcess: ChildProcess | null = null;
+
+    /**
+     * Launch difit — the diff review surface, used for PRs only (documents
+     * are reviewed in the review pane). One difit at a time: relaunching
+     * replaces the previous instance. difit opens the browser itself; its
+     * line comments flow back via its Copy All Prompt button, pasted into
+     * the task's session tab.
+     */
+    launchDifit(target = ".", cwd?: string): void {
+        const adapter = this.app.vault.adapter as unknown as { getBasePath?: () => string };
+        if (typeof adapter.getBasePath !== "function") {
+            new Notice("difit review requires the desktop app");
+            return;
+        }
+        this.stopDifit();
+        const cmd = `${this.settings.difitCommand} ${target}`;
+        const child = spawn(cmd, { shell: true, cwd: cwd ?? adapter.getBasePath() });
+        this.difitProcess = child;
+        child.on("error", (err) => {
+            new Notice(`difit failed to start: ${err.message}`);
+            if (this.difitProcess === child) this.difitProcess = null;
+        });
+        child.on("exit", (code) => {
+            if (this.difitProcess === child) this.difitProcess = null;
+            // Non-zero without ever serving usually means not a git repo
+            // or difit missing; surface it once rather than silently.
+            if (code !== null && code !== 0) {
+                new Notice(`difit exited with code ${code} — is the vault a git repo?`);
+            }
+        });
+        new Notice("Launching difit review…");
+    }
+
+    private stopDifit(): void {
+        if (this.difitProcess) {
+            this.difitProcess.kill();
+            this.difitProcess = null;
+        }
     }
 
     async loadSettings(): Promise<void> {
@@ -121,10 +391,12 @@ export default class PiTasksPlugin extends Plugin {
 
         try {
             const sessionId = await this.resolveOrCreateBinding(file);
+            const profile = this.noteProfile(await this.app.vault.read(file));
             await this.openChatTab({
                 sessionId,
                 notePath: file.path,
                 title: file.basename,
+                profile,
             });
         } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
@@ -153,10 +425,19 @@ export default class PiTasksPlugin extends Plugin {
         }
 
         try {
+            const noteText = mdView.editor.getValue();
+            // Profile precedence: task-line marker, note frontmatter, default.
+            // Record the resolved name on the line so reopening matches.
+            const profile = docbind.taskProfileRef(noteText, line)
+                ?? this.noteProfile(noteText);
             const sessionId = await this.newSessionPath();
-            await this.app.vault.process(file, (text) =>
-                docbind.setTaskStatus(text, line, "running"),
-            );
+            await this.app.vault.process(file, (text) => {
+                text = docbind.attachSessionRef(
+                    docbind.setTaskStatus(text, line, "running"),
+                    line, sessionId,
+                );
+                return profile ? docbind.attachProfileRef(text, line, profile) : text;
+            });
 
             // Resolve [[links]] in the task text to vault paths
             const linkedPaths = docbind.wikiLinks(task.text)
@@ -167,6 +448,7 @@ export default class PiTasksPlugin extends Plugin {
                 sessionId,
                 notePath: null,
                 title: task.slug,
+                profile,
             });
             await view.whenReady();
             view.sendMessage(docbind.taskPrompt(task, file.path, linkedPaths));
@@ -204,19 +486,29 @@ export default class PiTasksPlugin extends Plugin {
                     console.warn("[pi-tasks] get_last_assistant_text failed:", err);
                 }
 
-                const status = !/\bBLOCKED\b/.test(text) && /\bDONE\b/.test(text)
-                    ? "done" as const
-                    : "failed" as const;
+                const { status, reviewPath, repoPath, prs, issues, next } = docbind.parseOutcome(text);
+                const suffix = reviewPath
+                    ? `([[${reviewPath.replace(/\.md$/, "")}|review]])`
+                    : undefined;
                 try {
-                    await this.app.vault.process(file, (t) =>
-                        docbind.setTaskStatus(t, line, status),
-                    );
+                    await this.app.vault.process(file, (t) => {
+                        t = docbind.setTaskStatus(t, line, status, suffix);
+                        if (repoPath) t = docbind.attachRepoRef(t, line, repoPath);
+                        t = docbind.appendPRChildren(t, line, prs, issues);
+                        return docbind.appendNextTasks(t, line, next);
+                    });
                 } catch (err) {
                     console.error("[pi-tasks] Failed to write task status:", err);
                 }
-                new Notice(status === "done"
-                    ? `Task done: ${file.basename}`
+                new Notice(status === "done" ? `Task done: ${file.basename}`
+                    : status === "review" ? `Task in review (${prs.length} PR${prs.length === 1 ? "" : "s"}): ${file.basename}`
                     : `Task did not complete: ${file.basename}`);
+                // Documents open in the review pane. Diff review is only
+                // for PRs (via "Open review for task"); nothing auto-opens
+                // for plain DONE.
+                if (status === "done" && reviewPath) {
+                    await this.openInReviewPane(reviewPath);
+                }
             })();
         });
     }
@@ -241,6 +533,7 @@ export default class PiTasksPlugin extends Plugin {
                 sessionId,
                 notePath: file.path,
                 title: file.basename,
+                profile: this.noteProfile(text),
             });
             await view.whenReady();
             view.sendMessage(
@@ -297,6 +590,30 @@ export default class PiTasksPlugin extends Plugin {
             const msg = err instanceof Error ? err.message : String(err);
             new Notice(`Failed to fetch models: ${msg}`);
         }
+    }
+
+    // --- Profiles ---
+
+    /**
+     * Resolve a profile name to its config directory (PI_CODING_AGENT_DIR).
+     * Falls back to the default profile when no name is given; returns null
+     * (pi's own ~/.pi/agent) when neither applies. An unknown name warns
+     * rather than silently running with a different toolset.
+     */
+    resolveProfileDir(name: string | null): string | null {
+        const effective = name || this.settings.defaultProfile;
+        if (!effective) return null;
+        const dir = this.settings.profiles[effective];
+        if (!dir) {
+            new Notice(`pi-tasks: unknown profile "${effective}" — using pi's default config`);
+            return null;
+        }
+        return dir.replace(/^~(?=\/|$)/, homedir());
+    }
+
+    /** The profile a note's sessions should use: frontmatter, else default. */
+    private noteProfile(noteText: string): string | null {
+        return docbind.getProfile(noteText) ?? (this.settings.defaultProfile || null);
     }
 
     // --- Session binding helpers ---
@@ -390,6 +707,71 @@ class PiTasksSettingTab extends PluginSettingTab {
                     .setValue(this.plugin.settings.piBinaryPath)
                     .onChange(async (value) => {
                         this.plugin.settings.piBinaryPath = value || "pi";
+                        await this.plugin.saveSettings();
+                    })
+            );
+
+        new Setting(containerEl)
+            .setName("difit command")
+            .setDesc("Command used to launch the difit diff review UI")
+            .addText((text) =>
+                text
+                    .setPlaceholder("npx difit")
+                    .setValue(this.plugin.settings.difitCommand)
+                    .onChange(async (value) => {
+                        this.plugin.settings.difitCommand = value || "npx difit";
+                        await this.plugin.saveSettings();
+                    })
+            );
+
+        new Setting(containerEl)
+            .setName("gh path")
+            .setDesc("GitHub CLI used to refresh PR statuses on task lines")
+            .addText((text) =>
+                text
+                    .setPlaceholder("gh")
+                    .setValue(this.plugin.settings.ghPath)
+                    .onChange(async (value) => {
+                        this.plugin.settings.ghPath = value || "gh";
+                        await this.plugin.saveSettings();
+                    })
+            );
+
+        new Setting(containerEl)
+            .setName("Profiles")
+            .setDesc(
+                "One per line: name = config directory (used as PI_CODING_AGENT_DIR; " +
+                "each is a full ~/.pi/agent equivalent whose settings.json decides " +
+                "packages, skills, and extensions). Tasks pick one via a " +
+                "%% pi:profile=name %% marker or pi-profile frontmatter.",
+            )
+            .addTextArea((text) => {
+                text
+                    .setPlaceholder("research = ~/.pi-profiles/research\nshipping = ~/.pi-profiles/shipping")
+                    .setValue(Object.entries(this.plugin.settings.profiles)
+                        .map(([k, v]) => `${k} = ${v}`).join("\n"))
+                    .onChange(async (value) => {
+                        const profiles: Record<string, string> = {};
+                        for (const line of value.split("\n")) {
+                            const m = line.match(/^\s*([\w-]+)\s*=\s*(.+?)\s*$/);
+                            if (m) profiles[m[1]] = m[2];
+                        }
+                        this.plugin.settings.profiles = profiles;
+                        await this.plugin.saveSettings();
+                    });
+                text.inputEl.rows = 4;
+                text.inputEl.style.width = "100%";
+            });
+
+        new Setting(containerEl)
+            .setName("Default profile")
+            .setDesc("Profile used when a task or note names none. Empty = pi's own ~/.pi/agent.")
+            .addText((text) =>
+                text
+                    .setPlaceholder("")
+                    .setValue(this.plugin.settings.defaultProfile)
+                    .onChange(async (value) => {
+                        this.plugin.settings.defaultProfile = value.trim();
                         await this.plugin.saveSettings();
                     })
             );
