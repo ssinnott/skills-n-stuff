@@ -535,15 +535,19 @@ export default class PiTasksPlugin extends Plugin {
                     console.warn("[pi-tasks] get_last_assistant_text failed:", err);
                 }
 
-                const { status, reviewPath, repoPath, prs, issues, next } = docbind.parseOutcome(text);
+                const { status, reviewPath, repoPath, prs, issues, docs, next } = docbind.parseOutcome(text);
                 const suffix = reviewPath
                     ? `([[${reviewPath.replace(/\.md$/, "")}|review]])`
                     : undefined;
+                // The review doc already links from the task line itself —
+                // don't repeat it as a child.
+                const childDocs = docs.filter((d) => d.path !== reviewPath);
                 try {
                     await this.app.vault.process(file, (t) => {
                         t = docbind.setTaskStatus(t, line, status, suffix);
                         if (repoPath) t = docbind.attachRepoRef(t, line, repoPath);
                         t = docbind.appendPRChildren(t, line, prs, issues);
+                        t = docbind.appendDocChildren(t, line, childDocs);
                         return docbind.appendNextTasks(t, line, next);
                     });
                 } catch (err) {

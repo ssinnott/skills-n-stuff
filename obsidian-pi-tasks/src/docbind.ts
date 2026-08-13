@@ -97,6 +97,7 @@ export function parseOutcome(text: string): {
   repoPath: string | null;
   prs: { url: string; title?: string }[];
   issues: { url: string; title?: string }[];
+  docs: { path: string; title?: string }[];
   next: string[];
 } {
   const done = !/\bBLOCKED\b/.test(text) && /\bDONE\b/.test(text);
@@ -112,6 +113,10 @@ export function parseOutcome(text: string): {
   for (const m of text.matchAll(/^\s*ISSUE:\s*(https?:\/\/\S+?)(?:\s+—\s+(.+?))?\s*$/gim)) {
     issues.push({ url: m[1], title: m[2]?.trim() });
   }
+  const docs: { path: string; title?: string }[] = [];
+  for (const m of text.matchAll(/^\s*DOC:\s*(\S+?)(?:\s+—\s+(.+?))?\s*$/gim)) {
+    docs.push({ path: m[1], title: m[2]?.trim() });
+  }
   const next: string[] = [];
   for (const m of text.matchAll(/^\s*NEXT:\s*(.+?)\s*$/gim)) {
     next.push(m[1]);
@@ -121,7 +126,7 @@ export function parseOutcome(text: string): {
   const status = !done ? "failed" : prs.length > 0 ? "review" : "done";
   return {
     status, reviewPath: rm ? rm[1] : null, repoPath: repo ? repo[1] : null,
-    prs, issues, next,
+    prs, issues, docs, next,
   };
 }
 
@@ -213,6 +218,51 @@ export function setPRChildState(noteText: string, line: number, state: PRChild["
   const complete = state === "merged" || (kind === "Issue" && state === "closed");
   const box = complete ? "x" : " ";
   lines[line] = `${m[1]}- [${box}] ${kind}: [${m[4]}](${m[5]}) — ${state}`;
+  return lines.join("\n");
+}
+
+// --- Document children: artifacts an agent produced, linked under the task ---
+
+export interface DocChild {
+  line: number;
+  path: string;   // wiki-link target (vault path, .md stripped)
+  title: string;
+}
+
+const DOC_CHILD = /^(\s*)- 📄 \[\[([^\]|]+?)(?:\|([^\]]+))?\]\]\s*$/u;
+
+/** All document child lines in a note. */
+export function findDocChildren(noteText: string): DocChild[] {
+  const out: DocChild[] = [];
+  noteText.split("\n").forEach((raw, i) => {
+    const m = raw.match(DOC_CHILD);
+    if (m) out.push({ line: i, path: m[2], title: m[3] ?? m[2] });
+  });
+  return out;
+}
+
+/**
+ * Link DOC: artifacts (tech notes, plans) as plain child lines under a
+ * task — wiki links, not checkboxes: a produced document is a fact, not
+ * an obligation, so there is nothing to complete. Idempotent by path.
+ */
+export function appendDocChildren(
+  noteText: string, taskLine: number,
+  docs: { path: string; title?: string }[],
+): string {
+  const lines = noteText.split("\n");
+  const m = lines[taskLine]?.match(TASK);
+  if (!m) return noteText;
+  const existing = new Set(findDocChildren(noteText).map((c) => c.path));
+  const indent = m[1] + "  ";
+  const fresh = docs
+    .map((d) => ({ ...d, link: d.path.replace(/\.md$/, "") }))
+    .filter((d) => !existing.has(d.link))
+    .map((d) => {
+      const title = d.title ?? d.link.split("/").pop() ?? d.link;
+      return `${indent}- 📄 [[${d.link}|${title}]]`;
+    });
+  if (fresh.length) lines.splice(taskLine + 1, 0, ...fresh);
   return lines.join("\n");
 }
 
@@ -331,6 +381,9 @@ export function taskPrompt(task: TaskLine, notePath: string, linkedPaths: string
     `"PR: <url> — <title>" line per pull request you opened plus one ` +
     `"REPO: <absolute path>" line naming the repository you worked in, ` +
     `then "DONE", if the work went out as pull requests; one ` +
+    `"DOC: <vault-relative path> — <title>" line per additional document ` +
+    `you produced (tech notes, plans — files you wrote in the vault ` +
+    `beyond the review document); one ` +
     `"ISSUE: <url> — <title>" line per issue you filed; one ` +
     `"NEXT: <task text>" line per follow-up task the outcome calls for ` +
     `(include the artifact's link in the text so the next agent starts ` +

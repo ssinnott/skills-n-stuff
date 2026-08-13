@@ -79,7 +79,7 @@ assert.ok(rline.includes("([[reviews/out]])"));
 assert.equal(taskSessionRef(rs, 2), ".pi-sessions/xyz.jsonl");
 
 // outcome parsing
-const empty = { repoPath: null, prs: [], issues: [], next: [] };
+const empty = { repoPath: null, prs: [], issues: [], docs: [], next: [] };
 assert.deepEqual(parseOutcome("all wrapped up\nDONE — review: reviews/plan.md"),
   { status: "done", reviewPath: "reviews/plan.md", ...empty });
 assert.deepEqual(parseOutcome("DONE - review: notes/x.qmd"),
@@ -201,6 +201,36 @@ assert.ok(idoc.split("\n")[3].includes("- [x]"), "closed checks an issue's box")
 // untitled issue falls back to #number
 const untitled = appendPRChildren("- [ ] T\n", 0, [], [{ url: "https://github.com/o/r/issues/9" }]);
 assert.ok(untitled.includes("Issue: [#9](https://github.com/o/r/issues/9)"));
+
+// DOC outcomes: produced documents, linked as plain children
+const withDocs = parseOutcome(
+  "DOC: notes/jwt-rotation-tradeoffs.md — JWT rotation tradeoffs\nDOC: notes/refresh-storage.md\nDONE — review: plans/token-rotation.md");
+assert.equal(withDocs.status, "done", "docs never gate completion");
+assert.equal(withDocs.reviewPath, "plans/token-rotation.md");
+assert.deepEqual(withDocs.docs, [
+  { path: "notes/jwt-rotation-tradeoffs.md", title: "JWT rotation tradeoffs" },
+  { path: "notes/refresh-storage.md", title: undefined },
+]);
+
+import { findDocChildren, appendDocChildren } from "./docbind.mjs";
+let ddoc = "# T\n\n- [ ] Research token rotation\nother\n";
+ddoc = appendDocChildren(ddoc, 2, withDocs.docs);
+let dkids = findDocChildren(ddoc);
+assert.equal(dkids.length, 2);
+assert.equal(ddoc.split("\n")[3], "  - 📄 [[notes/jwt-rotation-tradeoffs|JWT rotation tradeoffs]]");
+assert.equal(dkids[1].title, "refresh-storage", "untitled doc falls back to basename");
+assert.equal(dkids[1].path, "notes/refresh-storage", ".md stripped from the wiki link");
+ddoc = appendDocChildren(ddoc, 2, withDocs.docs);   // idempotent
+assert.equal(findDocChildren(ddoc).length, 2);
+// doc children coexist with PR children and don't confuse the PR scan
+ddoc = appendPRChildren(ddoc, 2, [{ url: "https://github.com/o/r/pull/5", title: "impl" }]);
+assert.equal(findPRChildren(ddoc).length, 1);
+assert.equal(findDocChildren(ddoc).length, 2);
+// NEXT tasks land after the whole children block, docs included
+const dnext = appendNextTasks(ddoc, 2, ["Turn the plan into PRs via /plan-to-pr"]);
+const dlines = dnext.split("\n");
+assert.equal(dlines[6], "- [ ] Turn the plan into PRs via /plan-to-pr");
+assert.equal(dlines[7], "other");
 
 // NEXT chaining: follow-ups materialize as sibling tasks after the children block
 import { appendNextTasks } from "./docbind.mjs";

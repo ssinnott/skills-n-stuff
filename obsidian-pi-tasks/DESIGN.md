@@ -80,6 +80,16 @@ document is the durable artifact — sessions are its working memory.
   auto-launching NEXT tasks (silent fan-out, no review gate) and
   plugin-side workflow definitions (judgment belongs in evaluable
   skills, drawer pattern).
+- Produced documents link as plain children. Research agents write
+  ordinary vault files (cwd is the vault root) and report each extra
+  artifact as "DOC: <path> — <title>"; the task line gains one
+  `📄 [[path|title]]` child per doc, idempotent by path, with the
+  review document excluded (it already links from the task line).
+  Plain wiki links, not checkboxes — a produced document is a fact,
+  not an obligation, so nothing gates on it and the board ignores it.
+  Rejected: agents inserting their own links into the task doc (two
+  writers racing over one file; the plugin stays the doc's single
+  writer for task wiring).
 - Profiles are pi config directories, selected per task. pi has no
   native profiles, but `PI_CODING_AGENT_DIR` swaps the whole config dir
   (settings.json = the package list), so a profile is a directory the

@@ -152,6 +152,10 @@ on its final lines:
 - `PR: <url> — <title>` (+ `REPO: <path>`) — work shipped as pull
   requests; the task enters review (🔃) with one child line per PR and
   completes only when they all merge.
+- `DOC: <vault path> — <title>` — an additional document the agent
+  produced (tech notes, plans). Linked as a plain `📄 [[...]]` child
+  line under the task — a fact, not an obligation, so no checkbox and
+  no gating; the review document itself isn't repeated as a child.
 - `ISSUE: <url> — <title>` — an issue the agent filed. Tracked as a
   child line, box checked when it closes, but it never blocks the task:
   creating the issue *was* the work.
