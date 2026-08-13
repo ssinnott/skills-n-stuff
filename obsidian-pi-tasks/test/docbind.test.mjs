@@ -217,6 +217,30 @@ assert.equal(appendNextTasks(ndoc, 2, []), ndoc, "no-op on empty");
 const nested = appendNextTasks("- [ ] Outer\n  - [x] Inner done\n", 1, ["Follow up"]);
 assert.equal(nested.split("\n")[2], "  - [ ] Follow up");
 
+// board scan: every task line classified by its written-back status,
+// PR/Issue children excluded (they belong to their parent's card)
+import { scanTasks } from "./docbind.mjs";
+const boardDoc = [
+  "# T",
+  "",
+  "- [ ] Fresh task",
+  "- [ ] Running task ⏳ %% pi:session=.pi-sessions/a.jsonl %%",
+  "- [ ] Shipped thing 🔃 %% pi:session=.pi-sessions/b.jsonl %% %% pi:repo=/x %%",
+  "  - [ ] PR: [#1](https://github.com/o/r/pull/1) — open",
+  "- [ ] Stuck thing ❌ %% pi:session=.pi-sessions/c.jsonl %%",
+  "- [x] Finished ([[reviews/out|review]]) %% pi:session=.pi-sessions/d.jsonl %%",
+  "not a task",
+].join("\n");
+const scanned = scanTasks(boardDoc);
+assert.deepEqual(scanned.map((s) => s.status),
+  ["todo", "running", "review", "blocked", "done"]);
+assert.deepEqual(scanned.map((s) => s.line), [2, 3, 4, 6, 7]);
+assert.equal(scanned[1].text, "Running task", "markers and status emoji stripped");
+assert.equal(scanned[2].text, "Shipped thing");
+assert.equal(scanned[4].text, "Finished ([[reviews/out|review]])", "review suffix kept");
+assert.ok(!scanned.some((s) => s.text.startsWith("PR:")), "PR children are not cards");
+assert.equal(scanTasks("prose only\n").length, 0);
+
 // slug + prompt
 assert.equal(slugify("Fix the %%weird%% thing!!"), "fix-the-weird-thing");
 const p = taskPrompt(t, "plans/build.md", ["rpc-notes.md"]);

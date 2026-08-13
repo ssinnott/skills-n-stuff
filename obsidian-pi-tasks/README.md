@@ -48,11 +48,14 @@ cp manifest.json main.js styles.css "<your-vault>/.obsidian/plugins/pi-tasks/"
 ```
 
 Then in Obsidian: Settings → Community plugins → enable **Pi Tasks**.
-(`styles.css` at the repo root is a build artifact copied from
-`upstream/styles.css`; upstream stays untouched.)
+(`styles.css` at the repo root is a build artifact — `upstream/styles.css`
+plus `src/board.css` concatenated; upstream stays untouched.)
 
 ## First use (2 minutes)
 
+0. Click the ribbon's dashboard icon (or run **Open pi task board**) — the
+   kanban board opens. It starts empty: cards appear as your documents
+   gain pi tasks.
 1. Open any note, run the command **Open pi session for this note** — a
    chat tab opens, and the note gains a `pi-session` frontmatter line
    pointing at `.pi-sessions/<id>.jsonl` in your vault.
@@ -77,8 +80,29 @@ Then in Obsidian: Settings → Community plugins → enable **Pi Tasks**.
    off once everything is merged. Diff review is only for PRs — documents
    are never reviewed as diffs.
 
+## Task board
+
+The kanban board (ribbon icon, or **Open pi task board**) shows every pi
+task line in the vault as a card, in columns derived from the status the
+plugin already writes back to the line: **To do** (unchecked), **Running**
+(⏳), **In review** (🔃), **Blocked** (❌), **Done** (checked). Clicking a
+card opens its document at the task line; card buttons dispatch without
+leaving the board — **Launch** starts a fresh agent for a to-do (or
+blocked) task, **Session** reopens the task's recorded session tab, and
+**Review** opens the task's review document or difit over its PRs.
+
+The board is a pure projection: cards render from task lines and every
+action writes through the document, so there is no board-side state to
+drift. It refreshes automatically as documents change. A document's tasks
+appear once it carries pi wiring (a `pi-session` binding or any launched
+task's marker); to put a fresh task doc on the board before its first
+launch, add `pi-board: true` to its frontmatter. Plain checklists without
+either stay off the board. PR/Issue child lines never become cards — they
+belong to their parent task.
+
 ## Commands
 
+- **Open pi task board** — open (or reveal) the kanban board.
 - **Open pi session for this note** — resolve-or-create the note's
   `pi-session` binding and open its chat tab.
 - **Launch pi agent for task line** — fresh agent for the checkbox task

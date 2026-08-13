@@ -1,11 +1,13 @@
 /**
  * pi-tasks plugin entry point.
  *
- * Registers the multi-instance chat view and three commands that route
- * document context into pi sessions:
- *   - Open pi session for this note (resolve-or-create pi-session frontmatter)
- *   - Launch pi agent for task line (new session, status written back to the line)
- *   - Resolve @pi comments in this note (sent to the note's bound session)
+ * Registers the multi-instance chat view, the task board (a kanban
+ * projection of the vault's task lines), and the commands that route
+ * document context into pi sessions — opening a note's bound session,
+ * launching agents for task lines (status written back to the line),
+ * resolving @pi comments, and reopening sessions/reviews from a task
+ * line. Task-line actions are callable from the cursor commands and from
+ * board cards alike.
  *
  * Sessions are files under .pi-sessions/ in the vault so they travel with it.
  */
@@ -17,6 +19,7 @@ import { homedir } from "os";
 
 import { PiChatView, VIEW_TYPE_PI_TASKS_CHAT } from "./view";
 import type { SessionBinding } from "./view";
+import { PiBoardView, VIEW_TYPE_PI_TASKS_BOARD } from "./board";
 import * as docbind from "./docbind";
 
 const SESSION_DIR = ".pi-sessions";
@@ -87,6 +90,18 @@ export default class PiTasksPlugin extends Plugin {
             VIEW_TYPE_PI_TASKS_CHAT,
             (leaf: WorkspaceLeaf) => new PiChatView(leaf, this),
         );
+
+        this.registerView(
+            VIEW_TYPE_PI_TASKS_BOARD,
+            (leaf: WorkspaceLeaf) => new PiBoardView(leaf, this),
+        );
+        this.addRibbonIcon("layout-dashboard", "Open pi task board", () => void this.openBoard());
+
+        this.addCommand({
+            id: "open-task-board",
+            name: "Open pi task board",
+            callback: () => void this.openBoard(),
+        });
 
         this.addCommand({
             id: "open-note-session",
@@ -211,23 +226,32 @@ export default class PiTasksPlugin extends Plugin {
         });
     }
 
-    // --- Task-line hub: session and review from the cursor ---
+    // --- Task-line hub: session and review, from the cursor or the board ---
 
     /** Reopen the session recorded on the task line under the cursor. */
     private async openTaskSession(): Promise<void> {
         const ctx = this.taskLineContext();
         if (!ctx) return;
-        const ref = docbind.taskSessionRef(ctx.text, ctx.line);
+        await this.openTaskSessionFrom(ctx.file, ctx.line, ctx.text);
+    }
+
+    /** Board entry point: reopen a task's session by file + line. */
+    async openTaskSessionAt(file: TFile, line: number): Promise<void> {
+        await this.openTaskSessionFrom(file, line, await this.app.vault.read(file));
+    }
+
+    private async openTaskSessionFrom(file: TFile, line: number, text: string): Promise<void> {
+        const ref = docbind.taskSessionRef(text, line);
         if (!ref) {
             new Notice("No session recorded on this task line");
             return;
         }
-        const task = docbind.taskAt(ctx.text, ctx.line);
+        const task = docbind.taskAt(text, line);
         await this.openChatTab({
             sessionId: ref,
             notePath: null,
             title: task?.slug ?? "pi task",
-            profile: docbind.taskProfileRef(ctx.text, ctx.line) ?? this.noteProfile(ctx.text),
+            profile: docbind.taskProfileRef(text, line) ?? this.noteProfile(text),
         });
     }
 
@@ -240,18 +264,27 @@ export default class PiTasksPlugin extends Plugin {
     private async openTaskReview(): Promise<void> {
         const ctx = this.taskLineContext();
         if (!ctx) return;
-        const task = docbind.taskAt(ctx.text, ctx.line);
+        await this.openTaskReviewFrom(ctx.file, ctx.line, ctx.text);
+    }
+
+    /** Board entry point: open a task's review target by file + line. */
+    async openTaskReviewAt(file: TFile, line: number): Promise<void> {
+        await this.openTaskReviewFrom(file, line, await this.app.vault.read(file));
+    }
+
+    private async openTaskReviewFrom(file: TFile, line: number, text: string): Promise<void> {
+        const task = docbind.taskAt(text, line);
         const links = task ? docbind.wikiLinks(task.text) : [];
         const target = links.length
-            ? this.app.metadataCache.getFirstLinkpathDest(links[links.length - 1], ctx.file.path)
+            ? this.app.metadataCache.getFirstLinkpathDest(links[links.length - 1], file.path)
             : null;
         if (target) {
             await this.openInReviewPane(target.path);
             return;
         }
-        const repo = docbind.taskRepoRef(ctx.text, ctx.line);
-        const kids = docbind.findPRChildren(ctx.text)
-            .filter((c) => docbind.parentTaskOf(ctx.text, c.line) === ctx.line);
+        const repo = docbind.taskRepoRef(text, line);
+        const kids = docbind.findPRChildren(text)
+            .filter((c) => docbind.parentTaskOf(text, c.line) === line);
         // Diff review is only for PRs; an Issue child just opens on the host.
         const pr = kids.find((c) => c.kind === "PR" && c.state === "open")
             ?? kids.find((c) => c.kind === "PR");
@@ -296,6 +329,20 @@ export default class PiTasksPlugin extends Plugin {
             return null;
         }
         return { file, line: mdView.editor.getCursor().line, text: mdView.editor.getValue() };
+    }
+
+    // --- Task board ---
+
+    /** Reveal the board if one is open, else open it in a new tab. */
+    async openBoard(): Promise<void> {
+        const existing = this.app.workspace.getLeavesOfType(VIEW_TYPE_PI_TASKS_BOARD)[0];
+        if (existing) {
+            this.app.workspace.revealLeaf(existing);
+            return;
+        }
+        const leaf = this.app.workspace.getLeaf("tab");
+        await leaf.setViewState({ type: VIEW_TYPE_PI_TASKS_BOARD, active: true });
+        this.app.workspace.revealLeaf(leaf);
     }
 
     // --- Review pane ---
@@ -410,22 +457,24 @@ export default class PiTasksPlugin extends Plugin {
      * marked running now, and done/failed when the agent settles.
      */
     private async launchTaskAgent(): Promise<void> {
-        const mdView = this.app.workspace.getActiveViewOfType(MarkdownView);
-        const file = mdView?.file;
-        if (!mdView || !file) {
-            new Notice("No active markdown editor");
-            return;
-        }
+        const ctx = this.taskLineContext();
+        if (!ctx) return;
+        await this.launchTaskAgentFrom(ctx.file, ctx.line, ctx.text);
+    }
 
-        const line = mdView.editor.getCursor().line;
-        const task = docbind.taskAt(mdView.editor.getValue(), line);
+    /** Board entry point: launch a task's agent by file + line. */
+    async launchTaskAgentAt(file: TFile, line: number): Promise<void> {
+        await this.launchTaskAgentFrom(file, line, await this.app.vault.read(file));
+    }
+
+    private async launchTaskAgentFrom(file: TFile, line: number, noteText: string): Promise<void> {
+        const task = docbind.taskAt(noteText, line);
         if (!task) {
             new Notice("Cursor is not on a task line");
             return;
         }
 
         try {
-            const noteText = mdView.editor.getValue();
             // Profile precedence: task-line marker, note frontmatter, default.
             // Record the resolved name on the line so reopening matches.
             const profile = docbind.taskProfileRef(noteText, line)

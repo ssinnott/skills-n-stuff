@@ -253,6 +253,37 @@ export function parentTaskOf(noteText: string, childLine: number): number | null
   return null;
 }
 
+export interface TaskScan {
+  line: number;
+  /** Display text: hidden markers and the trailing status emoji removed. */
+  text: string;
+  status: "todo" | "running" | "review" | "blocked" | "done";
+  slug: string;
+}
+
+/**
+ * Scan a whole note for task lines, classifying each by the status the
+ * plugin writes back (⏳ 🔃 ❌, checked box). PR/Issue child lines are
+ * excluded — they belong to their parent task's card. This is the board's
+ * read model: a pure projection of the document, never a second store.
+ */
+export function scanTasks(noteText: string): TaskScan[] {
+  const out: TaskScan[] = [];
+  noteText.split("\n").forEach((raw, i) => {
+    const m = raw.match(TASK);
+    if (!m || PR_CHILD.test(raw)) return;
+    const cleaned = m[3].replace(PI_MARKER, "").trim();
+    const status: TaskScan["status"] = m[2] !== " " ? "done"
+      : cleaned.endsWith("⏳") ? "running"
+      : cleaned.endsWith("🔃") ? "review"
+      : cleaned.endsWith("❌") ? "blocked"
+      : "todo";
+    const text = cleaned.replace(/\s*(⏳|❌|🔃)\s*$/u, "").trim();
+    out.push({ line: i, text, status, slug: slugify(text) });
+  });
+  return out;
+}
+
 export interface PiComment {
   start: number;       // char offset of the opening %%
   end: number;         // char offset just past the closing %%
