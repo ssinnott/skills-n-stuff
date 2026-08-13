@@ -79,7 +79,7 @@ assert.ok(rline.includes("([[reviews/out]])"));
 assert.equal(taskSessionRef(rs, 2), ".pi-sessions/xyz.jsonl");
 
 // outcome parsing
-const empty = { repoPath: null, prs: [], issues: [], next: [] };
+const empty = { repoPath: null, prs: [], issues: [], docs: [], next: [] };
 assert.deepEqual(parseOutcome("all wrapped up\nDONE — review: reviews/plan.md"),
   { status: "done", reviewPath: "reviews/plan.md", ...empty });
 assert.deepEqual(parseOutcome("DONE - review: notes/x.qmd"),
@@ -202,6 +202,36 @@ assert.ok(idoc.split("\n")[3].includes("- [x]"), "closed checks an issue's box")
 const untitled = appendPRChildren("- [ ] T\n", 0, [], [{ url: "https://github.com/o/r/issues/9" }]);
 assert.ok(untitled.includes("Issue: [#9](https://github.com/o/r/issues/9)"));
 
+// DOC outcomes: produced documents, linked as plain children
+const withDocs = parseOutcome(
+  "DOC: notes/jwt-rotation-tradeoffs.md — JWT rotation tradeoffs\nDOC: notes/refresh-storage.md\nDONE — review: plans/token-rotation.md");
+assert.equal(withDocs.status, "done", "docs never gate completion");
+assert.equal(withDocs.reviewPath, "plans/token-rotation.md");
+assert.deepEqual(withDocs.docs, [
+  { path: "notes/jwt-rotation-tradeoffs.md", title: "JWT rotation tradeoffs" },
+  { path: "notes/refresh-storage.md", title: undefined },
+]);
+
+import { findDocChildren, appendDocChildren } from "./docbind.mjs";
+let ddoc = "# T\n\n- [ ] Research token rotation\nother\n";
+ddoc = appendDocChildren(ddoc, 2, withDocs.docs);
+let dkids = findDocChildren(ddoc);
+assert.equal(dkids.length, 2);
+assert.equal(ddoc.split("\n")[3], "  - 📄 [[notes/jwt-rotation-tradeoffs|JWT rotation tradeoffs]]");
+assert.equal(dkids[1].title, "refresh-storage", "untitled doc falls back to basename");
+assert.equal(dkids[1].path, "notes/refresh-storage", ".md stripped from the wiki link");
+ddoc = appendDocChildren(ddoc, 2, withDocs.docs);   // idempotent
+assert.equal(findDocChildren(ddoc).length, 2);
+// doc children coexist with PR children and don't confuse the PR scan
+ddoc = appendPRChildren(ddoc, 2, [{ url: "https://github.com/o/r/pull/5", title: "impl" }]);
+assert.equal(findPRChildren(ddoc).length, 1);
+assert.equal(findDocChildren(ddoc).length, 2);
+// NEXT tasks land after the whole children block, docs included
+const dnext = appendNextTasks(ddoc, 2, ["Turn the plan into PRs via /plan-to-pr"]);
+const dlines = dnext.split("\n");
+assert.equal(dlines[6], "- [ ] Turn the plan into PRs via /plan-to-pr");
+assert.equal(dlines[7], "other");
+
 // NEXT chaining: follow-ups materialize as sibling tasks after the children block
 import { appendNextTasks } from "./docbind.mjs";
 let ndoc = "# T\n\n- [x] Research flakiness\n  - [x] Issue: [#41](https://github.com/o/r/issues/41) — closed\n- [ ] Unrelated task\n";
@@ -216,6 +246,38 @@ assert.equal(appendNextTasks(ndoc, 2, []), ndoc, "no-op on empty");
 // indented parent keeps its indent for the new sibling
 const nested = appendNextTasks("- [ ] Outer\n  - [x] Inner done\n", 1, ["Follow up"]);
 assert.equal(nested.split("\n")[2], "  - [ ] Follow up");
+
+// board scan: every task line classified by its written-back status,
+// PR/Issue children excluded (they belong to their parent's card)
+import { scanTasks } from "./docbind.mjs";
+const boardDoc = [
+  "# T",
+  "",
+  "- [ ] Fresh task",
+  "- [ ] Running task ⏳ %% pi:session=.pi-sessions/a.jsonl %%",
+  "- [ ] Shipped thing 🔃 %% pi:session=.pi-sessions/b.jsonl %% %% pi:repo=/x %%",
+  "  - [ ] PR: [#1](https://github.com/o/r/pull/1) — open",
+  "- [ ] Stuck thing ❌ %% pi:session=.pi-sessions/c.jsonl %%",
+  "- [x] Finished ([[reviews/out|review]]) %% pi:session=.pi-sessions/d.jsonl %%",
+  "not a task",
+].join("\n");
+const scanned = scanTasks(boardDoc);
+assert.deepEqual(scanned.map((s) => s.status),
+  ["todo", "running", "review", "blocked", "done"]);
+assert.deepEqual(scanned.map((s) => s.line), [2, 3, 4, 6, 7]);
+assert.equal(scanned[1].text, "Running task", "markers and status emoji stripped");
+assert.equal(scanned[2].text, "Shipped thing");
+assert.equal(scanned[4].text, "Finished ([[reviews/out|review]])", "review suffix kept");
+assert.ok(!scanned.some((s) => s.text.startsWith("PR:")), "PR children are not cards");
+assert.equal(scanTasks("prose only\n").length, 0);
+
+// board task creation: appended as a plain unchecked line
+import { appendTask } from "./docbind.mjs";
+assert.equal(appendTask("# T\n\n- [ ] Old\n", "New thing"), "# T\n\n- [ ] Old\n- [ ] New thing\n");
+assert.equal(appendTask("# T\n\n- [ ] Old\n\n\n", "New thing"), "# T\n\n- [ ] Old\n- [ ] New thing\n",
+  "trailing blank lines collapsed");
+assert.equal(appendTask("", "First"), "- [ ] First\n");
+assert.equal(scanTasks(appendTask(boardDoc, "Fresh via board")).at(-1).text, "Fresh via board");
 
 // slug + prompt
 assert.equal(slugify("Fix the %%weird%% thing!!"), "fix-the-weird-thing");

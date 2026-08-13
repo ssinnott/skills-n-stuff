@@ -48,11 +48,14 @@ cp manifest.json main.js styles.css "<your-vault>/.obsidian/plugins/pi-tasks/"
 ```
 
 Then in Obsidian: Settings → Community plugins → enable **Pi Tasks**.
-(`styles.css` at the repo root is a build artifact copied from
-`upstream/styles.css`; upstream stays untouched.)
+(`styles.css` at the repo root is a build artifact — `upstream/styles.css`
+plus `src/board.css` concatenated; upstream stays untouched.)
 
 ## First use (2 minutes)
 
+0. Click the ribbon's dashboard icon (or run **Open pi task board**) — the
+   kanban board opens. It starts empty: cards appear as your documents
+   gain pi tasks.
 1. Open any note, run the command **Open pi session for this note** — a
    chat tab opens, and the note gains a `pi-session` frontmatter line
    pointing at `.pi-sessions/<id>.jsonl` in your vault.
@@ -77,8 +80,42 @@ Then in Obsidian: Settings → Community plugins → enable **Pi Tasks**.
    off once everything is merged. Diff review is only for PRs — documents
    are never reviewed as diffs.
 
+## Task board
+
+The kanban board (ribbon icon, or **Open pi task board**) shows every pi
+task line in the vault as a card, in columns derived from the status the
+plugin already writes back to the line: **To do** (unchecked), **Running**
+(⏳), **In review** (🔃), **Blocked** (❌), **Done** (checked). Clicking a
+card opens its document at the task line; card buttons dispatch without
+leaving the board — **Launch** starts a fresh agent for a to-do (or
+blocked) task, **Session** reopens the task's recorded session tab, and
+**Review** opens the task's review document or difit over its PRs.
+
+Cards also show what the task has produced: one chip per child artifact
+— 📄 documents open in the vault, 🔀 PRs and ◎ issues (with their
+open/merged/closed state) open on the host. The chips are the task
+line's children, projected — the card is the whole story of the card.
+
+The **New task** button creates a card without leaving the board: enter
+the task text (naming a workflow like `/plan-to-pr` if the agent should
+follow one) and pick which task document it goes into — the board's
+documents are offered, preselecting the most recently edited. With no
+task documents yet, the task lands in a fresh `Pi Tasks.md` inbox doc
+that opts itself onto the board. The new card appears in To do, ready to
+launch.
+
+The board is a pure projection: cards render from task lines and every
+action writes through the document, so there is no board-side state to
+drift. It refreshes automatically as documents change. A document's tasks
+appear once it carries pi wiring (a `pi-session` binding or any launched
+task's marker); to put a fresh task doc on the board before its first
+launch, add `pi-board: true` to its frontmatter. Plain checklists without
+either stay off the board. PR/Issue child lines never become cards — they
+belong to their parent task.
+
 ## Commands
 
+- **Open pi task board** — open (or reveal) the kanban board.
 - **Open pi session for this note** — resolve-or-create the note's
   `pi-session` binding and open its chat tab.
 - **Launch pi agent for task line** — fresh agent for the checkbox task
@@ -120,6 +157,10 @@ on its final lines:
 - `PR: <url> — <title>` (+ `REPO: <path>`) — work shipped as pull
   requests; the task enters review (🔃) with one child line per PR and
   completes only when they all merge.
+- `DOC: <vault path> — <title>` — an additional document the agent
+  produced (tech notes, plans). Linked as a plain `📄 [[...]]` child
+  line under the task — a fact, not an obligation, so no checkbox and
+  no gating; the review document itself isn't repeated as a child.
 - `ISSUE: <url> — <title>` — an issue the agent filed. Tracked as a
   child line, box checked when it closes, but it never blocks the task:
   creating the issue *was* the work.

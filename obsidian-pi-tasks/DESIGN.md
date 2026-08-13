@@ -17,8 +17,11 @@ document is the durable artifact — sessions are its working memory.
 
 - No changes to pi itself. Everything rides on shipped seams: `--mode rpc`,
   `--session`, file editing, skill loading.
-- No task board UI. The task document is the board; agents write status
-  back to their own task line.
+- No plugin-side task state. The task document is the source of truth;
+  agents write status back to their own task line. (The kanban board —
+  originally a non-goal — exists, but only as a pure projection of task
+  lines: it stores nothing and every card action writes through the
+  document.)
 - Not a general chat client. Upstream's obsidian-pi-plugin covers
   free-floating chat; this plugin exists for doc-bound sessions.
 - No MCP, no servers, no daemons.
@@ -77,6 +80,16 @@ document is the durable artifact — sessions are its working memory.
   auto-launching NEXT tasks (silent fan-out, no review gate) and
   plugin-side workflow definitions (judgment belongs in evaluable
   skills, drawer pattern).
+- Produced documents link as plain children. Research agents write
+  ordinary vault files (cwd is the vault root) and report each extra
+  artifact as "DOC: <path> — <title>"; the task line gains one
+  `📄 [[path|title]]` child per doc, idempotent by path, with the
+  review document excluded (it already links from the task line).
+  Plain wiki links, not checkboxes — a produced document is a fact,
+  not an obligation, so nothing gates on it and the board ignores it.
+  Rejected: agents inserting their own links into the task doc (two
+  writers racing over one file; the plugin stays the doc's single
+  writer for task wiring).
 - Profiles are pi config directories, selected per task. pi has no
   native profiles, but `PI_CODING_AGENT_DIR` swaps the whole config dir
   (settings.json = the package list), so a profile is a directory the
@@ -89,6 +102,22 @@ document is the durable artifact — sessions are its working memory.
   starter skills were built and removed); an extension for profile
   switching (extensions load after the config is resolved — selection
   must happen at spawn, and the spawner is this plugin).
+- The task board is a projection, not a store. One kanban view over the
+  vault's task lines (columns = the written-back status markers: unchecked
+  / ⏳ / 🔃 / ❌ / checked), rebuilt from the documents on every change.
+  Cards open their document at the line; card buttons call the same
+  file+line entry points as the cursor commands (launch, session, review),
+  so dispatching from the board and from the doc are the same code path.
+  Inclusion is pi wiring (session binding or task marker) or explicit
+  `pi-board: true` frontmatter — plain checklists stay off. Creating a
+  task from the board is the same rule in reverse: the New task button
+  appends a plain `- [ ] …` line to a chosen board document (inbox doc
+  created on first use), never a board-side record. Rejected:
+  drag-to-move between columns (status is written by agents and merges,
+  not by hand; dragging would fake states the wiring doesn't have) and
+  board-side persistence of any kind (the earlier "session browser as
+  board" rejection, same reason: a second, ephemeral copy of what the
+  docs already say).
 - Diff review is only for PRs, never for documents. difit runs in the
   repo where the work happened (agents report "REPO: <path>", stored as a
   hidden marker), over the PR's branch range resolved via gh; its line
@@ -127,6 +156,10 @@ document is the durable artifact — sessions are its working memory.
       checklists. Workflow skills deliberately not shipped: which
       workflows a session sees belongs to pi's loading configuration
       (profiles), owned by the user, not this repo.
+- [x] Task board: kanban ItemView (ribbon icon + command) projecting
+      docbind.scanTasks over pi-wired documents; cards open the doc at
+      the line and dispatch launch/session/review via shared file+line
+      entry points.
 - [ ] Drawer skills: task-doc + review-doc templates, comment-resolution
       skill, evals with mechanical checks (markers resolved and removed,
       checkbox structure, honest status).

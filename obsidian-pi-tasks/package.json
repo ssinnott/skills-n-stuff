@@ -4,7 +4,7 @@
   "description": "Obsidian plugin binding pi coding-agent sessions to documents",
   "main": "main.js",
   "scripts": {
-    "build": "esbuild src/main.ts --bundle --external:obsidian --external:electron --format=cjs --platform=node --outfile=main.js && cp upstream/styles.css styles.css",
+    "build": "esbuild src/main.ts --bundle --external:obsidian --external:electron --format=cjs --platform=node --outfile=main.js && cat upstream/styles.css src/board.css > styles.css",
     "typecheck": "tsc --noEmit",
     "build:test": "esbuild src/docbind.ts --bundle --format=esm --platform=node --outfile=test/docbind.mjs"
   },
