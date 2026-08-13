@@ -167,3 +167,9 @@
     padding: 16px;
     color: var(--text-muted);
 }
+
+.pi-board-hint-footer {
+    padding: 4px 12px 10px;
+    font-size: var(--font-ui-smaller);
+    color: var(--text-faint);
+}
