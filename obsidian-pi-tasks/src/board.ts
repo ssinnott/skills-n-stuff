@@ -135,6 +135,7 @@ export class PiBoardView extends ItemView {
         this.contentEl.addClass("pi-board-container");
         // Any vault change can move a card between columns; refreshes are
         // debounced and cheap (cachedRead + regex scan), so listen broadly.
+        this.registerEvent(this.app.vault.on("create", () => this.scheduleRefresh()));
         this.registerEvent(this.app.vault.on("modify", () => this.scheduleRefresh()));
         this.registerEvent(this.app.vault.on("rename", () => this.scheduleRefresh()));
         this.registerEvent(this.app.vault.on("delete", () => this.scheduleRefresh()));
@@ -163,21 +164,37 @@ export class PiBoardView extends ItemView {
     /** Documents contributing to the board, refreshed with the cards —
      *  the targets the new-task modal offers. */
     private boardFiles: TFile[] = [];
+    /** Docs with tasks that stayed off-board for lack of pi wiring. */
+    private offBoardCount = 0;
 
     private async collectCards(): Promise<BoardCard[]> {
         const cards: BoardCard[] = [];
         const boardFiles: TFile[] = [];
+        let offBoard = 0;
         const files = this.app.vault.getMarkdownFiles()
             .sort((a, b) => a.path.localeCompare(b.path));
         for (const file of files) {
             const cache = this.app.metadataCache.getFileCache(file);
-            const hasTasks = cache?.listItems?.some((li) => li.task !== undefined) ?? false;
+            let hasTasks = cache?.listItems?.some((li) => li.task !== undefined) ?? false;
             const fm = cache?.frontmatter as Record<string, unknown> | undefined;
-            const flagged = fm?.["pi-board"] === true || fm?.["pi-board"] === "true";
-            const bound = typeof fm?.["pi-session"] === "string" && fm["pi-session"] !== "—";
+            let flagged = fm?.["pi-board"] === true || fm?.["pi-board"] === "true";
+            let bound = typeof fm?.["pi-session"] === "string" && fm["pi-session"] !== "—";
+            let text: string | null = null;
+            if (!cache) {
+                // A brand-new file (the New task inbox, a just-created task
+                // doc) may not be indexed yet — the cache can't vouch for
+                // it, so check the text itself.
+                text = await this.app.vault.cachedRead(file);
+                hasTasks = docbind.scanTasks(text).length > 0;
+                flagged = docbind.boardFlagged(text);
+                bound = docbind.getSessionId(text) !== null;
+            }
             if (!hasTasks && !flagged && !bound) continue;
-            const text = await this.app.vault.cachedRead(file);
-            if (!flagged && !bound && !text.includes("%% pi:")) continue;
+            text ??= await this.app.vault.cachedRead(file);
+            if (!flagged && !bound && !text.includes("%% pi:")) {
+                if (hasTasks) offBoard++;
+                continue;
+            }
             boardFiles.push(file);
             if (!hasTasks) continue;
             const children = docbind.findPRChildren(text);
@@ -196,6 +213,7 @@ export class PiBoardView extends ItemView {
             }
         }
         this.boardFiles = boardFiles;
+        this.offBoardCount = offBoard;
         return cards;
     }
 
@@ -260,6 +278,14 @@ export class PiBoardView extends ItemView {
                 text: "No pi tasks found. A document's checkbox tasks appear here " +
                     "once it has pi wiring (a session binding or launched task), or " +
                     "add pi-board: true to its frontmatter to include it up front.",
+            });
+        } else if (this.offBoardCount > 0) {
+            // The wiring filter is by design (plain checklists stay off the
+            // board), but it should never be silent.
+            el.createDiv({
+                cls: "pi-board-hint pi-board-hint-footer",
+                text: `${this.offBoardCount} document${this.offBoardCount === 1 ? " with tasks stays" : "s with tasks stay"} ` +
+                    "off-board (no pi wiring) — add pi-board: true to a doc's frontmatter to include it.",
             });
         }
     }

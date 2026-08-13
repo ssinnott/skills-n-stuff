@@ -16,6 +16,12 @@ export function getSessionId(noteText: string): string | null {
   return m && m[1] !== "—" ? m[1] : null;
 }
 
+/** True when frontmatter opts the note onto the task board (pi-board: true). */
+export function boardFlagged(noteText: string): boolean {
+  const fm = noteText.match(FRONTMATTER);
+  return !!fm && /^pi-board:\s*true\s*$/m.test(fm[1]);
+}
+
 /** Read the note's default pi profile name from frontmatter, if set. */
 export function getProfile(noteText: string): string | null {
   const fm = noteText.match(FRONTMATTER);

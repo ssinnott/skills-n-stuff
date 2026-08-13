@@ -153,6 +153,12 @@ assert.equal(taskSessionRef(mdoc, 2), ".pi-sessions/abc.jsonl", "session ref sti
 mdoc = attachProfileRef(mdoc, 2, "shipping");   // idempotent replace
 assert.equal(taskProfileRef(mdoc, 2), "shipping");
 assert.equal((mdoc.split("\n")[2].match(/pi:profile/g) || []).length, 1);
+import { boardFlagged } from "./docbind.mjs";
+assert.equal(boardFlagged(bare), false);
+assert.equal(boardFlagged("---\npi-board: true\n---\n# T\n"), true);
+assert.equal(boardFlagged("---\nstatus: draft\npi-board: true\n---\n"), true);
+assert.equal(boardFlagged("---\npi-board: false\n---\n"), false);
+assert.equal(boardFlagged("pi-board: true\n"), false, "needs real frontmatter");
 assert.equal(getProfile(bare), null);
 assert.equal(getProfile("---\npi-profile: research\n---\n# T\n"), "research");
 assert.equal(getProfile("---\npi-session: s1\npi-profile: research\n---\n"), "research");
