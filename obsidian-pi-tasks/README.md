@@ -91,6 +91,11 @@ leaving the board — **Launch** starts a fresh agent for a to-do (or
 blocked) task, **Session** reopens the task's recorded session tab, and
 **Review** opens the task's review document or difit over its PRs.
 
+Cards also show what the task has produced: one chip per child artifact
+— 📄 documents open in the vault, 🔀 PRs and ◎ issues (with their
+open/merged/closed state) open on the host. The chips are the task
+line's children, projected — the card is the whole story of the card.
+
 The **New task** button creates a card without leaving the board: enter
 the task text (naming a workflow like `/plan-to-pr` if the agent should
 follow one) and pick which task document it goes into — the board's

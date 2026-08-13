@@ -17,7 +17,7 @@
 import { App, ItemView, MarkdownRenderer, MarkdownView, Modal, Setting, TFile, WorkspaceLeaf } from "obsidian";
 
 import * as docbind from "./docbind";
-import type { TaskScan } from "./docbind";
+import type { TaskScan, PRChild, DocChild } from "./docbind";
 import type PiTasksPlugin from "./main";
 
 export const VIEW_TYPE_PI_TASKS_BOARD = "pi-tasks-board";
@@ -27,6 +27,10 @@ interface BoardCard {
     task: TaskScan;
     hasSession: boolean;
     hasReview: boolean;
+    /** PR/Issue children of this task line, for artifact chips. */
+    prChildren: PRChild[];
+    /** 📄 document children of this task line, for artifact chips. */
+    docChildren: DocChild[];
 }
 
 /** Inbox document created when a task is added and no board doc exists. */
@@ -177,13 +181,17 @@ export class PiBoardView extends ItemView {
             boardFiles.push(file);
             if (!hasTasks) continue;
             const children = docbind.findPRChildren(text);
+            const docKids = docbind.findDocChildren(text);
             for (const task of docbind.scanTasks(text)) {
                 const kids = children.filter((c) => docbind.parentTaskOf(text, c.line) === task.line);
+                const docs = docKids.filter((c) => docbind.parentTaskOf(text, c.line) === task.line);
                 cards.push({
                     file,
                     task,
                     hasSession: docbind.taskSessionRef(text, task.line) !== null,
                     hasReview: docbind.wikiLinks(task.text).length > 0 || kids.length > 0,
+                    prChildren: kids,
+                    docChildren: docs,
                 });
             }
         }
@@ -262,6 +270,32 @@ export class PiBoardView extends ItemView {
         const body = el.createDiv({ cls: "pi-board-card-text" });
         void MarkdownRenderer.render(
             this.app, card.task.text || "*(empty task)*", body, card.file.path, this);
+
+        // Artifact chips: what this card has produced so far — documents
+        // open in the vault, PRs/issues open on the host.
+        if (card.docChildren.length || card.prChildren.length) {
+            const chips = el.createDiv({ cls: "pi-board-card-chips" });
+            const chip = (label: string, cls: string, cb: () => void) => {
+                const c = chips.createEl("a", { cls: `pi-board-chip ${cls}`, text: label });
+                c.addEventListener("click", (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    cb();
+                });
+            };
+            for (const d of card.docChildren) {
+                chip(`📄 ${d.title}`, "pi-board-chip-doc", () => {
+                    const f = this.app.metadataCache.getFirstLinkpathDest(d.path, card.file.path);
+                    if (f) void this.app.workspace.getLeaf("tab").openFile(f);
+                });
+            }
+            for (const p of card.prChildren) {
+                const icon = p.kind === "PR" ? "🔀" : "◎";
+                chip(`${icon} ${p.title} · ${p.state}`,
+                    `pi-board-chip-${p.kind.toLowerCase()} pi-board-chip-${p.state}`,
+                    () => window.open(p.url));
+            }
+        }
 
         el.createDiv({ cls: "pi-board-card-meta", text: card.file.basename });
 
