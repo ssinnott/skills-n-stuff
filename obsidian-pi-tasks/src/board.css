@@ -18,6 +18,11 @@
     font-weight: 600;
 }
 
+.pi-board-header-actions {
+    display: flex;
+    gap: 6px;
+}
+
 .pi-board-columns {
     display: flex;
     gap: 10px;

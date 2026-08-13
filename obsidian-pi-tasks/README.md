@@ -91,6 +91,14 @@ leaving the board — **Launch** starts a fresh agent for a to-do (or
 blocked) task, **Session** reopens the task's recorded session tab, and
 **Review** opens the task's review document or difit over its PRs.
 
+The **New task** button creates a card without leaving the board: enter
+the task text (naming a workflow like `/plan-to-pr` if the agent should
+follow one) and pick which task document it goes into — the board's
+documents are offered, preselecting the most recently edited. With no
+task documents yet, the task lands in a fresh `Pi Tasks.md` inbox doc
+that opts itself onto the board. The new card appears in To do, ready to
+launch.
+
 The board is a pure projection: cards render from task lines and every
 action writes through the document, so there is no board-side state to
 drift. It refreshes automatically as documents change. A document's tasks

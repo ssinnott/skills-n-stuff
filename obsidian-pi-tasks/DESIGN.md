@@ -99,7 +99,10 @@ document is the durable artifact — sessions are its working memory.
   file+line entry points as the cursor commands (launch, session, review),
   so dispatching from the board and from the doc are the same code path.
   Inclusion is pi wiring (session binding or task marker) or explicit
-  `pi-board: true` frontmatter — plain checklists stay off. Rejected:
+  `pi-board: true` frontmatter — plain checklists stay off. Creating a
+  task from the board is the same rule in reverse: the New task button
+  appends a plain `- [ ] …` line to a chosen board document (inbox doc
+  created on first use), never a board-side record. Rejected:
   drag-to-move between columns (status is written by agents and merges,
   not by hand; dragging would fake states the wiring doesn't have) and
   board-side persistence of any kind (the earlier "session browser as

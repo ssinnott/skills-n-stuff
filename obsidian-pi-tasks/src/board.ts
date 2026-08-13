@@ -14,7 +14,7 @@
  * off the board.
  */
 
-import { ItemView, MarkdownRenderer, MarkdownView, TFile, WorkspaceLeaf } from "obsidian";
+import { App, ItemView, MarkdownRenderer, MarkdownView, Modal, Setting, TFile, WorkspaceLeaf } from "obsidian";
 
 import * as docbind from "./docbind";
 import type { TaskScan } from "./docbind";
@@ -29,6 +29,9 @@ interface BoardCard {
     hasReview: boolean;
 }
 
+/** Inbox document created when a task is added and no board doc exists. */
+const INBOX_PATH = "Pi Tasks.md";
+
 const COLUMNS: Array<{ status: TaskScan["status"]; title: string }> = [
     { status: "todo", title: "To do" },
     { status: "running", title: "Running" },
@@ -36,6 +39,72 @@ const COLUMNS: Array<{ status: TaskScan["status"]; title: string }> = [
     { status: "blocked", title: "Blocked" },
     { status: "done", title: "Done" },
 ];
+
+/**
+ * Modal behind the board's "New task" button: task text plus a target
+ * document picked from the board's contributing docs. Submitting appends
+ * a plain `- [ ] …` line — the card appears in To do, ready to dispatch.
+ */
+class NewTaskModal extends Modal {
+    private files: TFile[];
+    private onSubmit: (docPath: string | null, text: string) => void;
+
+    constructor(app: App, files: TFile[], onSubmit: (docPath: string | null, text: string) => void) {
+        super(app);
+        this.files = files;
+        this.onSubmit = onSubmit;
+    }
+
+    onOpen(): void {
+        this.titleEl.setText("New pi task");
+        // Preselect the most recently modified doc — most likely the one
+        // being worked; null target means "create the inbox doc".
+        let docPath: string | null = this.files.length
+            ? [...this.files].sort((a, b) => b.stat.mtime - a.stat.mtime)[0].path
+            : null;
+        let text = "";
+
+        const submit = () => {
+            this.close();
+            this.onSubmit(docPath, text);
+        };
+
+        new Setting(this.contentEl)
+            .setName("Task")
+            .setDesc("Name a workflow in the text (like /plan-to-pr) to have the agent follow it.")
+            .addText((t) => {
+                t.setPlaceholder("Summarize [[meeting-notes]] into a decision list")
+                    .onChange((v) => { text = v; });
+                t.inputEl.style.width = "100%";
+                t.inputEl.addEventListener("keydown", (e) => {
+                    if (e.key === "Enter") {
+                        e.preventDefault();
+                        submit();
+                    }
+                });
+                window.setTimeout(() => t.inputEl.focus(), 0);
+            });
+
+        new Setting(this.contentEl)
+            .setName("Add to")
+            .addDropdown((d) => {
+                if (this.files.length === 0) {
+                    d.addOption("", `${INBOX_PATH} (new)`);
+                } else {
+                    for (const f of this.files) d.addOption(f.path, f.path);
+                    d.setValue(docPath ?? "");
+                }
+                d.onChange((v) => { docPath = v || null; });
+            });
+
+        new Setting(this.contentEl)
+            .addButton((b) => b.setButtonText("Create").setCta().onClick(submit));
+    }
+
+    onClose(): void {
+        this.contentEl.empty();
+    }
+}
 
 export class PiBoardView extends ItemView {
     plugin: PiTasksPlugin;
@@ -87,19 +156,26 @@ export class PiBoardView extends ItemView {
 
     // --- Read model ---
 
+    /** Documents contributing to the board, refreshed with the cards —
+     *  the targets the new-task modal offers. */
+    private boardFiles: TFile[] = [];
+
     private async collectCards(): Promise<BoardCard[]> {
         const cards: BoardCard[] = [];
+        const boardFiles: TFile[] = [];
         const files = this.app.vault.getMarkdownFiles()
             .sort((a, b) => a.path.localeCompare(b.path));
         for (const file of files) {
             const cache = this.app.metadataCache.getFileCache(file);
             const hasTasks = cache?.listItems?.some((li) => li.task !== undefined) ?? false;
-            if (!hasTasks) continue;
             const fm = cache?.frontmatter as Record<string, unknown> | undefined;
             const flagged = fm?.["pi-board"] === true || fm?.["pi-board"] === "true";
             const bound = typeof fm?.["pi-session"] === "string" && fm["pi-session"] !== "—";
+            if (!hasTasks && !flagged && !bound) continue;
             const text = await this.app.vault.cachedRead(file);
             if (!flagged && !bound && !text.includes("%% pi:")) continue;
+            boardFiles.push(file);
+            if (!hasTasks) continue;
             const children = docbind.findPRChildren(text);
             for (const task of docbind.scanTasks(text)) {
                 const kids = children.filter((c) => docbind.parentTaskOf(text, c.line) === task.line);
@@ -111,7 +187,28 @@ export class PiBoardView extends ItemView {
                 });
             }
         }
+        this.boardFiles = boardFiles;
         return cards;
+    }
+
+    // --- Task creation ---
+
+    /**
+     * Append a fresh task line to a board document — the board's create
+     * button, still writing through the doc like everything else. With no
+     * board documents yet, an inbox doc is created that opts itself in
+     * via pi-board frontmatter.
+     */
+    private async createTask(docPath: string | null, taskText: string): Promise<void> {
+        const text = taskText.trim();
+        if (!text) return;
+        let file = docPath ? this.app.vault.getFileByPath(docPath) : null;
+        if (!file) {
+            file = this.app.vault.getFileByPath(INBOX_PATH)
+                ?? await this.app.vault.create(INBOX_PATH, "---\npi-board: true\n---\n\n# Pi tasks\n");
+        }
+        await this.app.vault.process(file, (t) => docbind.appendTask(t, text));
+        this.scheduleRefresh();
     }
 
     // --- Rendering ---
@@ -123,7 +220,16 @@ export class PiBoardView extends ItemView {
 
         const header = el.createDiv({ cls: "pi-board-header" });
         header.createSpan({ cls: "pi-board-title", text: "Pi tasks" });
-        const refreshBtn = header.createEl("button", { cls: "pi-board-refresh", text: "Refresh" });
+        const headerActions = header.createDiv({ cls: "pi-board-header-actions" });
+        const newBtn = headerActions.createEl("button", {
+            cls: "pi-board-new mod-cta",
+            text: "New task",
+        });
+        newBtn.addEventListener("click", () => {
+            new NewTaskModal(this.app, this.boardFiles,
+                (docPath, text) => void this.createTask(docPath, text)).open();
+        });
+        const refreshBtn = headerActions.createEl("button", { cls: "pi-board-refresh", text: "Refresh" });
         refreshBtn.addEventListener("click", () => void this.refresh());
 
         const columnsEl = el.createDiv({ cls: "pi-board-columns" });

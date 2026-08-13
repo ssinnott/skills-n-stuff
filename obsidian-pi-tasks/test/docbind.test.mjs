@@ -241,6 +241,14 @@ assert.equal(scanned[4].text, "Finished ([[reviews/out|review]])", "review suffi
 assert.ok(!scanned.some((s) => s.text.startsWith("PR:")), "PR children are not cards");
 assert.equal(scanTasks("prose only\n").length, 0);
 
+// board task creation: appended as a plain unchecked line
+import { appendTask } from "./docbind.mjs";
+assert.equal(appendTask("# T\n\n- [ ] Old\n", "New thing"), "# T\n\n- [ ] Old\n- [ ] New thing\n");
+assert.equal(appendTask("# T\n\n- [ ] Old\n\n\n", "New thing"), "# T\n\n- [ ] Old\n- [ ] New thing\n",
+  "trailing blank lines collapsed");
+assert.equal(appendTask("", "First"), "- [ ] First\n");
+assert.equal(scanTasks(appendTask(boardDoc, "Fresh via board")).at(-1).text, "Fresh via board");
+
 // slug + prompt
 assert.equal(slugify("Fix the %%weird%% thing!!"), "fix-the-weird-thing");
 const p = taskPrompt(t, "plans/build.md", ["rpc-notes.md"]);

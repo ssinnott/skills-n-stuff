@@ -284,6 +284,12 @@ export function scanTasks(noteText: string): TaskScan[] {
   return out;
 }
 
+/** Append a fresh unchecked task line at the end of a note. */
+export function appendTask(noteText: string, text: string): string {
+  const base = noteText.replace(/\n+$/, "");
+  return (base ? base + "\n" : "") + `- [ ] ${text}\n`;
+}
+
 export interface PiComment {
   start: number;       // char offset of the opening %%
   end: number;         // char offset just past the closing %%
