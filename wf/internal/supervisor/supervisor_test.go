@@ -527,7 +527,7 @@ func TestRunRespectsConcurrencyCap(t *testing.T) {
 	}
 
 	q := newQueue(tasks...)
-	r := &fakeRunner{transcript: "DONE\n"}
+	r := &fakeRunner{transcript: "PR: https://a/1 — Did it\nDONE Landed the change and verified it.\n"}
 	s := newSupervisor(q, r, &fakeProvider{}, nil)
 
 	results, err := s.Run(context.Background(), 2)
@@ -549,7 +549,7 @@ func TestRunRespectsConcurrencyCap(t *testing.T) {
 
 func TestRunStopsWhenQueueDrains(t *testing.T) {
 	q := newQueue(wf.Task{ID: "01HZ", ShortID: "abc4", Title: "Only task"})
-	s := newSupervisor(q, &fakeRunner{transcript: "DONE\n"}, &fakeProvider{}, nil)
+	s := newSupervisor(q, &fakeRunner{transcript: "PR: https://a/1 — x\nDONE Landed it.\n"}, &fakeProvider{}, nil)
 
 	done := make(chan struct{})
 	go func() {
@@ -563,5 +563,69 @@ func TestRunStopsWhenQueueDrains(t *testing.T) {
 	case <-done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("Run() did not return once the queue drained")
+	}
+}
+
+func TestRunDoesNotRetryEscalatedTasks(t *testing.T) {
+	// An escalated task stays open and its lease is released, so without an
+	// attempted-set the drain loop picks it straight back up — forever.
+	q := newQueue(wf.Task{ID: "01HZ", ShortID: "abc4", Title: "Stuck work"})
+	r := &fakeRunner{transcript: "I got confused.\n"}
+	s := newSupervisor(q, r, &fakeProvider{}, nil)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		if _, err := s.Run(context.Background(), 1); err != nil {
+			t.Errorf("Run() error = %v", err)
+		}
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run() spun on an escalated task instead of moving on")
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.prompts) != 1 {
+		t.Errorf("the task was dispatched %d times, want once", len(r.prompts))
+	}
+}
+
+func TestRunSkipsTasksAwaitingAHuman(t *testing.T) {
+	// A task already flagged for a human is not ours to retry.
+	q := newQueue(wf.Task{
+		ID: "01HZ", ShortID: "abc4", Title: "Waiting on a person",
+		Meta: map[string]any{wf.AttentionKey: "needs-human"},
+	})
+	r := &fakeRunner{transcript: "PR: https://a/1 — x\nDONE Landed it.\n"}
+	s := newSupervisor(q, r, &fakeProvider{}, nil)
+
+	results, err := s.Run(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(results) != 0 || len(r.prompts) != 0 {
+		t.Errorf("dispatched a task awaiting a human: %d results, %d runs", len(results), len(r.prompts))
+	}
+}
+
+func TestPickPrefersHigherPriority(t *testing.T) {
+	// kata returns ready newest-first; which ready task to run is wf's call.
+	q := newQueue(
+		wf.Task{ID: "low", ShortID: "low1", Title: "Low priority", Priority: 4},
+		wf.Task{ID: "high", ShortID: "hi1", Title: "High priority", Priority: 0},
+		wf.Task{ID: "mid", ShortID: "mid1", Title: "Middling", Priority: 2},
+	)
+	s := newSupervisor(q, &fakeRunner{transcript: "PR: https://a/1 — x\nDONE Landed it.\n"}, &fakeProvider{}, nil)
+
+	result, err := s.RunOnce(context.Background(), "")
+	if err != nil {
+		t.Fatalf("RunOnce() error = %v", err)
+	}
+	if result.Task.ID != "high" {
+		t.Errorf("dispatched %q, want the priority-0 task", result.Task.ID)
 	}
 }

@@ -114,36 +114,58 @@ double-closes and dropped evidence.
 
 | Outcome | Result |
 | :-- | :-- |
-| Reported `DONE` | Task closed with PR/commit/document evidence; worktree disposed |
+| Reported `DONE` **with evidence** | Task closed with PR/commit/document evidence; worktree disposed |
 | `NEXT:` lines | Follow-on tasks created, linked to the parent, not launched |
 | `ISSUE:` lines | Recorded on the task; never gates the close |
 | `DOC:` lines | Moved into the vault and bound, if the workflow says so |
+| `DONE` with **no** evidence | Escalated — see below |
 | No `DONE` | Escalated: flagged `needs-human`, worktree **kept**, transcript excerpted onto the task |
 | Agent crashed | Same escalation path, with the failure output |
 
-Silence is never success. A run that stopped talking does not close a task.
+Two rules make it safe to leave running.
 
-## Status
+**Silence is never success.** A run that stopped talking does not close a task.
 
-`wf run` works end to end against fakes and is covered by tests, including
-the concurrency cap, lease renewal, and stale-lease reclaim under `-race`.
-It has **not** been run against a live kata daemon or a real pi install.
+**A completion with nothing to show for it is not a completion.** An agent
+that reports `DONE` having produced no PR, commit, document, or test either
+did nothing or forgot to say what it did, and a human should look before the
+ledger records it as finished. A filed `ISSUE:` does not count — it says work
+moved elsewhere, not that this task's work exists.
 
-Two things are inferred from published docs rather than verified:
+kata enforces the same rule independently, refusing an evidence-free close.
+wf does not synthesize evidence to get past it: invented evidence is precisely
+what would make a closed task worthless.
 
-- **kata's JSON shape.** Flags come from kata's command reference and should
-  be right; the structure of what `--json` returns is undocumented. All of
-  that guesswork is confined to `NormalizeIssue` and `ExtractIssues` in
-  `internal/kata/kata.go`.
-- **pi's print-mode argv.** `BuildArgs` in `internal/runner/pi.go` assumes
-  `-p` takes the prompt positionally and `--session` accepts a path that does
-  not yet exist.
+## Testing
 
-There is also no documented `kata release`, so `Release` clears wf's lease and
-leaves kata's `owner` field alone — a stale owner is cosmetic, a stale lease
-is not.
+```sh
+go test ./...              # everything, integration included when kata is present
+go test -race ./...
+```
 
-Treat the first live run as protocol discovery.
+Unit tests run anywhere. The integration tests need the real `kata` binary on
+`PATH` (or `KATA_BIN` set) and skip cleanly without it:
+
+- **`internal/kata`** drives a live daemon in a throwaway `KATA_HOME`:
+  create/get/ready, metadata round-trips, lease survival through kata's JSON,
+  claim conflicts, release, close with multiple pieces of evidence,
+  escalation queries, idempotent follow-on creates.
+- **`internal/supervisor`** runs the whole loop against real kata, real git
+  worktrees, and a stub agent — closing a real issue, escalating and keeping
+  the worktree, moving a produced document into a vault and binding it both
+  ways, spawning a linked follow-on, and four concurrent runs.
+
+The agent is a stub rather than pi itself because pi needs a provider key and
+would make the tests non-deterministic. `BuildArgs` in `internal/runner/pi.go`
+is therefore the one assumption the suite does not cover: it takes `-p` as
+positional and `--session` as accepting a not-yet-existing path.
+
+Writing these tests against kata v0.16.0 contradicted its published reference
+in five places — `--if-unowned` does not exist, `close` takes no idempotency
+key, `--pr` is single-valued, releasing ownership is `edit --owner ""`, and
+issues carry both an integer `id` and the `uid` ULID you actually want. All
+five are fixed and pinned. `NormalizeIssue` remains the single point of
+contact with kata's wire format.
 
 ## Layout
 

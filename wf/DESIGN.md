@@ -136,6 +136,19 @@ rather than a rewrite.
   first working version to a Go API that has to be learned and pinned before
   anything runs end to end.
 
+- **A completion with no evidence is not a completion.** An agent that
+  reports DONE having produced no PR, commit, document or test either did
+  nothing or failed to say what it did; either way the ledger should not
+  record the task as finished until a human looks. kata independently
+  enforces the same rule — it refuses `close --done` without typed evidence
+  and tells you to leave the issue open — which is corroboration rather than
+  the reason. Rejected: synthesizing evidence to satisfy the check. Evidence
+  that wf invented is exactly what makes a closed task worthless, and the
+  close discipline is the main reason to be on this tracker at all.
+  A filed `ISSUE:` deliberately does not count: it says work moved
+  elsewhere, not that this task's work exists. Triage workflows ask their
+  agent for a writeup, which does.
+
 - **Interactive pi is a client, not the host.** The pi extension registers
   slash commands that shell out to `wf`; it holds no orchestration state.
   Restarting the TUI means nothing to running work. Rejected: an extension
@@ -201,27 +214,61 @@ rather than a rewrite.
 - [x] Artifact binding: DOC outcomes move into the vault and link both ways.
 - [x] `wf run --once` and `wf run --max N`: leases, renewal while running,
       stale reclaim, concurrency cap.
-- [ ] Live validation against a real kata daemon and a real pi install
-      (neither exists in the build environment).
+- [x] Integration tests against a real kata daemon (v0.16.0): create, get,
+      ready, metadata, leases, claim conflicts, release, close with evidence,
+      escalation queries, idempotent follow-ons.
+- [x] End-to-end tests: real kata plus real git worktrees plus a stub agent,
+      covering close, escalate-and-keep, artifact binding into a vault,
+      linked follow-ons, and concurrent runs.
+- [ ] Live validation against a real pi install (needs a provider key, so
+      the suite uses a stub agent instead).
 - [ ] pi extension exposing `/wf` slash commands over this CLI.
 - [ ] Obsidian: queue pane and framed kata UI over the same bindings.
+- [ ] Retry with backoff and a dead-letter state, if escalation-only proves
+      too blunt in practice.
+
+## What the live protocol turned out to be
+
+The adapter was first written from kata's published reference. Running it
+against kata v0.16.0 contradicted that reference in five places, every one
+now pinned by an integration test:
+
+- `claim` has no `--if-unowned`. An unqualified claim already refuses an
+  owned issue with `already_claimed`, which is the semantics wf wanted.
+- `close` takes no `--idempotency-key` or `--if-match`, and its `--pr` and
+  `--commit` sugar take a single value, so multiple PRs go through repeated
+  `--evidence pr:<url>`.
+- `close --done` demands a message of at least 40 characters *and* at least
+  one piece of typed evidence. Both shaped behavior above.
+- Releasing ownership is `edit --owner ""`. `assign` rejects an empty owner,
+  and there is no unclaim verb at all.
+- Issues carry both an integer `id` and a 26-character `uid` ULID, and
+  `show` returns labels as objects beside the issue while `list` and `ready`
+  return them as strings inline. Reading the first present key would have
+  bound every note and session to the integer.
+
+The lesson generalizes: `NormalizeIssue` stays the single point of contact
+with kata's wire format, and the integration tests are what keep it honest.
 
 ## Risks
 
-- **Unverified CLI surface.** The kata adapter is written from published
-  docs, not against a running daemon. `release` in particular has no
-  documented verb — the adapter clears the lease record and best-effort
-  clears the owner, and that path is guessed. First live run should be
-  treated as protocol discovery.
 - **Output-tail parsing.** Outcome verbs are recovered from the agent's
   final message. A runner that truncates or reformats that message breaks
-  the waist. Mitigation: the parser scans the whole transcript tail, not
-  just the last line, and an unparseable run escalates rather than closing.
+  the waist. Mitigation: the parser scans the whole transcript, not just the
+  last line, and an unparseable run escalates rather than closing.
+- **Unverified pi argv.** `BuildArgs` assumes print mode takes the prompt
+  positionally and `--session` accepts a path that does not yet exist. The
+  integration tests use a stub agent, so this is the one assumption the
+  suite does not cover — pi needs a provider key to run at all.
 - **Lease TTL versus long tasks.** A TTL short enough to reclaim dead
   workers promptly is short enough to steal a slow one. Mitigation:
   renewal on liveness rather than a fixed deadline.
 - **Two writers on the issue.** wf and the agent both write comments. Only
   wf writes lifecycle. If that rule slips, closes race.
+- **Retry policy is absent by design.** A run is attempted once per `wf run`
+  invocation; escalation is the only recovery. Anything cleverer needs a
+  backoff and a dead-letter state, which is the point at which the event
+  orchestrator this design rejected starts earning its keep again.
 
 ## Done means
 

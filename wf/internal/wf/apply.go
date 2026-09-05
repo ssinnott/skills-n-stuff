@@ -112,6 +112,23 @@ func Apply(
 	}
 	result.Bound = bound
 
+	// A completion with nothing to show for it is not a completion. Every
+	// legitimate outcome leaves a trace the protocol already carries — a PR,
+	// a commit, a document, a test — so an agent that reported DONE and
+	// produced none either did nothing or forgot to say what it did. Either
+	// way a human should look before the ledger records it as finished.
+	//
+	// This is wf's rule, and kata enforces the same one: it refuses
+	// `close --done` without typed evidence, and tells you to leave the
+	// issue open instead. Manufacturing evidence to satisfy that check would
+	// defeat the only thing making a closed task trustworthy.
+	closing := closeResult(task, outcomes, bound)
+	if !closing.HasEvidence() {
+		return Escalate(ctx, q, task,
+			"the run reported DONE but produced no evidence — no pull request, commit, document, or test",
+			opts.Transcript)
+	}
+
 	// Record what the run produced before closing, so the narrative is on
 	// the issue even if the close itself fails.
 	if summary := runSummary(outcomes, bound); summary != "" {
@@ -142,7 +159,7 @@ func Apply(
 	// work. They arrive in the summary comment above.
 	_ = issues
 
-	if err := q.Close(ctx, task.ID, closeResult(outcomes, bound), opts.IdempotencyKey); err != nil {
+	if err := q.Close(ctx, task.ID, closing, opts.IdempotencyKey); err != nil {
 		return result, fmt.Errorf("close %s: %w", task.ShortID, err)
 	}
 	if err := SetState(ctx, q, task.ID, StateDone); err != nil {
@@ -184,14 +201,64 @@ func runSummary(outcomes []Outcome, bound []BoundDoc) string {
 	return "Run produced:\n\n" + strings.Join(lines, "\n")
 }
 
-// closeResult records evidence at final locations too, so a closed task
-// does not cite a path inside a disposed worktree.
-func closeResult(outcomes []Outcome, bound []BoundDoc) CloseResult {
+// MinCloseMessage is the shortest close message a tracker is assumed to
+// accept. kata enforces exactly this — it refuses `close --done` with a
+// message under 40 characters, on the grounds that closing is an assertion
+// about completed work and deserves a sentence. An agent that signs off with
+// a terse "Done" would otherwise fail every close.
+const MinCloseMessage = 40
+
+// closeResult records evidence at final locations, so a closed task does not
+// cite a path inside a disposed worktree, and makes the message substantive
+// enough for a tracker that demands one.
+func closeResult(task Task, outcomes []Outcome, bound []BoundDoc) CloseResult {
 	result := ToCloseResult(outcomes)
 	for i, doc := range result.Docs {
 		result.Docs[i] = finalPath(doc, bound)
 	}
+	result.Message = closeMessage(task, result)
 	return result
+}
+
+// closeMessage composes the substance a close needs. Where the agent wrote
+// enough, its words stand. Where it did not, wf adds what it actually knows —
+// the task and the evidence produced — rather than padding with filler, and
+// says plainly when nothing was produced at all.
+func closeMessage(task Task, result CloseResult) string {
+	message := strings.TrimSpace(result.Message)
+	if message == "" {
+		message = "Completed by agent"
+	}
+	if len(message) >= MinCloseMessage {
+		return message
+	}
+
+	parts := []string{message}
+	if task.Title != "" {
+		parts = append(parts, "Task: "+task.Title)
+	}
+	if n := len(result.PRs); n > 0 {
+		parts = append(parts, fmt.Sprintf("%s: %s", plural(n, "pull request"), strings.Join(result.PRs, ", ")))
+	}
+	if n := len(result.Docs); n > 0 {
+		parts = append(parts, fmt.Sprintf("%s: %s", plural(n, "document"), strings.Join(result.Docs, ", ")))
+	}
+	if n := len(result.Tests); n > 0 {
+		parts = append(parts, fmt.Sprintf("%s: %s", plural(n, "check"), strings.Join(result.Tests, ", ")))
+	}
+
+	composed := strings.Join(parts, ". ")
+	if len(composed) < MinCloseMessage {
+		composed += ". Closed on the agent's DONE report; no pull request, document, or test evidence was produced."
+	}
+	return composed
+}
+
+func plural(n int, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
 }
 
 // finalPath maps an agent-reported path to where the file actually ended

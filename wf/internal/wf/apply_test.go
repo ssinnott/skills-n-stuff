@@ -74,8 +74,16 @@ func TestApplyClosesWithEvidence(t *testing.T) {
 	}
 
 	closed := q.closes[0]
-	if closed.Message != "Shipped" {
-		t.Errorf("Message = %q", closed.Message)
+	// The agent's words lead; wf appends what it knows only because a close
+	// message under MinCloseMessage is refused outright.
+	if !strings.HasPrefix(closed.Message, "Shipped") {
+		t.Errorf("Message = %q, want the agent's words first", closed.Message)
+	}
+	if len(closed.Message) < MinCloseMessage {
+		t.Errorf("Message = %q, too short for a tracker that demands substance", closed.Message)
+	}
+	if !strings.Contains(closed.Message, "Add the parser") {
+		t.Errorf("Message = %q, want the task named when padding was needed", closed.Message)
 	}
 	if len(closed.PRs) != 1 || closed.PRs[0] != "https://a/1" {
 		t.Errorf("PRs = %v", closed.PRs)
@@ -87,7 +95,7 @@ func TestApplyClosesWithEvidence(t *testing.T) {
 
 func TestApplyMaterializesNextAsSibling(t *testing.T) {
 	q := newFakeQueue()
-	transcript := "NEXT: fix the flake via /plan-to-pr\nDONE\n"
+	transcript := "PR: https://a/1 — The change\nNEXT: fix the flake via /plan-to-pr\nDONE\n"
 
 	got, err := Apply(context.Background(), q, task(), ParseOutcomes(transcript), ApplyOptions{Transcript: transcript})
 	if err != nil {
@@ -113,13 +121,14 @@ func TestApplyMaterializesNextAsSibling(t *testing.T) {
 
 func TestApplyRecordsFiledIssuesWithoutGating(t *testing.T) {
 	q := newFakeQueue()
-	transcript := "ISSUE: https://a/i1 — Found a bug\nDONE\n"
+	transcript := "DOC: triage.md — Triage writeup\nISSUE: https://a/i1 — Found a bug\nDONE\n"
 
 	got, err := Apply(context.Background(), q, task(), ParseOutcomes(transcript), ApplyOptions{Transcript: transcript})
 	if err != nil {
 		t.Fatalf("Apply() error = %v", err)
 	}
-	// Filing the issue was the work — it must not block the close.
+	// A filed issue is recorded, never waited on: creating it was the work,
+	// so the task closes without regard to whether the issue is resolved.
 	if !got.Closed {
 		t.Error("a filed ISSUE must not gate completion")
 	}
@@ -128,6 +137,56 @@ func TestApplyRecordsFiledIssuesWithoutGating(t *testing.T) {
 	}
 	if len(q.comments) == 0 || !strings.Contains(q.comments[0], "https://a/i1") {
 		t.Errorf("filed issue not recorded on the task: %v", q.comments)
+	}
+}
+
+func TestApplyEscalatesDoneWithoutEvidence(t *testing.T) {
+	// ISSUE deliberately does not count: a filed issue says work was moved
+	// elsewhere, not that this task's work exists. A triage run should also
+	// leave a writeup, which its workflow prompt asks for.
+	cases := map[string]string{
+		"bare done":          "DONE\n",
+		"only a filed issue": "ISSUE: https://a/i1 — Found a bug\nDONE\n",
+		"only a repo":        "REPO: /src/app\nDONE Looked around.\n",
+		"only a follow-up":   "NEXT: do the real work\nDONE\n",
+	}
+
+	for name, transcript := range cases {
+		t.Run(name, func(t *testing.T) {
+			q := newFakeQueue()
+			got, err := Apply(context.Background(), q, task(), ParseOutcomes(transcript), ApplyOptions{Transcript: transcript})
+			if err != nil {
+				t.Fatalf("Apply() error = %v", err)
+			}
+			if got.Closed {
+				t.Error("a DONE with nothing to show for it must not close the task")
+			}
+			if !got.Escalated {
+				t.Errorf("Apply() = %+v, want escalated", got)
+			}
+			if len(q.closes) != 0 {
+				t.Error("nothing should have been closed")
+			}
+			if !strings.Contains(strings.Join(q.comments, "\n"), "no evidence") {
+				t.Errorf("the escalation should say why: %v", q.comments)
+			}
+		})
+	}
+}
+
+func TestCloseResultHasEvidence(t *testing.T) {
+	if (CloseResult{Message: "words alone"}).HasEvidence() {
+		t.Error("a message is not evidence")
+	}
+	for _, r := range []CloseResult{
+		{PRs: []string{"https://a/1"}},
+		{Commits: []string{"abc123"}},
+		{Docs: []string{"notes/plan.md"}},
+		{Tests: []string{"go test ./..."}},
+	} {
+		if !r.HasEvidence() {
+			t.Errorf("%+v should count as evidence", r)
+		}
 	}
 }
 

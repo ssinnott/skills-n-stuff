@@ -183,6 +183,10 @@ func SeedPreamble(ref, title string) string {
 		"  NEXT: <task text>         to propose follow-on work",
 		"  REPO: <path>              the repo you worked in",
 		"",
+		"DONE needs evidence: at least one PR, DOC, or reviewed path. A DONE",
+		"with nothing to show for it is treated as unfinished and sent to a",
+		"human, so report what you actually produced.",
+		"",
 		"If you cannot proceed without a human decision, say so plainly and",
 		"end without DONE — the supervisor will escalate rather than close.",
 	}, "\n")

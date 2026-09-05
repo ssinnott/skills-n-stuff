@@ -12,6 +12,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -82,11 +83,15 @@ func (s *Supervisor) Run(ctx context.Context, max int) ([]Result, error) {
 	}
 
 	var (
-		mu       sync.Mutex
-		results  []Result
-		inFlight = map[string]bool{}
-		wg       sync.WaitGroup
-		slots    = make(chan struct{}, max)
+		mu      sync.Mutex
+		results []Result
+		// attempted covers the life of this call. A task that escalated or
+		// failed stays open and claimable, so without this the loop would
+		// pick it straight back up and retry it forever.
+		attempted = map[string]bool{}
+		inFlight  = map[string]bool{}
+		wg        sync.WaitGroup
+		slots     = make(chan struct{}, max)
 	)
 
 	for {
@@ -109,9 +114,9 @@ func (s *Supervisor) Run(ctx context.Context, max int) ([]Result, error) {
 			}
 
 			mu.Lock()
-			busy := inFlight[task.ID]
+			seen := inFlight[task.ID] || attempted[task.ID]
 			mu.Unlock()
-			if busy || !wf.Claimable(task.Meta[wf.LeaseKey], s.actor(), time.Now()) {
+			if seen || !dispatchable(task, s.actor()) {
 				continue
 			}
 
@@ -125,6 +130,7 @@ func (s *Supervisor) Run(ctx context.Context, max int) ([]Result, error) {
 
 			mu.Lock()
 			inFlight[task.ID] = true
+			attempted[task.ID] = true
 			mu.Unlock()
 			dispatched++
 			wg.Add(1)
@@ -184,12 +190,30 @@ func (s *Supervisor) pick(ctx context.Context, ref string) (wf.Task, error) {
 	if err != nil {
 		return wf.Task{}, err
 	}
+
+	// Highest priority first. A tracker's ready order is its own business —
+	// kata returns newest first — but which ready task to hand an agent is
+	// wf's decision, and priority is what the number is for.
+	sort.SliceStable(candidates, func(i, j int) bool {
+		return candidates[i].Priority < candidates[j].Priority
+	})
+
 	for _, task := range candidates {
-		if wf.Claimable(task.Meta[wf.LeaseKey], s.actor(), time.Now()) {
+		if dispatchable(task, s.actor()) {
 			return task, nil
 		}
 	}
 	return wf.Task{}, ErrNothingReady
+}
+
+// dispatchable reports whether wf should hand this task to an agent now.
+// A task waiting on a human is not ours to retry: it stays in the queue and
+// in the escalation list until someone clears the flag.
+func dispatchable(task wf.Task, actor string) bool {
+	if attention, ok := task.Meta[wf.AttentionKey].(string); ok && attention != "" {
+		return false
+	}
+	return wf.Claimable(task.Meta[wf.LeaseKey], actor, time.Now())
 }
 
 // dispatch runs one task end to end.

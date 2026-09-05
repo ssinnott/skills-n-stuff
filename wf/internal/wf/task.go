@@ -49,6 +49,12 @@ type CloseResult struct {
 	Tests []string
 }
 
+// HasEvidence reports whether the run left any trace of the work. A close
+// without one is refused — see Apply.
+func (r CloseResult) HasEvidence() bool {
+	return len(r.PRs) > 0 || len(r.Commits) > 0 || len(r.Docs) > 0 || len(r.Tests) > 0
+}
+
 // CreateInput describes a task to file, including the links that make
 // NEXT and ISSUE outcomes schedulable rather than merely recorded.
 type CreateInput struct {
