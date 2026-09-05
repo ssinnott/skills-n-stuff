@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/ssinnott/skills-n-stuff/wf/internal/config"
 	"github.com/ssinnott/skills-n-stuff/wf/internal/kata"
@@ -34,6 +35,10 @@ const usage = `wf — workflow CLI over pluggable queues
   wf attach <ref>              open the task's pi session
   wf bind <ref> <note.md>      bind a task to an Obsidian note, both ways
   wf ui <ref>                  print the web UI deep link for a task
+
+Add --json to ready, show, escalations, workflows and run for
+machine-readable output; that is the protocol both the pi extension and the
+Obsidian plugin speak.
 
 Config: ~/.wf/config.json (override with --config). KATA_BIN and PI_BIN
 override binaries that are off PATH.`
@@ -80,7 +85,7 @@ func newApp(args []string) (*app, error) {
 
 	return &app{
 		cfg:       cfg,
-		queue:     kata.New(kata.Options{Bin: cfg.KataBin, Cwd: cwd}),
+		queue:     kata.New(kata.Options{Bin: cfg.KataBin, Cwd: cwd, Actor: cfg.Actor}),
 		workflows: flows,
 	}, nil
 }
@@ -103,9 +108,9 @@ func run(ctx context.Context, argv []string) (int, error) {
 	case "show":
 		return a.cmdShow(ctx, rest)
 	case "escalations":
-		return a.cmdEscalations(ctx)
+		return a.cmdEscalations(ctx, rest)
 	case "workflows":
-		return a.cmdWorkflows()
+		return a.cmdWorkflows(rest)
 	case "run":
 		return a.cmdRun(ctx, rest)
 	case "attach":
@@ -133,13 +138,19 @@ func (a *app) cmdReady(ctx context.Context, args []string) (int, error) {
 	if err != nil {
 		return 1, err
 	}
+	if hasFlag(args, "--json") {
+		return 0, emit("tasks", a.tasksToJSON(tasks))
+	}
 	return a.printTasks(tasks, "nothing ready"), nil
 }
 
-func (a *app) cmdEscalations(ctx context.Context) (int, error) {
+func (a *app) cmdEscalations(ctx context.Context, args []string) (int, error) {
 	tasks, err := a.queue.Escalations(ctx)
 	if err != nil {
 		return 1, err
+	}
+	if hasFlag(args, "--json") {
+		return 0, emit("tasks", a.tasksToJSON(tasks))
 	}
 	return a.printTasks(tasks, "no escalations"), nil
 }
@@ -155,8 +166,11 @@ func (a *app) printTasks(tasks []wf.Task, empty string) int {
 	return 0
 }
 
-func (a *app) cmdWorkflows() (int, error) {
+func (a *app) cmdWorkflows(args []string) (int, error) {
 	flows := a.workflows.All()
+	if hasFlag(args, "--json") {
+		return 0, emit("workflows", workflowsToJSON(flows))
+	}
 	if len(flows) == 0 {
 		fmt.Printf("no workflows in %s\n", a.cfg.WorkflowDir)
 		return 0, nil
@@ -180,6 +194,9 @@ func (a *app) cmdShow(ctx context.Context, args []string) (int, error) {
 	task, err := a.queue.Get(ctx, ref)
 	if err != nil {
 		return 1, err
+	}
+	if hasFlag(args, "--json") {
+		return 0, emit("task", a.toJSON(task))
 	}
 
 	fmt.Printf("%s  %s\n", task.ShortID, task.Title)
@@ -241,14 +258,26 @@ func (a *app) cmdRun(ctx context.Context, args []string) (int, error) {
 		},
 	}
 
+	asJSON := hasFlag(args, "--json")
+	if asJSON {
+		// Progress goes to stderr so stdout stays a single JSON document.
+		sup.Log = func(format string, v ...any) { fmt.Fprintf(os.Stderr, format+"\n", v...) }
+	}
+
 	if hasFlag(args, "--once") || flagValue(args, "--ref") != "" {
 		result, err := sup.RunOnce(ctx, flagValue(args, "--ref"))
 		if errors.Is(err, supervisor.ErrNothingReady) {
+			if asJSON {
+				return 0, emit("results", []jsonRunResult{})
+			}
 			fmt.Println("nothing ready")
 			return 0, nil
 		}
 		if err != nil {
 			return 1, err
+		}
+		if asJSON {
+			return 0, emit("results", []jsonRunResult{a.runResultToJSON(result)})
 		}
 		report(result)
 		return 0, nil
@@ -264,15 +293,25 @@ func (a *app) cmdRun(ctx context.Context, args []string) (int, error) {
 	}
 
 	results, err := sup.Run(ctx, max)
-	for _, result := range results {
-		report(result)
-	}
 	if err != nil && !errors.Is(err, context.Canceled) {
 		return 1, err
+	}
+	if asJSON {
+		out := make([]jsonRunResult, 0, len(results))
+		for _, result := range results {
+			out = append(out, a.runResultToJSON(result))
+		}
+		return 0, emit("results", out)
+	}
+	for _, result := range results {
+		report(result)
 	}
 	fmt.Printf("%d task(s) dispatched\n", len(results))
 	return 0, nil
 }
+
+// now is a variable so output formatting stays testable.
+var now = time.Now
 
 func report(r supervisor.Result) {
 	switch {
@@ -365,14 +404,19 @@ func (a *app) cmdBind(ctx context.Context, args []string) (int, error) {
 	return 0, nil
 }
 
+// cmdUI prints a deep link for a task, or the daemon's origin when no ref is
+// given — a framed UI needs the origin before it has anything selected, and
+// the port is not fixed.
 func (a *app) cmdUI(ctx context.Context, args []string) (int, error) {
-	ref := firstPositional(args)
-	if ref == "" {
-		return 1, errors.New("wf ui <ref>")
-	}
 	origin, err := a.queue.WebUIOrigin(ctx)
 	if err != nil {
 		return 1, fmt.Errorf("%w (is the daemon running?)", err)
+	}
+
+	ref := firstPositional(args)
+	if ref == "" {
+		fmt.Println(origin)
+		return 0, nil
 	}
 	fmt.Printf("%s/issues/%s\n", origin, ref)
 	return 0, nil
@@ -396,6 +440,7 @@ func (a *app) summary(t wf.Task) string {
 // flag values without a full flag parser.
 var knownFlags = map[string]bool{
 	"--limit": true, "--max": true, "--repo": true, "--ref": true, "--config": true,
+	"--vault": true,
 }
 
 func flagValue(args []string, flag string) string {

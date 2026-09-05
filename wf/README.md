@@ -37,6 +37,20 @@ wf escalations               # what needs a human
 wf attach abc4               # reopen the pi session that ran this task
 wf bind abc4 notes/plan.md   # bind a task to a note by hand
 wf ui abc4                   # deep link into kata's web UI
+wf ui                        # the daemon's origin, for a framed UI
+```
+
+Add `--json` to `ready`, `show`, `escalations`, `workflows` and `run` for
+machine-readable output. That is the protocol both clients speak — the pi
+extension and the Obsidian plugin talk to wf, never to kata directly, so the
+queue backend can change without touching either.
+
+```json
+{ "tasks": [ { "id": "01M1S…", "shortId": "neck", "title": "Add the parser",
+              "priority": 1, "workflow": "plan-to-pr",
+              "lease": { "actor": "wf-laptop", "stale": false },
+              "session": "/home/me/.wf/sessions/neck-….jsonl",
+              "note": "Research/plan.md", "needsHuman": false } ] }
 ```
 
 ## Config
@@ -166,6 +180,20 @@ key, `--pr` is single-valued, releasing ownership is `edit --owner ""`, and
 issues carry both an integer `id` and the `uid` ULID you actually want. All
 five are fixed and pinned. `NormalizeIssue` remains the single point of
 contact with kata's wire format.
+
+## Clients
+
+**pi** — `extensions/wf.ts` in this repo registers `/wf` in an interactive
+session: `/wf` for the queue, `/wf escalations`, `/wf show <ref>`,
+`/wf run`, and `/wf attach <ref>`, which switches the live session into that
+task's agent session via pi's own session replacement. The extension holds no
+orchestration logic; it shells out to `wf` and renders the JSON.
+
+**Obsidian** — `obsidian-pi-tasks` adds an agent queue pane and a framed kata
+UI. Selection lives on the Obsidian side because an embedded page cannot tell
+the host what you clicked; clicking a queue row opens the bound note and
+points the frame at the task. Renaming a bound note rewrites `obsidian.note`
+through `wf bind`, so bindings survive a reorganization.
 
 ## Layout
 

@@ -222,8 +222,12 @@ rather than a rewrite.
       linked follow-ons, and concurrent runs.
 - [ ] Live validation against a real pi install (needs a provider key, so
       the suite uses a stub agent instead).
-- [ ] pi extension exposing `/wf` slash commands over this CLI.
-- [ ] Obsidian: queue pane and framed kata UI over the same bindings.
+- [x] JSON protocol (`--json` on the read commands and on `run`), which is
+      what both clients speak instead of reaching into kata.
+- [x] pi extension exposing `/wf`, including `attach` switching the live
+      session into a worker's session.
+- [x] Obsidian: agent queue pane, framed kata UI following the active note,
+      bind command, and rename sync.
 - [ ] Retry with backoff and a dead-letter state, if escalation-only proves
       too blunt in practice.
 

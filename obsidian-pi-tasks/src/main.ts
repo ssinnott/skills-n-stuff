@@ -20,6 +20,10 @@ import { homedir } from "os";
 import { PiChatView, VIEW_TYPE_PI_TASKS_CHAT } from "./view";
 import type { SessionBinding } from "./view";
 import { PiBoardView, VIEW_TYPE_PI_TASKS_BOARD } from "./board";
+import { WfQueueView, VIEW_TYPE_WF_QUEUE } from "./queue";
+import { KataFrameView, VIEW_TYPE_KATA_FRAME, KATA_ISSUE_KEY } from "./kataframe";
+import { WfClient } from "./wf";
+import type { WfTask } from "./wf";
 import * as docbind from "./docbind";
 
 const SESSION_DIR = ".pi-sessions";
@@ -38,6 +42,14 @@ export interface PiTasksSettings {
     profiles: Record<string, string>;
     /** Profile used when a task/note names none. Empty = pi's default dir. */
     defaultProfile: string;
+    /** Path to the wf binary, which fronts the agent work queue. */
+    wfBinaryPath: string;
+    /**
+     * Directory wf runs in. wf resolves its kata project from the workspace
+     * it is invoked in, so this is the folder holding .kata.toml — often the
+     * repo rather than the vault. Empty = the vault root.
+     */
+    wfWorkspace: string;
 }
 
 export const DEFAULT_SETTINGS: PiTasksSettings = {
@@ -46,12 +58,39 @@ export const DEFAULT_SETTINGS: PiTasksSettings = {
     ghPath: "gh",
     profiles: {},
     defaultProfile: "",
+    wfBinaryPath: "wf",
+    wfWorkspace: "",
 };
 
 interface ModelOption {
     id: string;
     name: string;
     provider: string;
+}
+
+/** Picker for binding the active note to a task off the ready queue. */
+class TaskSuggestModal extends FuzzySuggestModal<WfTask> {
+    private tasks: WfTask[];
+    private onSelect: (task: WfTask) => void;
+
+    constructor(app: App, tasks: WfTask[], onSelect: (task: WfTask) => void) {
+        super(app);
+        this.tasks = tasks;
+        this.onSelect = onSelect;
+        this.setPlaceholder("Bind this note to which task?");
+    }
+
+    getItems(): WfTask[] {
+        return this.tasks;
+    }
+
+    getItemText(item: WfTask): string {
+        return `${item.shortId}  ${item.title}`;
+    }
+
+    onChooseItem(item: WfTask): void {
+        this.onSelect(item);
+    }
 }
 
 /** Modal for selecting a model for the active view's connection. */
@@ -95,7 +134,50 @@ export default class PiTasksPlugin extends Plugin {
             VIEW_TYPE_PI_TASKS_BOARD,
             (leaf: WorkspaceLeaf) => new PiBoardView(leaf, this),
         );
+        this.registerView(
+            VIEW_TYPE_WF_QUEUE,
+            (leaf: WorkspaceLeaf) => new WfQueueView(leaf, this),
+        );
+
+        this.registerView(
+            VIEW_TYPE_KATA_FRAME,
+            (leaf: WorkspaceLeaf) => new KataFrameView(leaf, this),
+        );
+
         this.addRibbonIcon("layout-dashboard", "Open pi task board", () => void this.openBoard());
+        this.addRibbonIcon("list-ordered", "Open agent queue", () => void this.openQueue());
+
+        // A note that moves must not leave the tracker pointing at its old
+        // path — that is how a binding rots silently over a reorganization.
+        this.registerEvent(
+            this.app.vault.on("rename", (file, oldPath) => {
+                if (file instanceof TFile) void this.rebindRenamedNote(file, oldPath);
+            }),
+        );
+
+        this.addCommand({
+            id: "open-wf-queue",
+            name: "Open agent queue",
+            callback: () => void this.openQueue(),
+        });
+
+        this.addCommand({
+            id: "open-kata-frame",
+            name: "Open kata UI pane",
+            callback: () => void this.openKataFrame(),
+        });
+
+        this.addCommand({
+            id: "show-note-issue",
+            name: "Show this note's task in the kata pane",
+            callback: () => void this.showNoteIssue(),
+        });
+
+        this.addCommand({
+            id: "bind-note-to-task",
+            name: "Bind this note to a task",
+            callback: () => void this.bindNoteToTask(),
+        });
 
         this.addCommand({
             id: "open-task-board",
@@ -366,6 +448,126 @@ export default class PiTasksPlugin extends Plugin {
             this.reviewLeaf = this.app.workspace.getLeaf("split", "vertical");
         }
         await this.reviewLeaf!.openFile(file, { active: true });
+    }
+
+    // --- wf: the agent work queue ---
+
+    /**
+     * A client for the wf CLI. Built per call so a settings change takes
+     * effect without reloading the plugin.
+     */
+    wf(): WfClient {
+        const adapter = this.app.vault.adapter as unknown as { getBasePath?: () => string };
+        const vaultRoot = typeof adapter.getBasePath === "function" ? adapter.getBasePath() : ".";
+        const cwd = this.settings.wfWorkspace.trim() || vaultRoot;
+        return new WfClient(this.settings.wfBinaryPath, cwd);
+    }
+
+    async openQueue(): Promise<void> {
+        await this.revealView(VIEW_TYPE_WF_QUEUE, "left");
+    }
+
+    async openKataFrame(): Promise<KataFrameView | null> {
+        const leaf = await this.revealView(VIEW_TYPE_KATA_FRAME, "right");
+        const view = leaf?.view;
+        return view instanceof KataFrameView ? view : null;
+    }
+
+    /** Point the kata pane at a task, opening the pane if it is closed. */
+    async showTaskInFrame(ref: string): Promise<void> {
+        const view = await this.openKataFrame();
+        await view?.openTask(ref);
+    }
+
+    async openVaultPath(path: string): Promise<void> {
+        const file = this.app.vault.getAbstractFileByPath(path);
+        if (!(file instanceof TFile)) {
+            new Notice(`Note not found in vault: ${path}`);
+            return;
+        }
+        await this.app.workspace.getLeaf(false).openFile(file, { active: true });
+    }
+
+    /** Open the active note's bound task in the kata pane. */
+    private async showNoteIssue(): Promise<void> {
+        const ref = this.activeNoteIssue();
+        if (!ref) {
+            new Notice("This note is not bound to a task.");
+            return;
+        }
+        await this.showTaskInFrame(ref);
+    }
+
+    private activeNoteIssue(): string | null {
+        const file = this.app.workspace.getActiveFile();
+        if (!file) return null;
+        const value = this.app.metadataCache.getFileCache(file)?.frontmatter?.[KATA_ISSUE_KEY];
+        if (typeof value !== "string") return null;
+        const trimmed = value.trim();
+        return trimmed && trimmed !== "\u2014" && trimmed !== "-" ? trimmed : null;
+    }
+
+    /** Bind the active note to a task chosen from the ready queue. */
+    private async bindNoteToTask(): Promise<void> {
+        const file = this.app.workspace.getActiveFile();
+        if (!file) {
+            new Notice("Open a note first.");
+            return;
+        }
+
+        let tasks;
+        try {
+            tasks = await this.wf().ready();
+        } catch (err) {
+            new Notice(err instanceof Error ? err.message : String(err), 8000);
+            return;
+        }
+        if (tasks.length === 0) {
+            new Notice("No ready tasks to bind to.");
+            return;
+        }
+
+        new TaskSuggestModal(this.app, tasks, async (task) => {
+            try {
+                await this.wf().bind(task.shortId, file.path);
+                new Notice(`Bound ${task.shortId} to ${file.path}`);
+                await this.showTaskInFrame(task.shortId);
+            } catch (err) {
+                new Notice(err instanceof Error ? err.message : String(err), 8000);
+            }
+        }).open();
+    }
+
+    /**
+     * Follow a note move on the tracker side. Without this every binding
+     * decays as the vault is reorganized, and the decay is silent.
+     */
+    private async rebindRenamedNote(file: TFile, oldPath: string): Promise<void> {
+        if (!file.path.endsWith(".md")) return;
+        const value = this.app.metadataCache.getFileCache(file)?.frontmatter?.[KATA_ISSUE_KEY];
+        if (typeof value !== "string" || !value.trim()) return;
+
+        try {
+            await this.wf().bind(value.trim(), file.path);
+        } catch (err) {
+            // A tracker that is down must not block a rename; say so once.
+            new Notice(`Could not update the task's note path after moving ${oldPath}: ${err instanceof Error ? err.message : String(err)}`, 8000);
+        }
+    }
+
+    private async revealView(type: string, side: "left" | "right"): Promise<WorkspaceLeaf | null> {
+        const existing = this.app.workspace.getLeavesOfType(type);
+        if (existing.length > 0) {
+            await this.app.workspace.revealLeaf(existing[0]);
+            return existing[0];
+        }
+        const leaf = side === "left"
+            ? this.app.workspace.getLeftLeaf(false)
+            : this.app.workspace.getRightLeaf(false);
+        if (!leaf) return null;
+        await leaf.setViewState({ type, active: true });
+        await this.app.workspace.revealLeaf(leaf);
+        return leaf;
     }
 
     async onunload(): Promise<void> {
@@ -815,6 +1017,32 @@ class PiTasksSettingTab extends PluginSettingTab {
                 text.inputEl.rows = 4;
                 text.inputEl.style.width = "100%";
             });
+
+        new Setting(containerEl)
+            .setName("wf binary")
+            .setDesc("Path to the wf CLI, which fronts the agent work queue.")
+            .addText((text) =>
+                text
+                    .setPlaceholder("wf")
+                    .setValue(this.plugin.settings.wfBinaryPath)
+                    .onChange(async (value) => {
+                        this.plugin.settings.wfBinaryPath = value.trim() || "wf";
+                        await this.plugin.saveSettings();
+                    })
+            );
+
+        new Setting(containerEl)
+            .setName("wf workspace")
+            .setDesc("Directory wf runs in — the folder holding .kata.toml, often the repo rather than the vault. Empty uses the vault root.")
+            .addText((text) =>
+                text
+                    .setPlaceholder("(vault root)")
+                    .setValue(this.plugin.settings.wfWorkspace)
+                    .onChange(async (value) => {
+                        this.plugin.settings.wfWorkspace = value.trim();
+                        await this.plugin.saveSettings();
+                    })
+            );
 
         new Setting(containerEl)
             .setName("Default profile")
