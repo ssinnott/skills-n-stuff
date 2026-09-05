@@ -1,13 +1,9 @@
 // Command wf runs agent work off a queue.
-//
-// What ships today is the read side plus the bindings: enough to see the
-// queue, bind a task to a note, and reattach to a task's pi session. The
-// dispatch loop (`wf run`) lands with the worktree and pi runner seams; it
-// refuses rather than pretending.
 package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -17,25 +13,30 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/ssinnott/skills-n-stuff/wf/internal/config"
 	"github.com/ssinnott/skills-n-stuff/wf/internal/kata"
 	"github.com/ssinnott/skills-n-stuff/wf/internal/note"
+	"github.com/ssinnott/skills-n-stuff/wf/internal/runner"
+	"github.com/ssinnott/skills-n-stuff/wf/internal/supervisor"
 	"github.com/ssinnott/skills-n-stuff/wf/internal/wf"
+	"github.com/ssinnott/skills-n-stuff/wf/internal/workflow"
+	"github.com/ssinnott/skills-n-stuff/wf/internal/workspace"
 )
-
-// ObsidianNoteKey is the task-side half of the note binding.
-const ObsidianNoteKey = "obsidian.note"
 
 const usage = `wf — workflow CLI over pluggable queues
 
-  wf ready [--limit N]        actionable work, top of queue first
-  wf show <ref>               one task, with its lease and session
-  wf escalations              tasks flagged needs-human
-  wf attach <ref>             open the task's pi session
-  wf bind <ref> <note.md>     bind a task to an Obsidian note, both ways
-  wf ui <ref>                 print the web UI deep link for a task
-  wf run [--once] [--max N]   the supervisor loop (not yet implemented)
+  wf ready [--limit N]         actionable work, top of queue first
+  wf show <ref>                one task, with its lease and session
+  wf escalations               tasks flagged needs-human
+  wf workflows                 canned workflows loaded from the workflow dir
+  wf run [--once] [--ref R]    dispatch work to agents
+         [--max N] [--repo P]
+  wf attach <ref>              open the task's pi session
+  wf bind <ref> <note.md>      bind a task to an Obsidian note, both ways
+  wf ui <ref>                  print the web UI deep link for a task
 
-Queue backend: kata. Set KATA_BIN to override the binary.`
+Config: ~/.wf/config.json (override with --config). KATA_BIN and PI_BIN
+override binaries that are off PATH.`
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -49,6 +50,41 @@ func main() {
 	os.Exit(code)
 }
 
+type app struct {
+	cfg       *config.Config
+	queue     *kata.Backend
+	workflows *workflow.Set
+}
+
+func newApp(args []string) (*app, error) {
+	cfg, err := config.Load(flagValue(args, "--config"))
+	if err != nil {
+		return nil, err
+	}
+	if v := os.Getenv("KATA_BIN"); v != "" {
+		cfg.KataBin = v
+	}
+	if v := os.Getenv("PI_BIN"); v != "" {
+		cfg.PiBin = v
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("resolve working directory: %w", err)
+	}
+
+	flows, err := workflow.Load(cfg.WorkflowDir)
+	if err != nil {
+		return nil, err
+	}
+
+	return &app{
+		cfg:       cfg,
+		queue:     kata.New(kata.Options{Bin: cfg.KataBin, Cwd: cwd}),
+		workflows: flows,
+	}, nil
+}
+
 func run(ctx context.Context, argv []string) (int, error) {
 	if len(argv) == 0 || argv[0] == "help" || argv[0] == "--help" || argv[0] == "-h" {
 		fmt.Println(usage)
@@ -56,40 +92,34 @@ func run(ctx context.Context, argv []string) (int, error) {
 	}
 
 	cmd, rest := argv[0], argv[1:]
-
-	cwd, err := os.Getwd()
+	a, err := newApp(rest)
 	if err != nil {
-		return 1, fmt.Errorf("resolve working directory: %w", err)
+		return 1, err
 	}
-	backend := kata.New(kata.Options{Bin: os.Getenv("KATA_BIN"), Cwd: cwd})
 
 	switch cmd {
 	case "ready":
-		return cmdReady(ctx, backend, rest)
+		return a.cmdReady(ctx, rest)
 	case "show":
-		return cmdShow(ctx, backend, rest)
+		return a.cmdShow(ctx, rest)
 	case "escalations":
-		return cmdEscalations(ctx, backend)
-	case "attach":
-		return cmdAttach(ctx, backend, rest)
-	case "bind":
-		return cmdBind(ctx, backend, rest)
-	case "ui":
-		return cmdUI(ctx, backend, rest)
+		return a.cmdEscalations(ctx)
+	case "workflows":
+		return a.cmdWorkflows()
 	case "run":
-		fmt.Fprintln(os.Stderr, strings.Join([]string{
-			"wf run is not implemented yet — it needs the worktree workspace",
-			"and the pi runner (see DESIGN.md build plan).",
-			"",
-			"Available today: wf ready, wf show, wf escalations, wf attach, wf bind, wf ui.",
-		}, "\n"))
-		return 2, nil
+		return a.cmdRun(ctx, rest)
+	case "attach":
+		return a.cmdAttach(ctx, rest)
+	case "bind":
+		return a.cmdBind(ctx, rest)
+	case "ui":
+		return a.cmdUI(ctx, rest)
 	default:
 		return 1, fmt.Errorf("unknown command: %s\n\n%s", cmd, usage)
 	}
 }
 
-func cmdReady(ctx context.Context, backend *kata.Backend, args []string) (int, error) {
+func (a *app) cmdReady(ctx context.Context, args []string) (int, error) {
 	limit := 20
 	if v := flagValue(args, "--limit"); v != "" {
 		n, err := strconv.Atoi(v)
@@ -99,41 +129,55 @@ func cmdReady(ctx context.Context, backend *kata.Backend, args []string) (int, e
 		limit = n
 	}
 
-	tasks, err := backend.Ready(ctx, limit)
+	tasks, err := a.queue.Ready(ctx, limit)
 	if err != nil {
 		return 1, err
 	}
+	return a.printTasks(tasks, "nothing ready"), nil
+}
+
+func (a *app) cmdEscalations(ctx context.Context) (int, error) {
+	tasks, err := a.queue.Escalations(ctx)
+	if err != nil {
+		return 1, err
+	}
+	return a.printTasks(tasks, "no escalations"), nil
+}
+
+func (a *app) printTasks(tasks []wf.Task, empty string) int {
 	if len(tasks) == 0 {
-		fmt.Println("nothing ready")
-		return 0, nil
+		fmt.Println(empty)
+		return 0
 	}
 	for _, t := range tasks {
-		fmt.Println(summary(t))
+		fmt.Println(a.summary(t))
+	}
+	return 0
+}
+
+func (a *app) cmdWorkflows() (int, error) {
+	flows := a.workflows.All()
+	if len(flows) == 0 {
+		fmt.Printf("no workflows in %s\n", a.cfg.WorkflowDir)
+		return 0, nil
+	}
+	for _, w := range flows {
+		labels := ""
+		if len(w.Labels) > 0 {
+			labels = "  labels: " + strings.Join(w.Labels, ", ")
+		}
+		fmt.Printf("%-16s %s%s\n", w.Name, w.Description, labels)
 	}
 	return 0, nil
 }
 
-func cmdEscalations(ctx context.Context, backend *kata.Backend) (int, error) {
-	tasks, err := backend.Escalations(ctx)
-	if err != nil {
-		return 1, err
-	}
-	if len(tasks) == 0 {
-		fmt.Println("no escalations")
-		return 0, nil
-	}
-	for _, t := range tasks {
-		fmt.Println(summary(t))
-	}
-	return 0, nil
-}
-
-func cmdShow(ctx context.Context, backend *kata.Backend, args []string) (int, error) {
-	if len(args) == 0 {
-		return 1, fmt.Errorf("wf show <ref>")
+func (a *app) cmdShow(ctx context.Context, args []string) (int, error) {
+	ref := firstPositional(args)
+	if ref == "" {
+		return 1, errors.New("wf show <ref>")
 	}
 
-	task, err := backend.Get(ctx, args[0])
+	task, err := a.queue.Get(ctx, ref)
 	if err != nil {
 		return 1, err
 	}
@@ -146,6 +190,9 @@ func cmdShow(ctx context.Context, backend *kata.Backend, args []string) (int, er
 	}
 	if task.Owner != "" {
 		fmt.Printf("owner    %s\n", task.Owner)
+	}
+	if flow, ok := a.workflows.Select(task); ok {
+		fmt.Printf("workflow %s\n", flow.Name)
 	}
 
 	if lease, ok := wf.ParseLease(task.Meta[wf.LeaseKey]); ok {
@@ -162,19 +209,94 @@ func cmdShow(ctx context.Context, backend *kata.Backend, args []string) (int, er
 	if history := wf.HistoryFromMeta(task.Meta); len(history) > 1 {
 		fmt.Printf("runs     %d\n", len(history))
 	}
-	if path, ok := task.Meta[ObsidianNoteKey].(string); ok && path != "" {
+	if path, ok := task.Meta[wf.ObsidianNoteKey].(string); ok && path != "" {
 		fmt.Printf("note     %s\n", path)
 	}
 	return 0, nil
 }
 
-func cmdAttach(ctx context.Context, backend *kata.Backend, args []string) (int, error) {
-	if len(args) == 0 {
-		return 1, fmt.Errorf("wf attach <ref>")
+func (a *app) cmdRun(ctx context.Context, args []string) (int, error) {
+	repo := flagValue(args, "--repo")
+	if repo == "" {
+		repo = a.cfg.Repo
 	}
-	ref := args[0]
+	repo = config.Expand(repo)
 
-	meta, err := backend.GetMeta(ctx, ref)
+	sup := &supervisor.Supervisor{
+		Queue:     a.queue,
+		Runner:    &runner.Pi{Bin: a.cfg.PiBin, SessionRoot: a.cfg.SessionRoot},
+		Workflows: a.workflows,
+		Config:    a.cfg,
+		Log:       func(format string, v ...any) { fmt.Printf(format+"\n", v...) },
+		Workspaces: func(w workflow.Workflow) wf.WorkspaceProvider {
+			r := repo
+			if w.Repo != "" {
+				r = config.Expand(w.Repo)
+			}
+			base := a.cfg.Base
+			if w.Base != "" {
+				base = w.Base
+			}
+			return &workspace.Provider{Repo: r, Root: a.cfg.WorktreeRoot, Base: base}
+		},
+	}
+
+	if hasFlag(args, "--once") || flagValue(args, "--ref") != "" {
+		result, err := sup.RunOnce(ctx, flagValue(args, "--ref"))
+		if errors.Is(err, supervisor.ErrNothingReady) {
+			fmt.Println("nothing ready")
+			return 0, nil
+		}
+		if err != nil {
+			return 1, err
+		}
+		report(result)
+		return 0, nil
+	}
+
+	max := a.cfg.MaxConcurrent
+	if v := flagValue(args, "--max"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return 1, fmt.Errorf("--max: %w", err)
+		}
+		max = n
+	}
+
+	results, err := sup.Run(ctx, max)
+	for _, result := range results {
+		report(result)
+	}
+	if err != nil && !errors.Is(err, context.Canceled) {
+		return 1, err
+	}
+	fmt.Printf("%d task(s) dispatched\n", len(results))
+	return 0, nil
+}
+
+func report(r supervisor.Result) {
+	switch {
+	case r.Applied.Escalated:
+		fmt.Printf("%s escalated: %s\n", r.Task.ShortID, r.Applied.Reason)
+		fmt.Printf("   wf attach %s\n", r.Task.ShortID)
+	case r.Applied.Closed:
+		fmt.Printf("%s closed\n", r.Task.ShortID)
+	}
+	for _, doc := range r.Applied.Bound {
+		fmt.Printf("   note: %s\n", doc.VaultPath)
+	}
+	for _, ref := range r.Applied.Created {
+		fmt.Printf("   follow-on: %s\n", ref)
+	}
+}
+
+func (a *app) cmdAttach(ctx context.Context, args []string) (int, error) {
+	ref := firstPositional(args)
+	if ref == "" {
+		return 1, errors.New("wf attach <ref>")
+	}
+
+	meta, err := a.queue.GetMeta(ctx, ref)
 	if err != nil {
 		return 1, err
 	}
@@ -187,14 +309,18 @@ func cmdAttach(ctx context.Context, backend *kata.Backend, args []string) (int, 
 	if dir == "" {
 		dir, _ = os.Getwd()
 	}
+	bin := a.cfg.PiBin
+	if bin == "" {
+		bin = "pi"
+	}
 
 	// Hand the terminal to pi; wf has nothing further to do.
-	pi := exec.CommandContext(ctx, "pi", binding.AttachArgs()...)
+	pi := exec.CommandContext(ctx, bin, binding.AttachArgs()...)
 	pi.Dir = dir
 	pi.Stdin, pi.Stdout, pi.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := pi.Run(); err != nil {
 		var exitErr *exec.ExitError
-		if ok := asExitError(err, &exitErr); ok {
+		if errors.As(err, &exitErr) {
 			return exitErr.ExitCode(), nil
 		}
 		return 1, fmt.Errorf("attach to %s: %w", ref, err)
@@ -202,13 +328,14 @@ func cmdAttach(ctx context.Context, backend *kata.Backend, args []string) (int, 
 	return 0, nil
 }
 
-func cmdBind(ctx context.Context, backend *kata.Backend, args []string) (int, error) {
-	if len(args) < 2 {
-		return 1, fmt.Errorf("wf bind <ref> <note.md>")
+func (a *app) cmdBind(ctx context.Context, args []string) (int, error) {
+	positional := positionals(args)
+	if len(positional) < 2 {
+		return 1, errors.New("wf bind <ref> <note.md>")
 	}
-	ref, notePath := args[0], args[1]
+	ref, notePath := positional[0], positional[1]
 
-	task, err := backend.Get(ctx, ref)
+	task, err := a.queue.Get(ctx, ref)
 	if err != nil {
 		return 1, err
 	}
@@ -227,13 +354,10 @@ func cmdBind(ctx context.Context, backend *kata.Backend, args []string) (int, er
 		return 1, fmt.Errorf("%s is already bound to %s", notePath, existing)
 	}
 
-	// wf writes both sides here because this is an explicit human action,
-	// not the run loop — where the plugin owns frontmatter and the
-	// supervisor owns metadata.
 	if err := os.WriteFile(abs, []byte(note.SetField(text, note.IssueKey, task.ID)), 0o644); err != nil {
 		return 1, fmt.Errorf("write %s: %w", notePath, err)
 	}
-	if err := backend.SetMeta(ctx, task.ID, ObsidianNoteKey, notePath, wf.SetMetaOptions{}); err != nil {
+	if err := a.queue.SetMeta(ctx, task.ID, wf.ObsidianNoteKey, notePath, wf.SetMetaOptions{}); err != nil {
 		return 1, fmt.Errorf("bind note path on %s: %w", task.ShortID, err)
 	}
 
@@ -241,21 +365,25 @@ func cmdBind(ctx context.Context, backend *kata.Backend, args []string) (int, er
 	return 0, nil
 }
 
-func cmdUI(ctx context.Context, backend *kata.Backend, args []string) (int, error) {
-	if len(args) == 0 {
-		return 1, fmt.Errorf("wf ui <ref>")
+func (a *app) cmdUI(ctx context.Context, args []string) (int, error) {
+	ref := firstPositional(args)
+	if ref == "" {
+		return 1, errors.New("wf ui <ref>")
 	}
-	origin, err := backend.WebUIOrigin(ctx)
+	origin, err := a.queue.WebUIOrigin(ctx)
 	if err != nil {
 		return 1, fmt.Errorf("%w (is the daemon running?)", err)
 	}
-	fmt.Printf("%s/issues/%s\n", origin, args[0])
+	fmt.Printf("%s/issues/%s\n", origin, ref)
 	return 0, nil
 }
 
-func summary(t wf.Task) string {
+func (a *app) summary(t wf.Task) string {
 	var extra string
-	if state, ok := t.Meta[kata.StateKey].(string); ok && state != "" {
+	if flow, ok := a.workflows.Select(t); ok {
+		extra += " {" + flow.Name + "}"
+	}
+	if state, ok := t.Meta[wf.StateKey].(string); ok && state != "" {
 		extra += " [" + state + "]"
 	}
 	if lease, ok := wf.ParseLease(t.Meta[wf.LeaseKey]); ok {
@@ -264,19 +392,51 @@ func summary(t wf.Task) string {
 	return fmt.Sprintf("%-6s P%d  %s%s", t.ShortID, t.Priority, t.Title, extra)
 }
 
+// knownFlags take a value, so positional arguments can be told apart from
+// flag values without a full flag parser.
+var knownFlags = map[string]bool{
+	"--limit": true, "--max": true, "--repo": true, "--ref": true, "--config": true,
+}
+
 func flagValue(args []string, flag string) string {
 	for i, a := range args {
 		if a == flag && i+1 < len(args) {
 			return args[i+1]
 		}
+		if strings.HasPrefix(a, flag+"=") {
+			return strings.TrimPrefix(a, flag+"=")
+		}
 	}
 	return ""
 }
 
-func asExitError(err error, target **exec.ExitError) bool {
-	e, ok := err.(*exec.ExitError)
-	if ok {
-		*target = e
+func hasFlag(args []string, flag string) bool {
+	for _, a := range args {
+		if a == flag {
+			return true
+		}
 	}
-	return ok
+	return false
+}
+
+func positionals(args []string) []string {
+	var out []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if strings.HasPrefix(a, "-") {
+			if knownFlags[a] {
+				i++
+			}
+			continue
+		}
+		out = append(out, a)
+	}
+	return out
+}
+
+func firstPositional(args []string) string {
+	if p := positionals(args); len(p) > 0 {
+		return p[0]
+	}
+	return ""
 }

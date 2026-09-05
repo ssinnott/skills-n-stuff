@@ -86,7 +86,35 @@ rather than a rewrite.
 
 - **One worktree per task.** Two agents in one checkout is the failure that
   costs an afternoon. The workspace seam exists so docker/ssh can arrive
-  later; worktree is the only implementation that ships.
+  later; worktree is the only implementation that ships. A worktree is
+  disposed on a clean close and *kept* on an escalation, because the
+  checkout is the evidence a human needs to diagnose the run.
+
+- **A canned workflow is dispatch wiring, not agent judgment.** A workflow
+  file names a profile, a prompt, resources, and where artifacts land — it
+  does not contain the expertise. That stays in the skills the profile
+  loads, exactly as pi-tasks decided when it refused to ship workflow
+  skills. Selection is by task metadata (`wf.workflow`) first, then by
+  label, so a queue can route work by labelling it and a one-off task can
+  still override. A task naming a workflow that is not loaded escalates
+  rather than falling back to a default: running the wrong recipe quietly
+  is worse than not running. Rejected: workflows as executable definitions
+  (that is the workflow engine this design exists to avoid) and selection
+  by title parsing (invisible and unqueryable).
+
+- **Workflow files are markdown with flat frontmatter.** Scalars and
+  comma-separated lists, matching the skill and command files these sit
+  alongside. Flat because Go's standard library has no YAML parser and a
+  dependency is not worth five keys. Rejected: nested YAML via a
+  third-party parser, and JSON (unreadable for a file that is mostly a
+  prompt).
+
+- **Artifacts bind into the vault on the way out.** A workflow that
+  declares `bind-docs` has its `DOC:` outcomes moved into the vault and
+  linked to the task in both directions. Evidence and comments then cite
+  the *final* location, so a closed task never points into a worktree that
+  has been disposed. Collisions get a numeric suffix rather than an
+  overwrite: two runs producing `plan.md` are two documents.
 
 - **Go, standard library only.** A single static binary runs as a launchd
   or systemd service with no runtime to install, which is what a supervisor
@@ -160,13 +188,23 @@ rather than a rewrite.
 - [x] Obsidian binding: frontmatter read/write, and `wf bind` writing both
       sides of the id pair.
 - [x] Read-side commands: `ready`, `show`, `escalations`, `attach`, `ui`.
-- [ ] Worktree workspace: create per task, prune on release.
-- [ ] pi runner: spawn `pi --mode json`, stream events, capture the tail
-      for outcome parsing, honor an abort signal.
-- [ ] `wf run --once`: one task end to end, no concurrency.
-- [ ] `wf run --max N`: the supervisor loop, lease renewal, stale reclaim.
+- [x] Worktree workspace: one per task on its own branch, disposed on a
+      clean close and kept on escalation. Tested against real git.
+- [x] pi runner: wf mints the session path and passes `--session`, so the
+      binding is writable before the agent produces anything; the run's
+      output is captured for outcome parsing.
+- [x] Canned workflows: markdown + flat frontmatter, selected by metadata
+      or label, with profile, resources and artifact binding.
+- [x] Applying outcomes: close with evidence, materialize NEXT as a linked
+      sibling, record filed issues without gating, escalate on anything
+      that did not report DONE.
+- [x] Artifact binding: DOC outcomes move into the vault and link both ways.
+- [x] `wf run --once` and `wf run --max N`: leases, renewal while running,
+      stale reclaim, concurrency cap.
 - [ ] Live validation against a real kata daemon and a real pi install
       (neither exists in the build environment).
+- [ ] pi extension exposing `/wf` slash commands over this CLI.
+- [ ] Obsidian: queue pane and framed kata UI over the same bindings.
 
 ## Risks
 

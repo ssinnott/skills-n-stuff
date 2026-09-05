@@ -1,0 +1,418 @@
+// Package supervisor runs the dispatch loop: lease, workspace, agent,
+// outcomes, release.
+//
+// The loop holds no durable state of its own. Everything it needs to resume
+// after a crash is in the tracker — the lease, the state, the session
+// binding — which is why killing the supervisor mid-flight costs nothing but
+// the in-flight run, and why a second supervisor on another machine can pick
+// up work this one abandoned.
+package supervisor
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"sync"
+	"time"
+
+	"github.com/ssinnott/skills-n-stuff/wf/internal/config"
+	"github.com/ssinnott/skills-n-stuff/wf/internal/wf"
+	"github.com/ssinnott/skills-n-stuff/wf/internal/workflow"
+)
+
+// ErrNothingReady is returned by RunOnce when the queue has no actionable,
+// claimable work.
+var ErrNothingReady = errors.New("nothing ready")
+
+// Supervisor dispatches tasks to agents.
+type Supervisor struct {
+	Queue     wf.Queue
+	Runner    wf.Runner
+	Workflows *workflow.Set
+	Config    *config.Config
+	// Workspaces builds a provider for a workflow. Injected so the loop can
+	// be tested without git.
+	Workspaces func(w workflow.Workflow) wf.WorkspaceProvider
+	// Log receives progress lines. Nil discards them.
+	Log func(format string, args ...any)
+}
+
+func (s *Supervisor) logf(format string, args ...any) {
+	if s.Log != nil {
+		s.Log(format, args...)
+	}
+}
+
+func (s *Supervisor) ttl() time.Duration {
+	if s.Config != nil && s.Config.LeaseTTLSeconds > 0 {
+		return time.Duration(s.Config.LeaseTTLSeconds) * time.Second
+	}
+	return wf.DefaultTTL
+}
+
+func (s *Supervisor) actor() string {
+	if s.Config != nil && s.Config.Actor != "" {
+		return s.Config.Actor
+	}
+	return "wf"
+}
+
+// Result reports one dispatched task.
+type Result struct {
+	Task    wf.Task
+	Applied wf.ApplyResult
+	Session string
+}
+
+// RunOnce dispatches a single task. An empty ref takes the top claimable
+// task off the ready queue.
+func (s *Supervisor) RunOnce(ctx context.Context, ref string) (Result, error) {
+	task, err := s.pick(ctx, ref)
+	if err != nil {
+		return Result{}, err
+	}
+	return s.dispatch(ctx, task)
+}
+
+// Run keeps dispatching until the queue is empty or the context ends,
+// holding at most max runs in flight.
+func (s *Supervisor) Run(ctx context.Context, max int) ([]Result, error) {
+	if max <= 0 {
+		max = 1
+	}
+
+	var (
+		mu       sync.Mutex
+		results  []Result
+		inFlight = map[string]bool{}
+		wg       sync.WaitGroup
+		slots    = make(chan struct{}, max)
+	)
+
+	for {
+		if ctx.Err() != nil {
+			break
+		}
+
+		// Ask for more than a slot's worth: tasks we cannot claim are
+		// skipped, and a page of one would stall on the first of them.
+		candidates, err := s.Queue.Ready(ctx, max*3)
+		if err != nil {
+			wg.Wait()
+			return results, err
+		}
+
+		dispatched := 0
+		for _, task := range candidates {
+			if ctx.Err() != nil {
+				break
+			}
+
+			mu.Lock()
+			busy := inFlight[task.ID]
+			mu.Unlock()
+			if busy || !wf.Claimable(task.Meta[wf.LeaseKey], s.actor(), time.Now()) {
+				continue
+			}
+
+			select {
+			case slots <- struct{}{}:
+			case <-ctx.Done():
+			}
+			if ctx.Err() != nil {
+				break
+			}
+
+			mu.Lock()
+			inFlight[task.ID] = true
+			mu.Unlock()
+			dispatched++
+			wg.Add(1)
+
+			go func(t wf.Task) {
+				defer wg.Done()
+				defer func() {
+					mu.Lock()
+					delete(inFlight, t.ID)
+					mu.Unlock()
+					<-slots
+				}()
+
+				result, err := s.dispatch(ctx, t)
+				mu.Lock()
+				defer mu.Unlock()
+				if err != nil {
+					s.logf("%s failed: %v", t.ShortID, err)
+					return
+				}
+				results = append(results, result)
+			}(task)
+		}
+
+		if dispatched == 0 {
+			// Nothing claimable this pass. Wait for in-flight work to
+			// finish — it may unblock dependents — and stop if it did not.
+			wg.Wait()
+			mu.Lock()
+			done := len(inFlight) == 0
+			mu.Unlock()
+			if done {
+				break
+			}
+		}
+	}
+
+	wg.Wait()
+	return results, ctx.Err()
+}
+
+// pick resolves the task to dispatch, honoring leases.
+func (s *Supervisor) pick(ctx context.Context, ref string) (wf.Task, error) {
+	if ref != "" {
+		task, err := s.Queue.Get(ctx, ref)
+		if err != nil {
+			return wf.Task{}, err
+		}
+		if !wf.Claimable(task.Meta[wf.LeaseKey], s.actor(), time.Now()) {
+			lease, _ := wf.ParseLease(task.Meta[wf.LeaseKey])
+			return wf.Task{}, fmt.Errorf("%s is leased: %s", task.ShortID, lease.Describe(time.Now()))
+		}
+		return task, nil
+	}
+
+	candidates, err := s.Queue.Ready(ctx, 20)
+	if err != nil {
+		return wf.Task{}, err
+	}
+	for _, task := range candidates {
+		if wf.Claimable(task.Meta[wf.LeaseKey], s.actor(), time.Now()) {
+			return task, nil
+		}
+	}
+	return wf.Task{}, ErrNothingReady
+}
+
+// dispatch runs one task end to end.
+func (s *Supervisor) dispatch(ctx context.Context, task wf.Task) (Result, error) {
+	flow, err := s.resolveWorkflow(ctx, task)
+	if err != nil {
+		return Result{}, err
+	}
+	s.logf("%s → %s: %s", task.ShortID, flow.Name, task.Title)
+
+	if err := s.acquire(ctx, task); err != nil {
+		return Result{}, err
+	}
+	// From here on the lease is held, so every exit path must release it.
+	defer func() {
+		if err := s.Queue.Release(ctx, task.ID); err != nil {
+			s.logf("%s: release lease: %v", task.ShortID, err)
+		}
+	}()
+
+	workspaceDir := ""
+	var space wf.Workspace
+	if flow.NeedsWorkspace() {
+		if s.Workspaces == nil {
+			return Result{}, fmt.Errorf("no workspace provider configured")
+		}
+		space, err = s.Workspaces(flow).Create(ctx, task)
+		if err != nil {
+			return Result{}, err
+		}
+		workspaceDir = space.Path()
+	}
+	if workspaceDir == "" {
+		workspaceDir = s.vaultOrCwd()
+	}
+
+	if err := wf.SetState(ctx, s.Queue, task.ID, wf.StateRunning); err != nil {
+		return Result{}, err
+	}
+
+	handle, err := s.Runner.Start(ctx, wf.RunOptions{
+		Cwd:        workspaceDir,
+		Prompt:     s.prompt(flow, task, workspaceDir),
+		TaskRef:    task.ShortID,
+		ProfileDir: s.Config.ProfileDir(flow.Profile),
+	})
+	if err != nil {
+		return Result{}, fmt.Errorf("start agent for %s: %w", task.ShortID, err)
+	}
+
+	// The binding is written before the run is waited on, so a crashed or
+	// hung run is still attachable — those are the runs worth reading.
+	binding := wf.SessionBinding{
+		ID:      handle.SessionID(),
+		Path:    handle.SessionPath(),
+		Cwd:     handle.Cwd(),
+		Started: time.Now().UTC(),
+	}
+	if err := wf.BindSession(ctx, s.Queue, task.ID, binding); err != nil {
+		return Result{}, err
+	}
+
+	stopRenewal := s.renewLease(ctx, task)
+	runResult, runErr := handle.Wait(ctx)
+	stopRenewal()
+
+	if runErr != nil {
+		_ = wf.FinishSession(ctx, s.Queue, task.ID, wf.SessionFailed, time.Now())
+		applied, escErr := wf.Escalate(ctx, s.Queue, task, "the agent process failed: "+runErr.Error(), runResult.TranscriptTail)
+		if escErr != nil {
+			return Result{}, escErr
+		}
+		s.keepWorkspace(space)
+		return Result{Task: task, Applied: applied, Session: binding.Path}, nil
+	}
+
+	outcomes := wf.ParseOutcomes(runResult.TranscriptTail)
+	applied, err := wf.Apply(ctx, s.Queue, task, outcomes, wf.ApplyOptions{
+		Transcript: runResult.TranscriptTail,
+		// Keyed on the session so a retried run closes once, not twice.
+		IdempotencyKey: "wf-close-" + binding.ID,
+		Bind:           s.bindOptions(flow, workspaceDir),
+	})
+	if err != nil {
+		return Result{}, err
+	}
+
+	outcome := wf.SessionDone
+	if applied.Escalated {
+		outcome = wf.SessionEscalated
+	}
+	if err := wf.FinishSession(ctx, s.Queue, task.ID, outcome, time.Now()); err != nil {
+		s.logf("%s: record session outcome: %v", task.ShortID, err)
+	}
+
+	// A worktree is disposed only when the run closed cleanly. An escalated
+	// run leaves its checkout on disk: that is the evidence a human needs.
+	if applied.Escalated {
+		s.keepWorkspace(space)
+	} else if space != nil {
+		if err := space.Dispose(ctx); err != nil {
+			s.logf("%s: dispose workspace: %v", task.ShortID, err)
+		}
+	}
+
+	return Result{Task: task, Applied: applied, Session: binding.Path}, nil
+}
+
+// resolveWorkflow selects the canned workflow for a task, escalating rather
+// than guessing when the task names one we do not have.
+func (s *Supervisor) resolveWorkflow(ctx context.Context, task wf.Task) (workflow.Workflow, error) {
+	if s.Workflows == nil {
+		return defaultWorkflow(), nil
+	}
+	flow, ok := s.Workflows.Select(task)
+	if ok {
+		return flow, nil
+	}
+	if flow.Name != "" {
+		// The task named a workflow that is not loaded. Running it under a
+		// default would silently do the wrong work.
+		_, err := wf.Escalate(ctx, s.Queue, task,
+			fmt.Sprintf("task names workflow %q, which is not loaded", flow.Name), "")
+		if err != nil {
+			return workflow.Workflow{}, err
+		}
+		return workflow.Workflow{}, fmt.Errorf("%s names unknown workflow %q", task.ShortID, flow.Name)
+	}
+	return defaultWorkflow(), nil
+}
+
+// defaultWorkflow is what a task with no workflow gets: the task text, the
+// outcome protocol, and a worktree.
+func defaultWorkflow() workflow.Workflow {
+	return workflow.Workflow{
+		Name:      "default",
+		Workspace: "worktree",
+		Prompt:    "{{TASK_TITLE}}\n\n{{TASK_BODY}}",
+	}
+}
+
+func (s *Supervisor) prompt(flow workflow.Workflow, task wf.Task, workspaceDir string) string {
+	return wf.SeedPreamble(task.ShortID, task.Title) + "\n\n---\n\n" + flow.Render(task, workspaceDir)
+}
+
+func (s *Supervisor) bindOptions(flow workflow.Workflow, workspaceDir string) wf.BindOptions {
+	if !flow.BindDocs || s.Config == nil || s.Config.Vault == "" {
+		return wf.BindOptions{}
+	}
+	return wf.BindOptions{
+		Vault:        s.Config.Vault,
+		VaultDir:     flow.VaultDir,
+		WorkspaceDir: workspaceDir,
+	}
+}
+
+func (s *Supervisor) vaultOrCwd() string {
+	if s.Config != nil && s.Config.Vault != "" {
+		return s.Config.Vault
+	}
+	return "."
+}
+
+// acquire writes the lease before claiming, so the record that decides
+// liveness exists before the record that advertises ownership.
+func (s *Supervisor) acquire(ctx context.Context, task wf.Task) error {
+	lease := wf.NewLease(s.actor(), s.ttl(), time.Now())
+	encoded, err := lease.Encode()
+	if err != nil {
+		return err
+	}
+	if err := s.Queue.SetMeta(ctx, task.ID, wf.LeaseKey, encoded, wf.SetMetaOptions{JSON: true}); err != nil {
+		return fmt.Errorf("write lease on %s: %w", task.ShortID, err)
+	}
+	if err := s.Queue.Claim(ctx, task.ID, s.actor()); err != nil {
+		// Ownership is cosmetic; the lease is what matters. A tracker that
+		// refuses the claim must not stop the run.
+		s.logf("%s: claim: %v", task.ShortID, err)
+	}
+	return wf.SetState(ctx, s.Queue, task.ID, wf.StateClaimed)
+}
+
+// renewLease keeps the lease live while the agent works, so a long run is
+// not reclaimed for being slow. It returns a stop function.
+func (s *Supervisor) renewLease(ctx context.Context, task wf.Task) func() {
+	interval := s.ttl() / 3
+	if interval < time.Second {
+		interval = time.Second
+	}
+
+	done := make(chan struct{})
+	var once sync.Once
+
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				lease := wf.NewLease(s.actor(), s.ttl(), time.Now())
+				encoded, err := lease.Encode()
+				if err != nil {
+					continue
+				}
+				if err := s.Queue.SetMeta(ctx, task.ID, wf.LeaseKey, encoded, wf.SetMetaOptions{JSON: true}); err != nil {
+					s.logf("%s: renew lease: %v", task.ShortID, err)
+				}
+			}
+		}
+	}()
+
+	return func() { once.Do(func() { close(done) }) }
+}
+
+func (s *Supervisor) keepWorkspace(space wf.Workspace) {
+	if space == nil {
+		return
+	}
+	if keeper, ok := space.(interface{ Keep() }); ok {
+		keeper.Keep()
+	}
+}

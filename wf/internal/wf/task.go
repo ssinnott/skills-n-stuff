@@ -107,6 +107,9 @@ type WorkspaceProvider interface {
 type RunOptions struct {
 	Cwd    string
 	Prompt string
+	// TaskRef names the session file on disk, so a directory of sessions
+	// is readable without consulting the tracker.
+	TaskRef string
 	// ProfileDir becomes PI_CODING_AGENT_DIR, selecting the worker's
 	// package and skill set.
 	ProfileDir string

@@ -28,13 +28,14 @@ import (
 )
 
 // State that kata cannot express natively — its status is binary
-// open/closed — is carried as metadata, following the convention kata's own
-// docs use for exactly this (`kata list --meta work.attention=needs-human`).
-// That makes the escalation queue a plain list query in the CLI, TUI and web
-// UI, with no code on our side.
+// open/closed — is carried as metadata. The keys are the core's, not this
+// adapter's: the convention they follow happens to be kata's own
+// (`kata list --meta work.attention=needs-human`), which is why the
+// escalation queue is a plain list query in the CLI, TUI and web UI with no
+// code on our side.
 const (
-	AttentionKey = "work.attention"
-	StateKey     = "wf.state"
+	AttentionKey = wf.AttentionKey
+	StateKey     = wf.StateKey
 )
 
 // Backend is a kata-backed wf.Queue.
@@ -238,20 +239,6 @@ func (b *Backend) Escalations(ctx context.Context) ([]wf.Task, error) {
 		return nil, err
 	}
 	return tasksFrom(raw), nil
-}
-
-// SetState records wf's state vocabulary, mirroring needs-human into the
-// attention key so kata's own surfaces can filter on it.
-func (b *Backend) SetState(ctx context.Context, ref string, state wf.WorkState) error {
-	if err := b.SetMeta(ctx, ref, StateKey, string(state), wf.SetMetaOptions{}); err != nil {
-		return err
-	}
-	if state == wf.StateNeedsHuman {
-		return b.SetMeta(ctx, ref, AttentionKey, "needs-human", wf.SetMetaOptions{})
-	}
-	// Best effort: the key is often already absent, which is not a failure.
-	_ = b.UnsetMeta(ctx, ref, AttentionKey)
-	return nil
 }
 
 // WebUIOrigin resolves the daemon's browser origin, for deep-linking a

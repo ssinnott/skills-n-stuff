@@ -8,22 +8,42 @@ import (
 	"time"
 )
 
-// fakeQueue records metadata writes so the binding logic can be tested
-// without a tracker. Only the metadata half of Queue is exercised.
+// fakeQueue records writes so the binding and apply logic can be tested
+// without a tracker.
 type fakeQueue struct {
-	meta map[string]any
+	meta     map[string]any
+	comments []string
+	closes   []CloseResult
+	created  []CreateInput
+	closeErr error
 }
 
 func newFakeQueue() *fakeQueue { return &fakeQueue{meta: map[string]any{}} }
 
-func (f *fakeQueue) Name() string                                             { return "fake" }
-func (f *fakeQueue) Ready(context.Context, int) ([]Task, error)               { return nil, nil }
-func (f *fakeQueue) Get(context.Context, string) (Task, error)                { return Task{}, nil }
-func (f *fakeQueue) Claim(context.Context, string, string) error              { return nil }
-func (f *fakeQueue) Release(context.Context, string) error                    { return nil }
-func (f *fakeQueue) Comment(context.Context, string, string) error            { return nil }
-func (f *fakeQueue) Close(context.Context, string, CloseResult, string) error { return nil }
-func (f *fakeQueue) Create(context.Context, CreateInput) (Task, error)        { return Task{}, nil }
+func (f *fakeQueue) Name() string                                { return "fake" }
+func (f *fakeQueue) Ready(context.Context, int) ([]Task, error)  { return nil, nil }
+func (f *fakeQueue) Get(context.Context, string) (Task, error)   { return Task{}, nil }
+func (f *fakeQueue) Claim(context.Context, string, string) error { return nil }
+func (f *fakeQueue) Release(context.Context, string) error       { return nil }
+
+func (f *fakeQueue) Comment(_ context.Context, _, body string) error {
+	f.comments = append(f.comments, body)
+	return nil
+}
+
+func (f *fakeQueue) Close(_ context.Context, _ string, result CloseResult, _ string) error {
+	if f.closeErr != nil {
+		return f.closeErr
+	}
+	f.closes = append(f.closes, result)
+	return nil
+}
+
+func (f *fakeQueue) Create(_ context.Context, in CreateInput) (Task, error) {
+	f.created = append(f.created, in)
+	return Task{ID: "new-" + slugKey(in.Title), ShortID: "new1", Title: in.Title}, nil
+}
+
 func (f *fakeQueue) UnsetMeta(_ context.Context, _, key string) error {
 	delete(f.meta, key)
 	return nil
