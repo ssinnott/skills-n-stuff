@@ -27,11 +27,15 @@ func withLedger(t *testing.T, s *Supervisor) store.Store {
 	return ledger
 }
 
-func loadRecord(t *testing.T, ledger store.Store, id string) wf.Record {
+// loadRecord finds a task's record by the tracker id, which since stage 4 is
+// a *ref* rather than the key: wf mints its own id and the tracker row is a
+// queue binding on the record it names. Every assertion below is unchanged by
+// that; only the lookup is.
+func loadRecord(t *testing.T, ledger store.Store, ref string) wf.Record {
 	t.Helper()
-	rec, err := ledger.Load(id)
+	rec, err := ledger.Resolve(ref)
 	if err != nil {
-		t.Fatalf("no ledger record for %s: %v", id, err)
+		t.Fatalf("no ledger record for %s: %v", ref, err)
 	}
 	return rec
 }
@@ -56,7 +60,7 @@ func TestRunIsRecordedBeforeTheAgentProducesAnything(t *testing.T) {
 	// run that never gets written down.
 	deadline := time.After(2 * time.Second)
 	for {
-		rec, err := ledger.Load("01HZ")
+		rec, err := ledger.Resolve("01HZ")
 		if err == nil && len(rec.Runs) == 1 {
 			run := rec.Runs[0]
 			if run.Started.IsZero() {
@@ -431,13 +435,19 @@ func TestQueueBindingNamesTheTrackerRow(t *testing.T) {
 		t.Errorf("short id = %q — it cannot be derived, so it has to be recorded", got)
 	}
 
-	// The tracker id resolves the record, which is what a human types.
+	// The tracker's short id resolves the record, which is what a human
+	// types. It is not the record's id — that is wf's own, minted here
+	// because this is the first wf saw of the row — and the whole point of
+	// the queue binding is that the two spaces meet at it.
+	if rec.ID == "01HZ" || rec.ID == "abc4" {
+		t.Errorf("record id = %q, want wf's own id rather than the tracker's", rec.ID)
+	}
 	found, err := ledger.Resolve("abc4")
 	if err != nil {
 		t.Fatalf("Resolve(abc4) error = %v", err)
 	}
-	if found.ID != "01HZ" {
-		t.Errorf("Resolve(abc4) = %q", found.ID)
+	if found.ID != rec.ID {
+		t.Errorf("Resolve(abc4) = %q, want %q", found.ID, rec.ID)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/ssinnott/skills-n-stuff/wf/internal/review"
 	"github.com/ssinnott/skills-n-stuff/wf/internal/supervisor"
@@ -192,11 +193,171 @@ func (a *app) runResultToJSON(r supervisor.Result) jsonRunResult {
 	return out
 }
 
+// Machine-readable form of wf's own task object.
+//
+// This is the shape `wf show` prints, with the same grouping: the task's own
+// bindings at the top level, and each run carrying what it produced. Both
+// clients render that structure, so putting the join here rather than in
+// each of them is the whole reason `--json` exists. A consumer that wants
+// every binding regardless of provenance unions the two lists.
+
+// jsonBinding is one typed reference. State is the raw vocabulary and
+// StateLabel is the word to show a human — carried rather than derived,
+// because a client that translated for itself would drift from `wf show`.
+type jsonBinding struct {
+	Kind       string            `json:"kind"`
+	Ref        string            `json:"ref"`
+	Label      string            `json:"label,omitempty"`
+	State      string            `json:"state,omitempty"`
+	StateLabel string            `json:"stateLabel,omitempty"`
+	At         string            `json:"at,omitempty"`
+	Via        string            `json:"via,omitempty"`
+	Host       string            `json:"host,omitempty"`
+	Meta       map[string]string `json:"meta,omitempty"`
+}
+
+// jsonRun is one dispatch and its output. Workflow, profile and model are on
+// the run because a task dispatched twice under two recipes has a history,
+// which is precisely what a client comparing two models needs to read.
+type jsonRun struct {
+	ID       string        `json:"id"`
+	Workflow string        `json:"workflow,omitempty"`
+	Profile  string        `json:"profile,omitempty"`
+	Model    string        `json:"model,omitempty"`
+	Host     string        `json:"host,omitempty"`
+	Started  string        `json:"started,omitempty"`
+	Ended    string        `json:"ended,omitempty"`
+	Outcome  string        `json:"outcome,omitempty"`
+	Bindings []jsonBinding `json:"bindings,omitempty"`
+}
+
+type jsonRecord struct {
+	ID     string `json:"id"`
+	Handle string `json:"handle,omitempty"`
+	Title  string `json:"title,omitempty"`
+	// Queue and QueueShortID are the tracker row, when one is bound. They
+	// are the binding read out for convenience, not a second copy: the
+	// binding itself is still in Bindings.
+	Queue        string `json:"queue,omitempty"`
+	QueueShortID string `json:"queueShortId,omitempty"`
+	Created      string `json:"created,omitempty"`
+	Updated      string `json:"updated,omitempty"`
+	// Filed reports whether this task has a tracker row at all. False is an
+	// ordinary state, not an error: work can start before it is filed.
+	Filed bool      `json:"filed"`
+	Runs  []jsonRun `json:"runs,omitempty"`
+	// Bindings are the task's own — the ones no run produced. A run's
+	// output hangs off that run.
+	Bindings []jsonBinding `json:"bindings,omitempty"`
+}
+
+func bindingToJSON(b wf.Binding) jsonBinding {
+	out := jsonBinding{
+		Kind:       string(b.Kind),
+		Ref:        b.Ref,
+		Label:      b.Label,
+		State:      string(b.State),
+		StateLabel: b.StateLabel(),
+		Via:        b.Via,
+		Host:       b.Host,
+		Meta:       b.Meta,
+	}
+	if !b.At.IsZero() {
+		out.At = stamp(b.At)
+	}
+	return out
+}
+
+func bindingsToJSON(bs wf.Bindings) []jsonBinding {
+	if len(bs) == 0 {
+		return nil
+	}
+	out := make([]jsonBinding, 0, len(bs))
+	for _, b := range bs {
+		out = append(out, bindingToJSON(b))
+	}
+	return out
+}
+
+// recordToJSON renders wf's own task object. task is the tracker row when
+// one was loaded, and is read only for the fields the tracker owns — never
+// merged into the record, which would be the sync-back the design refuses.
+func (a *app) recordToJSON(rec wf.Record, task wf.Task) jsonRecord {
+	out := jsonRecord{
+		ID:       rec.ID,
+		Handle:   rec.Handle,
+		Title:    rec.Name(),
+		Bindings: bindingsToJSON(sortBindings(taskOwnBindings(rec))),
+	}
+	if !rec.Created.IsZero() {
+		out.Created = stamp(rec.Created)
+	}
+	if !rec.Updated.IsZero() {
+		out.Updated = stamp(rec.Updated)
+	}
+	if row, ok := rec.Bindings.Current(wf.KindQueue); ok {
+		out.Filed = true
+		out.Queue = row.Ref
+		out.QueueShortID = row.Get(wf.MetaShortID)
+	}
+	for _, run := range rec.Runs {
+		entry := jsonRun{
+			ID:       run.ID,
+			Workflow: run.Workflow,
+			Profile:  run.Profile,
+			Model:    run.Model,
+			Host:     run.Host,
+			Outcome:  string(run.Outcome),
+			Bindings: bindingsToJSON(sortBindings(rec.Produced(run.ID))),
+		}
+		if !run.Started.IsZero() {
+			entry.Started = stamp(run.Started)
+		}
+		if run.Ended != nil {
+			entry.Ended = stamp(*run.Ended)
+		}
+		out.Runs = append(out.Runs, entry)
+	}
+	return out
+}
+
+// taskJSON keeps the old `wf show --json` payload answerable for a task the
+// tracker never held. A client written against `task` predates the record
+// and must not break on a task wf minted, so the record stands in for the
+// row it does not have.
+func (a *app) taskJSON(found resolved) jsonTask {
+	if found.Task.ID != "" {
+		return a.toJSON(found.Task)
+	}
+	rec := found.Record
+	out := jsonTask{ID: rec.ID, ShortID: rec.Handle, Title: rec.Name()}
+	if session, ok := rec.Bindings.Current(wf.KindSession); ok {
+		out.Session = session.Ref
+		out.Cwd = session.Get(wf.MetaCwd)
+	}
+	if runs := len(rec.Runs); runs > 0 {
+		out.Runs = runs
+	}
+	if doc, ok := rec.Bindings.Current(wf.KindDoc); ok {
+		out.Note = doc.Ref
+	}
+	return out
+}
+
+// stamp is the one timestamp format the JSON protocol uses, matching what
+// jsonLease already emits.
+func stamp(t time.Time) string { return t.Format("2006-01-02T15:04:05Z07:00") }
+
 // emit writes a JSON document to stdout. Every payload is an object with a
 // named field rather than a bare array, so the shape can grow without
 // breaking a client that already parses it.
 func emit(key string, value any) error {
-	payload := map[string]any{key: value}
+	return emitFields(map[string]any{key: value})
+}
+
+// emitFields is emit for a document carrying more than one named field, as
+// `wf show` does when it reports both the tracker row and wf's own record.
+func emitFields(payload map[string]any) error {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(payload); err != nil {

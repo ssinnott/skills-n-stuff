@@ -181,7 +181,11 @@ func TestSessionStopWithNothingRunningIsNotAnError(t *testing.T) {
 	}
 }
 
-func TestSessionOpenPRBypassesTheLadderEntirely(t *testing.T) {
+func TestSessionOpenPRIsAnOrdinaryOneBindingTask(t *testing.T) {
+	// This used to assert the opposite — that --pr bypassed the ladder. It
+	// now goes through it, over a task whose only binding is the PR, and
+	// every observable in this test is unchanged by that: same handle, same
+	// target, same argv, same recorded state, still no kata anywhere.
 	statePath := filepath.Join(t.TempDir(), "review.json")
 	spawner := &fakeSpawner{stdout: `{"port":4966,"url":"http://localhost:4966","pid":3983}`}
 

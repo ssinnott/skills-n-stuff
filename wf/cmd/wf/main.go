@@ -28,11 +28,16 @@ import (
 const usage = `wf — workflow CLI over pluggable queues
 
   wf ready [--limit N]         actionable work, top of queue first
-  wf show <ref>                one task, with its lease and session
+  wf show <ref>                one task: its runs and what each produced
   wf escalations               tasks flagged needs-human
   wf workflows                 canned workflows loaded from the workflow dir
+  wf task new "<title>"        start a task with no tracker row at all
+  wf task adopt <ref>          file an existing task into the tracker
+         --queue <tracker-id>
+  wf task list                 every task wf has recorded
   wf run [--once] [--ref R]    dispatch work to agents
          [--max N] [--repo P]
+         [--workflow W]
   wf attach <ref>              open the task's pi session
   wf bind <ref> <note.md>      bind a task to an Obsidian note, both ways
   wf ui <ref>                  print the web UI deep link for a task
@@ -40,7 +45,10 @@ const usage = `wf — workflow CLI over pluggable queues
   wf review <ref> --stop       stop the running viewer
   wf review comment <ref>      read a pasted review prompt from stdin
 
-Add --json to ready, show, escalations, workflows, run and review for
+A <ref> is any of four: wf's own task id, its short handle, the tracker's id
+or the tracker's short id. Ambiguity names the candidates rather than picking.
+
+Add --json to ready, show, escalations, workflows, task, run and review for
 machine-readable output; that is the protocol both the pi extension and the
 Obsidian plugin speak.
 
@@ -60,8 +68,12 @@ func main() {
 }
 
 type app struct {
-	cfg       *config.Config
-	queue     *kata.Backend
+	cfg   *config.Config
+	queue *kata.Backend
+	// ledger is wf's own task record. It lives beside the config, so
+	// --config moves it exactly as it moves review.json, and opening it
+	// reads nothing — a ledger that does not exist yet is an empty one.
+	ledger    store.Store
 	workflows *workflow.Set
 }
 
@@ -93,6 +105,7 @@ func newApp(args []string) (*app, error) {
 	return &app{
 		cfg:       cfg,
 		queue:     kata.New(kata.Options{Bin: cfg.KataBin, Cwd: cwd, Actor: cfg.Actor}),
+		ledger:    store.New(store.Root(cfg.Path)),
 		workflows: flows,
 	}, nil
 }
@@ -128,6 +141,8 @@ func run(ctx context.Context, argv []string) (int, error) {
 		return a.cmdUI(ctx, rest)
 	case "review":
 		return a.cmdReview(ctx, rest)
+	case "task":
+		return a.cmdTask(ctx, rest)
 	default:
 		return 1, fmt.Errorf("unknown command: %s\n\n%s", cmd, usage)
 	}
@@ -194,54 +209,6 @@ func (a *app) cmdWorkflows(args []string) (int, error) {
 	return 0, nil
 }
 
-func (a *app) cmdShow(ctx context.Context, args []string) (int, error) {
-	ref := firstPositional(args)
-	if ref == "" {
-		return 1, errors.New("wf show <ref>")
-	}
-
-	task, err := a.queue.Get(ctx, ref)
-	if err != nil {
-		return 1, err
-	}
-	if hasFlag(args, "--json") {
-		return 0, emit("task", a.toJSON(task))
-	}
-
-	fmt.Printf("%s  %s\n", task.ShortID, task.Title)
-	fmt.Printf("id       %s\n", task.ID)
-	fmt.Printf("priority %d\n", task.Priority)
-	if len(task.Labels) > 0 {
-		fmt.Printf("labels   %s\n", strings.Join(task.Labels, ", "))
-	}
-	if task.Owner != "" {
-		fmt.Printf("owner    %s\n", task.Owner)
-	}
-	if flow, ok := a.workflows.Select(task); ok {
-		fmt.Printf("workflow %s\n", flow.Name)
-	}
-
-	if lease, ok := wf.ParseLease(task.Meta[wf.LeaseKey]); ok {
-		fmt.Printf("lease    %s\n", lease)
-	} else {
-		fmt.Println("lease    unheld")
-	}
-
-	bindings := wf.LoadBindings(task)
-	if session, ok := bindings.Current(wf.KindSession); ok {
-		fmt.Printf("session  %s\n", session.Ref)
-	} else {
-		fmt.Println("session  none")
-	}
-	if runs := len(bindings.ByKind(wf.KindSession)); runs > 1 {
-		fmt.Printf("runs     %d\n", runs)
-	}
-	if doc, ok := bindings.Current(wf.KindDoc); ok {
-		fmt.Printf("note     %s\n", doc.Ref)
-	}
-	return 0, nil
-}
-
 func (a *app) cmdRun(ctx context.Context, args []string) (int, error) {
 	repo := flagValue(args, "--repo")
 	if repo == "" {
@@ -254,10 +221,8 @@ func (a *app) cmdRun(ctx context.Context, args []string) (int, error) {
 		Runner:    &runner.Pi{Bin: a.cfg.PiBin, SessionRoot: a.cfg.SessionRoot},
 		Workflows: a.workflows,
 		Config:    a.cfg,
-		// The ledger lives beside the config, so --config moves it exactly
-		// as it moves review.json.
-		Store: store.New(store.Root(a.cfg.Path)),
-		Log:   func(format string, v ...any) { fmt.Printf(format+"\n", v...) },
+		Store:     a.ledger,
+		Log:       func(format string, v ...any) { fmt.Printf(format+"\n", v...) },
 		Workspaces: func(w workflow.Workflow) wf.WorkspaceProvider {
 			r := repo
 			if w.Repo != "" {
@@ -277,8 +242,21 @@ func (a *app) cmdRun(ctx context.Context, args []string) (int, error) {
 		sup.Log = func(format string, v ...any) { fmt.Fprintf(os.Stderr, format+"\n", v...) }
 	}
 
-	if hasFlag(args, "--once") || flagValue(args, "--ref") != "" {
-		result, err := sup.RunOnce(ctx, flagValue(args, "--ref"))
+	// Two ways to name a task and one meaning: `wf run <ref>` is the form
+	// the design settled on, `--ref` is what already exists and what the
+	// clients call.
+	ref := flagValue(args, "--ref")
+	if ref == "" {
+		ref = firstPositional(args)
+	}
+
+	if hasFlag(args, "--once") || ref != "" {
+		dispatchRef, err := a.dispatchRef(ctx, ref)
+		if err != nil {
+			return 1, err
+		}
+		result, err := sup.RunOnceWith(ctx, dispatchRef,
+			supervisor.Dispatch{Workflow: flagValue(args, "--workflow")})
 		if errors.Is(err, supervisor.ErrNothingReady) {
 			if asJSON {
 				return 0, emit("results", []jsonRunResult{})
@@ -348,15 +326,26 @@ func (a *app) cmdAttach(ctx context.Context, args []string) (int, error) {
 		return 1, errors.New("wf attach <ref>")
 	}
 
-	meta, err := a.queue.GetMeta(ctx, ref)
+	// The ledger answers first, and for a session it is the better answer:
+	// its bindings carry the run that spawned each one and the host that
+	// owns it, where flat metadata has nowhere to put either. A task the
+	// ledger never saw still resolves through the tracker, whose metadata
+	// LoadBindings reads inside a.resolve.
+	found, err := a.resolve(ctx, ref)
 	if err != nil {
 		return 1, err
 	}
-	// Only the metadata is in hand here, so the task is assembled around
-	// it — LoadBindings reads nothing else.
-	session, ok := wf.LoadBindings(wf.Task{ID: ref, Meta: meta}).Current(wf.KindSession)
+	session, ok := found.Record.Bindings.Current(wf.KindSession)
 	if !ok {
-		return 1, fmt.Errorf("%s has no bound session yet", ref)
+		if session, ok = a.sessionFromMeta(ctx, found); !ok {
+			return 1, fmt.Errorf("%s has no bound session yet", ref)
+		}
+	}
+	if session.Host != "" && session.Host != a.cfg.Actor {
+		// A session file is a fact about one machine. Handing over a path
+		// that will not resolve here reads as a broken install; saying
+		// whose it is reads as the truth.
+		return 1, fmt.Errorf("%s ran on %s — its session lives there, not here", ref, session.Host)
 	}
 
 	dir := session.Get(wf.MetaCwd)
@@ -389,7 +378,13 @@ func (a *app) cmdBind(ctx context.Context, args []string) (int, error) {
 	}
 	ref, notePath := positional[0], positional[1]
 
-	task, err := a.queue.Get(ctx, ref)
+	found, err := a.resolve(ctx, ref)
+	if err != nil {
+		return 1, err
+	}
+	// The note's frontmatter and the tracker metadata both key on the
+	// tracker row, so binding a task that has none has nothing to write.
+	task, err := a.requireTask(found)
 	if err != nil {
 		return 1, err
 	}
@@ -456,6 +451,7 @@ func (a *app) summary(t wf.Task) string {
 var knownFlags = map[string]bool{
 	"--limit": true, "--max": true, "--repo": true, "--ref": true, "--config": true,
 	"--vault": true, "--pr": true, "--format": true,
+	"--handle": true, "--queue": true, "--workflow": true,
 }
 
 func flagValue(args []string, flag string) string {

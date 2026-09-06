@@ -67,7 +67,11 @@ func (s *Supervisor) actor() string {
 
 // Result reports one dispatched task.
 type Result struct {
-	Task    wf.Task
+	Task wf.Task
+	// TaskID is the wf id of the ledger record this run was filed under —
+	// the id `wf show` resolves. Empty when there is no ledger: the run
+	// still happened, nothing wrote it down.
+	TaskID  string
 	Applied wf.ApplyResult
 	Session string
 	// Run is the id this dispatch was recorded under, and the Via every
@@ -75,14 +79,38 @@ type Result struct {
 	Run string
 }
 
+// Dispatch carries the choices a caller makes about one run, as opposed to
+// the ones the queue makes. There is exactly one today and it is the whole
+// reason the type exists: naming a workflow is an *override* of implicit
+// selection, not a replacement for it, so it belongs in an optional struct
+// rather than as a second positional argument every caller has to answer.
+type Dispatch struct {
+	// Workflow names the recipe to run, overriding the task's own metadata
+	// and its labels. Empty leaves selection exactly as it was, which is
+	// what queue-driven dispatch depends on: a queue that routes by label
+	// must keep working with nobody naming anything.
+	Workflow string
+}
+
 // RunOnce dispatches a single task. An empty ref takes the top claimable
 // task off the ready queue.
 func (s *Supervisor) RunOnce(ctx context.Context, ref string) (Result, error) {
+	return s.RunOnceWith(ctx, ref, Dispatch{})
+}
+
+// RunOnceWith is RunOnce with the caller's own choices about the run.
+//
+// This is `wf run <ref> --workflow <name>`: the invocation surface every
+// client wants — a button on a task note, a slash command in the pi
+// extension, a bare shell line — all shelling out to the same command,
+// because the CLI is the only orchestration surface and the clients hold no
+// state of their own.
+func (s *Supervisor) RunOnceWith(ctx context.Context, ref string, opts Dispatch) (Result, error) {
 	task, err := s.pick(ctx, ref)
 	if err != nil {
 		return Result{}, err
 	}
-	return s.dispatch(ctx, task)
+	return s.dispatch(ctx, task, opts)
 }
 
 // Run keeps dispatching until the queue is empty or the context ends,
@@ -154,7 +182,7 @@ func (s *Supervisor) Run(ctx context.Context, max int) ([]Result, error) {
 					<-slots
 				}()
 
-				result, err := s.dispatch(ctx, t)
+				result, err := s.dispatch(ctx, t, Dispatch{})
 				mu.Lock()
 				defer mu.Unlock()
 				if err != nil {
@@ -227,8 +255,8 @@ func dispatchable(task wf.Task, actor string) bool {
 }
 
 // dispatch runs one task end to end.
-func (s *Supervisor) dispatch(ctx context.Context, task wf.Task) (Result, error) {
-	flow, err := s.resolveWorkflow(ctx, task)
+func (s *Supervisor) dispatch(ctx context.Context, task wf.Task, opts Dispatch) (Result, error) {
+	flow, err := s.resolveWorkflow(ctx, task, opts.Workflow)
 	if err != nil {
 		return Result{}, err
 	}
@@ -249,14 +277,18 @@ func (s *Supervisor) dispatch(ctx context.Context, task wf.Task) (Result, error)
 	// when it finishes is exactly the run that never gets written down.
 	startedAt := time.Now().UTC()
 	runID := newRunID(startedAt)
-	s.beginRun(task, flow, runID, startedAt)
+	// One ledger lookup for the whole dispatch. The record is *found* by
+	// the tracker row rather than keyed on it, so asking again per write
+	// would be a directory scan per binding.
+	ref := s.ledgerRef(task)
+	s.beginRun(ref, flow, runID, startedAt)
 	// Every path out of here settles the run. A dispatch that died on a
 	// tracker write or a broken checkout is still a run that happened, and a
 	// row left open forever would read as one still going.
 	settled := false
 	defer func() {
 		if !settled {
-			s.endRun(task, runID, wf.SessionFailed, nil, time.Now().UTC())
+			s.endRun(ref, runID, wf.SessionFailed, nil, time.Now().UTC())
 		}
 	}()
 
@@ -271,7 +303,7 @@ func (s *Supervisor) dispatch(ctx context.Context, task wf.Task) (Result, error)
 			return Result{}, err
 		}
 		workspaceDir = space.Path()
-		s.recordWorkspace(task, runID, space, time.Now().UTC())
+		s.recordWorkspace(ref, runID, space, time.Now().UTC())
 	}
 	if workspaceDir == "" {
 		workspaceDir = s.vaultOrCwd()
@@ -303,7 +335,7 @@ func (s *Supervisor) dispatch(ctx context.Context, task wf.Task) (Result, error)
 	if err := wf.BindSession(ctx, s.Queue, task.ID, binding); err != nil {
 		return Result{}, err
 	}
-	s.recordSession(task, runID, binding)
+	s.recordSession(ref, runID, binding)
 
 	stopRenewal := s.renewLease(ctx, task)
 	runResult, runErr := handle.Wait(ctx)
@@ -318,9 +350,9 @@ func (s *Supervisor) dispatch(ctx context.Context, task wf.Task) (Result, error)
 		s.keepWorkspace(space)
 		// The checkout stays live and stays bound: a crashed agent is the
 		// case the whole record exists to make inspectable.
-		s.endRun(task, runID, wf.SessionFailed, applied.Bindings, time.Now().UTC())
+		s.endRun(ref, runID, wf.SessionFailed, applied.Bindings, time.Now().UTC())
 		settled = true
-		return Result{Task: task, Applied: applied, Session: binding.Path, Run: runID}, nil
+		return Result{Task: task, TaskID: ref.id, Applied: applied, Session: binding.Path, Run: runID}, nil
 	}
 
 	outcomes := wf.ParseOutcomes(runResult.TranscriptTail)
@@ -353,19 +385,36 @@ func (s *Supervisor) dispatch(ctx context.Context, task wf.Task) (Result, error)
 		if err := space.Dispose(ctx); err != nil {
 			s.logf("%s: dispose workspace: %v", task.ShortID, err)
 		} else {
-			s.disposedWorkspace(task, runID, space)
+			s.disposedWorkspace(ref, runID, space)
 		}
 	}
 
-	s.endRun(task, runID, outcome, applied.Bindings, time.Now().UTC())
+	s.endRun(ref, runID, outcome, applied.Bindings, time.Now().UTC())
 	settled = true
 
-	return Result{Task: task, Applied: applied, Session: binding.Path, Run: runID}, nil
+	return Result{Task: task, TaskID: ref.id, Applied: applied, Session: binding.Path, Run: runID}, nil
 }
 
 // resolveWorkflow selects the canned workflow for a task, escalating rather
 // than guessing when the task names one we do not have.
-func (s *Supervisor) resolveWorkflow(ctx context.Context, task wf.Task) (workflow.Workflow, error) {
+//
+// A workflow named at the call site wins over the task's metadata and its
+// labels, and a name that is not loaded is a plain error rather than an
+// escalation. The two failures look alike and are not: a task carrying
+// `wf.workflow: x` for a recipe nobody installed is a configuration problem
+// discovered by a dispatch that may be unattended, so the tracker is the
+// only place to say so. A name someone just typed already has a human at the
+// other end of the terminal, and filing a comment about their typo is noise
+// on the task.
+func (s *Supervisor) resolveWorkflow(ctx context.Context, task wf.Task, named string) (workflow.Workflow, error) {
+	if named != "" {
+		if s.Workflows != nil {
+			if flow, ok := s.Workflows.Get(named); ok {
+				return flow, nil
+			}
+		}
+		return workflow.Workflow{}, fmt.Errorf("no workflow named %q is loaded", named)
+	}
 	if s.Workflows == nil {
 		return defaultWorkflow(), nil
 	}

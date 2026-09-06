@@ -159,7 +159,7 @@ func TestRealGitRerunKeepsTheEscalatedCheckout(t *testing.T) {
 		t.Fatalf("Applied = %+v, want the re-run to close", second.Applied)
 	}
 
-	rec, err := h.ledger.Load("01HZ")
+	rec, err := h.ledger.Resolve("01HZ")
 	if err != nil {
 		t.Fatalf("no ledger record: %v", err)
 	}
@@ -229,7 +229,7 @@ func TestRealGitRunSurvivesADeadAgent(t *testing.T) {
 		t.Fatalf("Applied = %+v, want escalated", result.Applied)
 	}
 
-	rec, err := h.ledger.Load("01HZ")
+	rec, err := h.ledger.Resolve("01HZ")
 	if err != nil {
 		t.Fatalf("no ledger record: %v", err)
 	}
@@ -279,7 +279,7 @@ func TestRealGitBranchSurvivesARenamedTask(t *testing.T) {
 		t.Fatalf("RunOnce() error = %v", err)
 	}
 
-	rec, err := h.ledger.Load("01HZ")
+	rec, err := h.ledger.Resolve("01HZ")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -304,5 +304,55 @@ func TestRealGitBranchSurvivesARenamedTask(t *testing.T) {
 	}
 	if !workspace.BranchExists(ctx, "", h.repo, recorded) {
 		t.Errorf("branch %q recorded by run %s is gone", recorded, result.Run)
+	}
+}
+
+func TestRealGitNamedWorkflowRunsAndIsRecordedOnTheRun(t *testing.T) {
+	// Explicit dispatch against real worktrees. The task's labels route it to
+	// `quick`; naming `deep` has to run that recipe instead — prompt, profile
+	// and all — and the run has to say which one it was, because "was the
+	// other recipe better here" is a question with two rows to compare.
+	h := newGitHarness(t, wf.Task{
+		ID: "01HZ", ShortID: "abc4", Title: "Ambiguous work", Labels: []string{"code"},
+	}, stuckStub)
+	h.sup.Workflows = loadFlows(t, map[string]string{
+		"quick.md": "---\nname: quick\nprofile: fast\nlabels: code\n---\nQuickly handle {{TASK_TITLE}}\n",
+		"deep.md":  "---\nname: deep\nprofile: careful\n---\nThink hard about {{TASK_TITLE}}\n",
+	})
+	ctx := context.Background()
+
+	result, err := h.sup.RunOnceWith(ctx, "01HZ", Dispatch{Workflow: "deep"})
+	if err != nil {
+		t.Fatalf("RunOnceWith() error = %v", err)
+	}
+
+	rec, err := h.ledger.Resolve("01HZ")
+	if err != nil {
+		t.Fatalf("no ledger record: %v", err)
+	}
+	// Identity is wf's own now; the tracker id is the ref that found it.
+	if rec.ID == "01HZ" {
+		t.Error("the record must be keyed by wf's own id, not the tracker's")
+	}
+	if len(rec.Runs) != 1 {
+		t.Fatalf("runs = %+v, want one", rec.Runs)
+	}
+	run := rec.Runs[0]
+	if run.ID != result.Run || run.Workflow != "deep" || run.Profile != "careful" {
+		t.Errorf("run = %+v, want the named workflow recorded on it", run)
+	}
+
+	// It really ran that recipe, against a checkout git actually made. The
+	// stub escalates, so the checkout is kept and the branch is still a ref
+	// — the same evidence any other escalated run leaves.
+	space, ok := rec.Bindings.Current(wf.KindWorkspace)
+	if !ok || space.Via != run.ID {
+		t.Fatalf("workspace binding = %+v", space)
+	}
+	if _, err := os.Stat(space.Ref); err != nil {
+		t.Errorf("the named run's checkout is not on disk: %v", err)
+	}
+	if !workspace.BranchExists(ctx, "", h.repo, space.Get(wf.MetaBranch)) {
+		t.Errorf("branch %q recorded by the named run is not a ref", space.Get(wf.MetaBranch))
 	}
 }

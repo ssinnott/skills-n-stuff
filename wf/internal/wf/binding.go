@@ -356,7 +356,18 @@ type Record struct {
 	// KindQueue binding, not this.
 	ID string `json:"id"`
 	// Handle is the short human-facing ref.
-	Handle   string    `json:"handle,omitempty"`
+	Handle string `json:"handle,omitempty"`
+	// Title is the name a task answers to before — or without — a tracker
+	// row.
+	//
+	// This is the one place the ledger holds something the tracker would
+	// otherwise own, and it is here because "a task exists whether or not a
+	// tracker row does" leaves the title with nowhere else to live: `wf
+	// task new "fix the parser"` has to record that string somewhere. It is
+	// a *fallback*, not a mirror — see Name. Nothing refreshes it from the
+	// tracker, so a renamed row does not make it stale; it simply stops
+	// being what anyone reads.
+	Title    string    `json:"title,omitempty"`
 	Created  time.Time `json:"created"`
 	Updated  time.Time `json:"updated,omitempty"`
 	Runs     []Run     `json:"runs,omitempty"`
@@ -389,6 +400,32 @@ func (r Record) LatestRun() (Run, bool) {
 
 // Produced returns the bindings a run created.
 func (r Record) Produced(runID string) Bindings { return r.Bindings.From(runID) }
+
+// Name is what a human should see for this task.
+//
+// The tracker wins when there is one: its row's Label is refreshed on every
+// dispatch, so it is the live answer, while Title is whatever the task was
+// called when wf minted it. That ordering is the disjointness rule applied
+// to one field — the tracker owns work state, the ledger owns everything
+// machine-local and everything with provenance, and a title recorded by
+// `wf task new` is only the ledger's answer until a row exists to overrule
+// it.
+func (r Record) Name() string {
+	if b, ok := r.Bindings.Current(KindQueue); ok && b.Label != "" {
+		return b.Label
+	}
+	return r.Title
+}
+
+// Ref is the shortest thing that resolves this task: the handle when it has
+// one, the id otherwise. What `wf task new` prints and what `wf show` leads
+// with.
+func (r Record) Ref() string {
+	if r.Handle != "" {
+		return r.Handle
+	}
+	return r.ID
+}
 
 // QueueRef returns the tracker id this task is filed under, if it is.
 func (r Record) QueueRef() (string, bool) {
