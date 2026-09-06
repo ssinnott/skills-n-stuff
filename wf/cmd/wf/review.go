@@ -11,14 +11,10 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strconv"
 	"strings"
-	"time"
 
 	"github.com/ssinnott/skills-n-stuff/wf/internal/config"
 	"github.com/ssinnott/skills-n-stuff/wf/internal/review"
-	"github.com/ssinnott/skills-n-stuff/wf/internal/store"
-	"github.com/ssinnott/skills-n-stuff/wf/internal/wf"
 )
 
 func (a *app) reviewSession() *review.Session {
@@ -43,62 +39,6 @@ func reviewArgs(args []string) (ref, prURL string, err error) {
 	return ref, prURL, nil
 }
 
-// recordReviewPane writes the live viewer onto the task's ledger record.
-//
-// It lives here rather than in internal/review for the same reason Apply
-// returns bindings instead of writing them: that package would otherwise
-// have to import the store, and the caller already holds it. Until this
-// existed nothing produced a KindReview binding at all — gc swept for one,
-// but review.json was the only real record of a running viewer, which is
-// the file the ledger is supposed to supersede.
-//
-// A failure here never fails the review. The viewer is already up and a
-// human is already looking at it; losing the record costs gc a hint, not
-// the work.
-func (a *app) recordReviewPane(recordID string, result review.Result) {
-	if recordID == "" || result.Viewer.URL == "" {
-		return
-	}
-	b := wf.Binding{
-		Kind:  wf.KindReview,
-		Ref:   result.Viewer.URL,
-		State: wf.BindingLive,
-		At:    time.Now().UTC(),
-		Host:  a.cfg.Actor,
-		Meta: map[string]string{
-			wf.MetaPort: strconv.Itoa(result.Viewer.Port),
-			wf.MetaPID:  strconv.Itoa(result.Viewer.PID),
-		},
-	}
-	_ = a.ledger.Update(recordID, func(rec *wf.Record) error {
-		// One pane at a time is wf's rule, so an older pane on this task is
-		// retired rather than left looking live to gc.
-		rec.Bindings = rec.Bindings.Supersede(wf.KindReview, "").Upsert(b)
-		return nil
-	})
-}
-
-// retireReviewPanes marks every recorded pane disposed once the viewer is
-// stopped. There is one difit at a time across all tasks, so a stop settles
-// whichever task was holding it.
-func (a *app) retireReviewPanes() {
-	recs, _ := a.ledger.List()
-	for _, rec := range recs {
-		if len(rec.Bindings.Live(wf.KindReview)) == 0 {
-			continue
-		}
-		id := rec.ID
-		_ = a.ledger.Update(id, func(r *wf.Record) error {
-			for i := range r.Bindings {
-				if r.Bindings[i].Kind == wf.KindReview && r.Bindings[i].IsLive() {
-					r.Bindings[i].State = wf.BindingDisposed
-				}
-			}
-			return nil
-		})
-	}
-}
-
 func (a *app) cmdReview(ctx context.Context, args []string) (int, error) {
 	positional := positionals(args)
 	if len(positional) > 0 && positional[0] == "comment" {
@@ -119,9 +59,6 @@ func (a *app) cmdReview(ctx context.Context, args []string) (int, error) {
 		if err != nil {
 			return 1, err
 		}
-		if stopped {
-			a.retireReviewPanes()
-		}
 		if asJSON {
 			return 0, emit("review", jsonReview{Ref: ref, Stopped: stopped})
 		}
@@ -139,27 +76,22 @@ func (a *app) cmdReview(ctx context.Context, args []string) (int, error) {
 	}
 
 	if prURL != "" {
-		// Still no queue call — that was always the point of --pr and it
-		// has not changed. What has is that the PR is now a task: it gets
-		// a ledger record carrying exactly one binding, so a PR a human
-		// opened by hand finally has somewhere to hang, and the second
-		// review of it finds the first rather than starting over.
+		// No queue call and no ledger — that was always the point of --pr.
+		// The URL is the whole task: one PR binding, resolved straight
+		// through the ladder. Port memory still works because the state
+		// file keys its port map by ref, and the ref here is the PR's own
+		// handle (review.PRHandle), stable across repeat reviews of the
+		// same PR.
 		repo := flagValue(args, "--repo")
 		if repo == "" {
 			repo = a.cfg.Repo
 		}
 		repo = config.Expand(repo)
 
-		rec, err := a.taskForPR(prURL)
+		result, err := sess.OpenPR(ctx, prURL, repo)
 		if err != nil {
 			return 1, err
 		}
-		result, err := sess.OpenBindings(ctx, review.PRHandle(prURL), rec.Bindings,
-			review.Externals{Repo: repo})
-		if err != nil {
-			return 1, err
-		}
-		a.recordReviewPane(rec.ID, result)
 		if asJSON {
 			return 0, emit("review", reviewToJSON(result))
 		}
@@ -188,56 +120,12 @@ func (a *app) cmdReview(ctx context.Context, args []string) (int, error) {
 	if err != nil {
 		return 1, err
 	}
-	a.recordReviewPane(found.Record.ID, result)
 
 	if asJSON {
 		return 0, emit("review", reviewToJSON(result))
 	}
 	printReviewResult(result)
 	return 0, nil
-}
-
-// taskForPR finds or mints the task a pull request URL belongs to.
-//
-// Finding it matters as much as minting it: reviewing the same PR twice must
-// land on one task, or the ledger fills with a record per invocation and the
-// port memory that makes difit's comments survive is spread across all of
-// them. The lookup is by binding rather than through store.Resolve, whose
-// business is refs a human types.
-//
-// A ledger that cannot be written costs the record, never the review: the
-// bindings are built either way and the viewer opens on them.
-func (a *app) taskForPR(url string) (wf.Record, error) {
-	bare := wf.Record{ID: wf.NewTaskID(now()), Bindings: review.PRBindings(url)}
-
-	recs, err := a.ledger.List()
-	if err != nil {
-		var skip *store.SkipError
-		if !errors.As(err, &skip) {
-			return bare, nil
-		}
-		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
-	}
-	for _, rec := range recs {
-		for _, b := range rec.Bindings.ByKind(wf.KindPR) {
-			if b.Ref == url {
-				return rec, nil
-			}
-		}
-	}
-
-	bare.Handle = review.PRHandle(url)
-	if err := wf.ValidHandle(bare.Handle); err != nil {
-		// "acme/widgets#482" is a fine thing to print and a poor thing to
-		// type, so it stays the display ref and the record goes unhandled.
-		bare.Handle = ""
-	}
-	bare.Title = "PR " + review.PRHandle(url)
-	bare.Created = now().UTC()
-	if err := a.ledger.Save(bare); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: record PR task: %v\n", err)
-	}
-	return bare, nil
 }
 
 // reviewBase is the branch a diff is taken against when nothing names one.

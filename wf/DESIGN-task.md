@@ -516,7 +516,8 @@ Each of these is currently either impossible or a special case:
   already holds it, which is the same reason `Apply` returns bindings rather
   than writing them. A failed write never fails a review — the viewer is up
   and a human is already looking at it, so losing the record costs `gc` a
-  hint, not the work.
+  hint, not the work. (Reverted in DESIGN-slim.md stage 4: the pane is
+  recorded only in review.json.)
 
 - **Refreshed PR state is never republished to the tracker.** Dispatch
   dual-writes, but a merge discovered later by `wf pr refresh` lands only in

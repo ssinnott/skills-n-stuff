@@ -199,10 +199,6 @@ func (a *app) bindingDetail(b wf.Binding, found resolved) string {
 		// The command, not the path: the path is already in the left
 		// column and is not what anyone types.
 		parts = append(parts, "wf attach "+found.Record.Ref())
-	case wf.KindReview:
-		if port := b.Get(wf.MetaPort); port != "" {
-			parts = append(parts, ":"+port)
-		}
 	case wf.KindTask:
 		if rel := b.Get(wf.MetaRelation); rel != "" {
 			parts = append(parts, rel)
@@ -225,7 +221,7 @@ func (a *app) bindingDetail(b wf.Binding, found resolved) string {
 // is the same order `wf review`'s ladder walks.
 var kindOrder = map[wf.Kind]int{
 	wf.KindQueue: 0, wf.KindRepo: 1, wf.KindWorkspace: 2, wf.KindSession: 3,
-	wf.KindPR: 4, wf.KindDoc: 5, wf.KindIssue: 6, wf.KindReview: 7, wf.KindTask: 8,
+	wf.KindPR: 4, wf.KindDoc: 5, wf.KindIssue: 6, wf.KindTask: 7,
 }
 
 // sortBindings puts a run's output in a readable order without disturbing

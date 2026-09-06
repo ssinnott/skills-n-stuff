@@ -41,8 +41,6 @@ const (
 	// KindIssue is an issue the work *filed* — a record of work moving
 	// elsewhere, which is why it never counts as this task's evidence.
 	KindIssue Kind = "issue"
-	// KindReview is a review pane opened over this task.
-	KindReview Kind = "review"
 	// KindTask is another task: a NEXT follow-on, or its parent.
 	KindTask Kind = "task"
 )
@@ -59,7 +57,7 @@ const (
 // field rather than re-deciding which kinds deserve one.
 func (k Kind) MachineLocal() bool {
 	switch k {
-	case KindWorkspace, KindSession, KindReview:
+	case KindWorkspace, KindSession:
 		return true
 	}
 	return false

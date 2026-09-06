@@ -268,7 +268,7 @@ func TestMachineLocalDependsOnTheDocsStore(t *testing.T) {
 	}
 
 	// The kinds that are machine-local regardless still are.
-	for _, k := range []Kind{KindWorkspace, KindSession, KindReview} {
+	for _, k := range []Kind{KindWorkspace, KindSession} {
 		if !(Binding{Kind: k}).MachineLocal() {
 			t.Errorf("%s must be machine-local", k)
 		}

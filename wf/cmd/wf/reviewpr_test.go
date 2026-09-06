@@ -1,12 +1,10 @@
 package main
 
-// `wf review --pr` as an ordinary task.
-//
-// DESIGN.md called --pr "a second, ad-hoc entry point, not a fifth ladder
-// rung", because rung 1 only fired on wf.pr metadata and a PR a human opened
-// had no task to hang on. Stage 4 removes the reason: a task is an identity
-// plus bindings, and a PR URL is a binding. The bypass is gone; what stayed
-// is the property that mattered — it works with no kata running.
+// `wf review --pr` as the ad hoc entry point DESIGN.md always meant it to
+// be: no queue call, no task, no ledger record. The URL is the whole task —
+// one PR binding, resolved straight through the ladder — and the only
+// thing wf remembers about it lives in review.json, keyed by the PR's own
+// handle so a reopened PR is likely to land back on the same difit origin.
 
 import (
 	"encoding/json"
@@ -15,7 +13,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/ssinnott/skills-n-stuff/wf/internal/wf"
+	"github.com/ssinnott/skills-n-stuff/wf/internal/review"
 )
 
 // stubDifit answers the way difit does: one JSON line on stdout naming the
@@ -52,7 +50,7 @@ func (h home) setDifit(t *testing.T, path string) {
 	}
 }
 
-func TestReviewPRBecomesAnOrdinaryOneBindingTask(t *testing.T) {
+func TestReviewPRNeedsNoLedger(t *testing.T) {
 	// kataBin names a binary that is not there, so any queue call would
 	// fail: --pr still works with no kata running, which was always its
 	// point and is the part that must survive the rewrite.
@@ -81,38 +79,17 @@ func TestReviewPRBecomesAnOrdinaryOneBindingTask(t *testing.T) {
 		t.Errorf("port = %d, want the one difit reported binding", payload.Review.Port)
 	}
 
-	// The part that is new: the PR is now a task, so it has somewhere to
-	// hang and something to come back to.
-	rec := onlyRecord(t, h)
-	prs := rec.Bindings.ByKind(wf.KindPR)
-	if len(prs) != 1 || prs[0].Ref != url {
-		t.Fatalf("bindings = %+v, want exactly the one PR", rec.Bindings)
+	// The whole point: nothing was filed anywhere to hang this on.
+	recs, err := h.ledger().List()
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
 	}
-	if prs[0].Via != "" {
-		t.Errorf("Via = %q — no run produced this, a human did", prs[0].Via)
-	}
-	if len(rec.Runs) != 0 {
-		t.Errorf("runs = %+v, want none", rec.Runs)
-	}
-
-	// Reviewing the same PR again finds that task rather than filing a
-	// second one — which is what keeps its remembered port, and with it
-	// difit's comment store, attached to one origin.
-	if _, err := h.cli(t, "review", "--pr", url, "--repo", t.TempDir(), "--json"); err != nil {
-		t.Fatalf("second review error = %v", err)
-	}
-	again := onlyRecord(t, h)
-	if again.ID != rec.ID {
-		t.Errorf("second review filed a new task %q, want %q", again.ID, rec.ID)
+	if len(recs) != 0 {
+		t.Errorf("ledger holds %d record(s), want none — --pr needs no ledger", len(recs))
 	}
 }
 
-// Nothing used to produce a KindReview binding: gc swept for one, but
-// review.json was the only real record of a viewer. Opening a review now
-// writes the pane onto the task and stopping retires it, so gc's pane sweep
-// is a query over bindings rather than over the file the ledger is supposed
-// to supersede.
-func TestReviewRecordsAndRetiresThePane(t *testing.T) {
+func TestReviewPRPortRememberedByHandle(t *testing.T) {
 	h := newHome(t, filepath.Join(t.TempDir(), "no-such-kata"))
 	h.setDifit(t, stubDifit(t, 4971))
 
@@ -121,43 +98,35 @@ func TestReviewRecordsAndRetiresThePane(t *testing.T) {
 		t.Fatalf("wf review --pr: %v", err)
 	}
 
-	pane, ok := onlyPane(t, h)
-	if !ok {
-		t.Fatal("opening a review recorded no KindReview binding")
+	// review.json's port map is keyed by ref; for a pasted URL that ref is
+	// the PR handle, not the URL itself — the same key `wf review --stop
+	// --pr <url>` and a second `--pr <url>` review derive independently.
+	state, err := review.LoadState(review.StatePath(h.cfgPath))
+	if err != nil {
+		t.Fatalf("LoadState: %v", err)
 	}
-	if pane.Host == "" {
-		t.Error("a review pane is machine-local and must carry a host")
+	handle := review.PRHandle(url)
+	if state.Ref != handle {
+		t.Errorf("state.Ref = %q, want the PR handle %q", state.Ref, handle)
 	}
-	if pane.Get(wf.MetaPort) != "4971" {
-		t.Errorf("port = %q, want 4971 — the port is what makes difit's comments findable again",
-			pane.Get(wf.MetaPort))
+	found := false
+	for _, p := range state.Ports {
+		if p.Ref == handle && p.Port == 4971 {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("ports = %+v, want %q remembered at 4971", state.Ports, handle)
 	}
 
 	if _, err := h.cli(t, "review", "--stop"); err != nil {
 		t.Fatalf("wf review --stop: %v", err)
 	}
-	if _, ok := onlyPane(t, h); ok {
-		t.Error("a stopped viewer must not still read as live to gc")
-	}
-}
-
-// onlyPane returns the one live review binding across the ledger, if any —
-// there is one viewer at a time, so more than one live pane is itself a bug.
-func onlyPane(t *testing.T, h home) (wf.Binding, bool) {
-	t.Helper()
-	recs, err := h.ledger().List()
+	after, err := review.LoadState(review.StatePath(h.cfgPath))
 	if err != nil {
-		t.Fatalf("List: %v", err)
+		t.Fatalf("LoadState after stop: %v", err)
 	}
-	var found []wf.Binding
-	for _, rec := range recs {
-		found = append(found, rec.Bindings.Live(wf.KindReview)...)
+	if after.PID != 0 || after.URL != "" {
+		t.Error("a stopped viewer must not still read as live")
 	}
-	if len(found) > 1 {
-		t.Fatalf("%d live review panes, want at most one", len(found))
-	}
-	if len(found) == 0 {
-		return wf.Binding{}, false
-	}
-	return found[0], true
 }

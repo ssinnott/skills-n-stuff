@@ -227,14 +227,13 @@ tries, in order, the first rung that matches:
 
 `wf review --pr <url> [--repo <path>]` reviews any PR directly, with no kata
 running at all. Use it for a PR a human opened by hand, or one that predates
-`wf.pr` metadata ever being recorded. It is no longer a bypass: the URL
-becomes a task carrying exactly one `pr` binding and goes through the same
-ladder, so reviewing that PR again finds the task rather than filing a
-second one — which is what keeps its remembered port, and difit's comments
-with it. `--repo` defaults to `config.Repo`. It participates in the same
+`wf.pr` metadata ever being recorded. `--pr` needs no task and no kata: it
+builds the review target from the URL alone, and its remembered port is
+keyed by the URL's handle (`owner/repo#123`) so difit's comments come back
+on reopen. `--repo` defaults to `config.Repo`. It participates in the same
 one-viewer-at-a-time lifecycle as a task review, and the positional `<ref>`
-and `--pr` are mutually exclusive — passing both is a usage error. A task
-with one binding has no filed issues, so nothing is seeded.
+and `--pr` are mutually exclusive — passing both is a usage error. A URL
+with no task behind it has no filed issues, so nothing is seeded.
 
 Findings the run filed as `ISSUE:` outcomes seed the viewer as difit review
 threads (`--comment`), when the issue's own title names a file and line
