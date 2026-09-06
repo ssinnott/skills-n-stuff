@@ -226,3 +226,22 @@ func TestStateLabelSpeaksEachKindsLanguage(t *testing.T) {
 		})
 	}
 }
+
+// Bindings recovered from flat metadata all carry a zero timestamp, so they
+// all tie. Pinning last-wins because callers who need report order must use
+// Live instead, and that choice is only safe if this one is predictable.
+func TestCurrentTieBreaksToLastRecorded(t *testing.T) {
+	bs := Bindings{
+		{Kind: KindPR, Ref: "pr/first", State: BindingLive},
+		{Kind: KindPR, Ref: "pr/second", State: BindingLive},
+		{Kind: KindPR, Ref: "pr/third", State: BindingLive},
+	}
+	got, ok := bs.Current(KindPR)
+	if !ok || got.Ref != "pr/third" {
+		t.Fatalf("Current on untimestamped bindings = %q, want pr/third", got.Ref)
+	}
+	// And the ordering a report-order caller relies on is unchanged.
+	if live := bs.Live(KindPR); live[0].Ref != "pr/first" {
+		t.Errorf("Live[0] = %q, want pr/first — report order must survive", live[0].Ref)
+	}
+}

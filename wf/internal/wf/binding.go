@@ -201,6 +201,15 @@ func (bs Bindings) Live(k Kind) Bindings {
 // Current returns the newest live binding of a kind — the one a caller
 // asking for "the worktree" or "the session" means. This is the query that
 // replaces the single-valued metadata keys: plural storage, singular read.
+//
+// Ties go to the last recorded, which matters more than it looks: bindings
+// recovered from flat metadata share a zero timestamp, so every one of them
+// ties and Current returns whichever was read last. That is right for a
+// worktree (a re-run's checkout is the one you want) and wrong for pull
+// requests, where a flat array is in *report* order and the first is the
+// one the run led with. So a caller that means "in the order the run
+// reported them" wants Live, not Current — `internal/review` takes exactly
+// that route, and says why at the call site.
 func (bs Bindings) Current(k Kind) (Binding, bool) {
 	live := bs.Live(k)
 	if len(live) == 0 {
