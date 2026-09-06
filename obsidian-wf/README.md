@@ -11,14 +11,11 @@ issues) land back on the task and, for documents, in this vault. Reviewing a
 task hands the diff to difit — with any agent findings wf already seeded as
 comments — so the loop is a handoff, not just a viewer.
 
-Deliberately separate from
-[obsidian-pi-tasks](../obsidian-pi-tasks): that plugin binds pi sessions to
-*documents* you write tasks into, and needs pi, difit, and gh. This plugin
-binds agent runs to *tracker issues* dispatched by wf, and needs only the
-`wf` binary — kata and pi sit behind it. Different sources of truth (a
-document's checkbox lines vs. kata's ledger), different dependency lists,
-so either installs without the other. The two interoperate only through one
-frontmatter key, described below — there is no shared runtime state.
+This is the only Obsidian plugin here. `obsidian-pi-tasks` — which bound
+pi sessions to documents — has been removed; what it proved, and what this
+plugin takes over from it, is recorded in
+[DESIGN-tasks.md](DESIGN-tasks.md). This plugin needs only the `wf` binary;
+kata and pi sit behind it, and no agent runtime runs in the vault.
 
 Everything here is a projection: the plugin stores nothing itself. Every
 row in the queue comes from `wf --json`, every action writes back through

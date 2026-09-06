@@ -5,11 +5,10 @@
  * joined to the vault by the id pair a bound note carries — `kata-issue` in
  * its frontmatter, `obsidian.note` on the task.
  *
- * Deliberately separate from obsidian-pi-tasks. That plugin binds pi sessions
- * to *documents* and needs pi, difit and gh; this one binds agent runs to
- * *tracker issues* and needs only the wf binary. Different sources of truth,
- * different dependencies, so either should install without the other. The two
- * interoperate through the frontmatter key alone.
+ * The only Obsidian plugin in this repo: obsidian-pi-tasks, which bound pi
+ * sessions to documents, has been removed (see DESIGN-tasks.md for what it
+ * proved and what this plugin inherits). Needs only the wf binary — no agent
+ * runtime runs in the vault.
  *
  * Everything here is a projection: the plugin stores nothing, every row comes
  * from `wf --json`, and every action writes back through wf.
@@ -83,8 +82,7 @@ const PR_URL_RE = /https?:\/\/\S*\/pull\/\d+\S*/;
 
 /**
  * Obsidian has no built-in text-prompt API, so "Review a pull request…"
- * needs its own small Modal — same shape as obsidian-pi-tasks' NewTaskModal
- * (a Setting+addText, Enter submits, autofocus), not a new pattern.
+ * needs its own small Modal: a Setting+addText, Enter submits, autofocus.
  */
 class PRUrlModal extends Modal {
     private url: string;

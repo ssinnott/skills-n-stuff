@@ -4,9 +4,10 @@
 __pycache__/
 node_modules/
 main.js
-obsidian-pi-tasks/test/docbind.mjs
-obsidian-pi-tasks/styles.css
 obsidian-wf/styles.css
 
 # wf build output (module is github.com/ssinnott/skills-n-stuff/wf)
 wf/wf
+
+# Agent worktrees created by the harness — scratch, never committed
+.claude/worktrees/

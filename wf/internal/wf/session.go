@@ -21,19 +21,39 @@ import (
 // Metadata keys carrying the session binding. The split between them is
 // deliberate: kata's `--meta key=value` filter matches string equality, so
 // the current session lives in plain string keys that stay filterable
-// (`kata list --meta pi.session`), while the history is JSON under a key
+// (`kata list --meta wf.session`), while the history is JSON under a key
 // nobody filters on.
+//
+// The names describe the role, never the runner. Which agent produced a
+// session is a *value* on the binding (MetaRunner), so a second runner is
+// a new value rather than a parallel set of keys with a parallel set of
+// readers — which is what `pi.session` would have cost.
 const (
 	// SessionPathKey is the absolute session file path — what
 	// `pi --session` resolves.
-	SessionPathKey = "pi.session"
-	// SessionIDKey is the session UUID, for display and pi's own browser.
-	SessionIDKey = "pi.session_id"
+	SessionPathKey = "wf.session"
+	// SessionIDKey is the session UUID, for display and the runner's own
+	// session browser.
+	SessionIDKey = "wf.session_id"
 	// SessionWorkspaceKey is the directory the session ran in. pi organizes
 	// sessions by working directory, so one task may have several.
-	SessionWorkspaceKey = "pi.workspace"
+	SessionWorkspaceKey = "wf.workspace"
 	// SessionHistoryKey is a JSON array of every run against this task.
-	SessionHistoryKey = "pi.session_history"
+	SessionHistoryKey = "wf.session_history"
+)
+
+// The runner-namespaced keys the ones above replaced. Still read, so a task
+// bound by an earlier release keeps resolving; never written.
+//
+// Deprecated: delete these one release after the rename ships. By then any
+// task still carrying only these has had a release in which every run that
+// touched it rewrote the new names, and a task nothing has touched in a
+// release has no session left worth reattaching to.
+const (
+	LegacySessionPathKey      = "pi.session"
+	LegacySessionIDKey        = "pi.session_id"
+	LegacySessionWorkspaceKey = "pi.workspace"
+	LegacySessionHistoryKey   = "pi.session_history"
 )
 
 // SessionOutcome is how a run settled.
@@ -57,14 +77,21 @@ type SessionBinding struct {
 }
 
 // BindingFromMeta reads the current session binding, if the task has one.
+//
+// It is a decoder, not a consumer's entry point: LoadBindings calls it, and
+// BindSession and FinishSession round-trip through it because they own the
+// write. Anything that merely wants to know what a task is bound to asks
+// LoadBindings instead, so there is one reader rather than one per caller.
 func BindingFromMeta(meta map[string]any) (SessionBinding, bool) {
-	path, _ := meta[SessionPathKey].(string)
+	path := metaString(meta, SessionPathKey, LegacySessionPathKey)
 	if path == "" {
 		return SessionBinding{}, false
 	}
-	id, _ := meta[SessionIDKey].(string)
-	cwd, _ := meta[SessionWorkspaceKey].(string)
-	return SessionBinding{ID: id, Path: path, Cwd: cwd}, true
+	return SessionBinding{
+		ID:   metaString(meta, SessionIDKey, LegacySessionIDKey),
+		Path: path,
+		Cwd:  metaString(meta, SessionWorkspaceKey, LegacySessionWorkspaceKey),
+	}, true
 }
 
 // HistoryFromMeta reads every recorded run. A malformed history reads as
@@ -73,19 +100,15 @@ func BindingFromMeta(meta map[string]any) (SessionBinding, bool) {
 func HistoryFromMeta(meta map[string]any) []SessionBinding {
 	raw, ok := meta[SessionHistoryKey]
 	if !ok || raw == nil {
+		raw, ok = meta[LegacySessionHistoryKey]
+	}
+	if !ok || raw == nil {
 		return nil
 	}
 
-	var data []byte
-	switch v := raw.(type) {
-	case string:
-		data = []byte(v)
-	default:
-		b, err := json.Marshal(v)
-		if err != nil {
-			return nil
-		}
-		data = b
+	data, ok := metaJSONBytes(raw)
+	if !ok {
+		return nil
 	}
 
 	var history []SessionBinding
@@ -158,11 +181,11 @@ func FinishSession(ctx context.Context, q Queue, ref string, outcome SessionOutc
 	return nil
 }
 
-// AttachArgs is the argv for reattaching to a task's session. The file path
-// is used rather than the bare id because pi organizes sessions by working
-// directory, and one task can have run in several worktrees.
-func (b SessionBinding) AttachArgs() []string {
-	return []string{"--session", b.Path}
+// AttachArgs is the argv for reattaching to a session binding. The file
+// path is used rather than the bare id because pi organizes sessions by
+// working directory, and one task can have run in several worktrees.
+func AttachArgs(session Binding) []string {
+	return []string{"--session", session.Ref}
 }
 
 // SeedPreamble opens a worker's prompt. The agent is told its ref so it can

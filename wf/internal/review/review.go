@@ -2,10 +2,10 @@
 // drives difit as the surface that shows it.
 //
 // The seam this package owns is the target ladder: which of a task's
-// already-recorded facts — PR evidence, a live worktree, a surviving
-// branch, a bound vault note — is the right thing to open, and in what
-// order. Every input the ladder reads already exists on the task; nothing
-// here invents state the rest of wf does not already keep.
+// bindings — a pull request, a live workspace, a surviving branch, a
+// produced document — is the right thing to open, and in what order. The
+// ladder is a query over what the task already records; nothing here
+// invents state the rest of wf does not already keep.
 package review
 
 import (
@@ -52,72 +52,87 @@ type Target struct {
 	Note string
 }
 
-// Inputs is everything the ladder needs, already read off the task or
-// config by BuildInputs. Resolve is kept pure and synchronous so its
-// selection logic is table-testable without a repository on disk.
-type Inputs struct {
-	// Repo is wf.repo metadata, falling back to config.repo.
+// Externals is what the ladder needs that no binding records. Everything
+// else Resolve reads off the task's bindings; these three facts are here
+// because the task genuinely does not hold them yet:
+//
+//   - the branch is derived from the task's title rather than recorded by
+//     the run that created it, which is the bug DESIGN-task.md names;
+//   - whether that branch survives is a git question, and Resolve stays
+//     pure so its selection logic is table-testable;
+//   - repo and base fall back to config when the task never named one.
+type Externals struct {
+	// Repo is config.repo, used only when no repo binding exists.
 	Repo string
-	// WorktreeDir is pi.workspace metadata — the directory the task's run
-	// used, which may or may not still exist.
-	WorktreeDir string
-	// Branch is the worktree branch this task would have run under,
-	// derived deterministically from the task rather than stored anywhere
-	// (see workspace.WorktreeName).
+	// Branch is the worktree branch this task would have run under.
 	Branch string
-	// BranchExists reports whether Branch is still a ref in Repo. Computed
-	// by the caller (real git, or a test double) rather than by Resolve,
-	// so Resolve itself never shells out.
+	// BranchExists reports whether Branch is still a ref in the repo.
+	// Computed by the caller (real git, or a test double) rather than by
+	// Resolve, so Resolve itself never shells out.
 	BranchExists bool
 	// Base is the branch a surviving branch would diff against.
 	Base string
-	// PR is the first PR URL recorded on the task, if any.
-	PR string
-	// Note is obsidian.note metadata.
-	Note string
 }
 
 // Resolve picks the first matching rung. Order is significant and mirrors
 // what a human actually wants to see: a shipped PR is the truth once one
-// exists; a live worktree is the strongest evidence for a run that has not
+// exists; a live workspace is the strongest evidence for a run that has not
 // shipped, because it still holds the agent's untracked and uncommitted
 // state that a branch alone would lose; a pushed branch is the fallback
-// once that checkout is gone; a bound note is what is left when there was
-// never a diff at all.
-func Resolve(in Inputs) (Target, error) {
-	switch {
-	case in.PR != "":
-		return Target{
-			Kind: KindPR, Repo: in.Repo, Branch: in.Branch, Base: in.Base, PR: in.PR,
-			Args: []string{"--pr", in.PR},
-		}, nil
+// once that checkout is gone; a produced document is what is left when
+// there was never a diff at all.
+func Resolve(bs wf.Bindings, ex Externals) (Target, error) {
+	repo := ex.Repo
+	if b, ok := bs.Current(wf.KindRepo); ok {
+		repo = b.Ref
+	}
 
-	case in.WorktreeDir != "" && dirExists(in.WorktreeDir):
+	// The first PR reported, not the newest: PR bindings come from a flat
+	// array recorded in report order and carry no timestamps, so report
+	// order is the only ordering that exists here.
+	if prs := bs.Live(wf.KindPR); len(prs) > 0 {
 		return Target{
-			Kind: KindWorktree, Repo: in.WorktreeDir, Branch: in.Branch, Base: in.Base,
+			Kind: KindPR, Repo: repo, Branch: ex.Branch, Base: ex.Base, PR: prs[0].Ref,
+			Args: []string{"--pr", prs[0].Ref},
+		}, nil
+	}
+
+	if dir := liveWorkspace(bs); dir != "" {
+		return Target{
+			Kind: KindWorktree, Repo: dir, Branch: ex.Branch, Base: ex.Base,
 			Args: []string{".", "--include-untracked"},
 		}, nil
-
-	case in.Branch != "" && in.BranchExists:
-		return Target{
-			Kind: KindBranch, Repo: in.Repo, Branch: in.Branch, Base: in.Base,
-			Args: []string{in.Branch, in.Base, "--merge-base"},
-		}, nil
-
-	case in.Note != "":
-		return Target{Kind: KindDoc, Note: in.Note}, nil
-
-	default:
-		return Target{}, ErrNoTarget
 	}
+
+	if ex.Branch != "" && ex.BranchExists {
+		return Target{
+			Kind: KindBranch, Repo: repo, Branch: ex.Branch, Base: ex.Base,
+			Args: []string{ex.Branch, ex.Base, "--merge-base"},
+		}, nil
+	}
+
+	if doc, ok := bs.Current(wf.KindDoc); ok {
+		return Target{Kind: KindDoc, Note: doc.Ref}, nil
+	}
+
+	return Target{}, ErrNoTarget
 }
 
-// dirExists is rung 2's own check: a disposed worktree must fall through to
-// the next rung rather than handing difit a directory that is no longer
-// there.
-func dirExists(dir string) bool {
-	info, err := os.Stat(dir)
-	return err == nil && info.IsDir()
+// liveWorkspace returns the current workspace directory if it is still on
+// disk. This is rung 2's own check: a disposed worktree must fall through
+// to the next rung rather than handing difit a directory that is no longer
+// there. Nothing records disposal today, so the stat is the record — which
+// is the seam the ledger closes by refreshing the binding's state instead.
+func liveWorkspace(bs wf.Bindings) string {
+	b, ok := bs.Current(wf.KindWorkspace)
+	if !ok || b.Ref == "" {
+		return ""
+	}
+	info, err := os.Stat(b.Ref)
+	if err != nil || !info.IsDir() {
+		return ""
+	}
+	return b.Ref
 }
 
 // BranchChecker reports whether branch is still a ref in repo. The real
@@ -130,51 +145,35 @@ func GitBranchChecker(ctx context.Context, repo, branch string) bool {
 	return workspace.BranchExists(ctx, "", repo, branch)
 }
 
-// BuildInputs reads everything the ladder needs off a task and its config,
-// inventing nothing that is not already recorded somewhere.
-func BuildInputs(ctx context.Context, task wf.Task, cfg *config.Config, branchExists BranchChecker) Inputs {
-	repo := ""
-	if v, ok := task.Meta[wf.RepoKey].(string); ok && v != "" {
-		repo = v
-	} else if cfg != nil {
-		repo = cfg.Repo
-	}
+// BuildLadder assembles both halves of a resolution: the task's bindings,
+// and the few facts about the world that no binding holds. It invents
+// nothing that is not already recorded somewhere.
+func BuildLadder(
+	ctx context.Context,
+	task wf.Task,
+	cfg *config.Config,
+	branchExists BranchChecker,
+) (wf.Bindings, Externals) {
+	bs := wf.LoadBindings(task)
 
-	worktreeDir := ""
-	if binding, ok := wf.BindingFromMeta(task.Meta); ok {
-		worktreeDir = binding.Cwd
-	}
-
-	branch := "wf/" + workspace.WorktreeName(task)
-
-	base := ""
+	ex := Externals{Branch: "wf/" + workspace.WorktreeName(task)}
 	if cfg != nil {
-		base = cfg.Base
+		ex.Repo = cfg.Repo
+		ex.Base = cfg.Base
 	}
-	if base == "" {
-		base = "main"
+	if ex.Base == "" {
+		ex.Base = "main"
 	}
 
-	exists := false
+	// The checker needs the repo Resolve will pick, which is the task's
+	// own binding where it has one.
+	repo := ex.Repo
+	if b, ok := bs.Current(wf.KindRepo); ok {
+		repo = b.Ref
+	}
 	if branchExists != nil && repo != "" {
-		exists = branchExists(ctx, repo, branch)
+		ex.BranchExists = branchExists(ctx, repo, ex.Branch)
 	}
 
-	note, _ := task.Meta[wf.ObsidianNoteKey].(string)
-
-	prs := wf.PRsFromMeta(task.Meta)
-	pr := ""
-	if len(prs) > 0 {
-		pr = prs[0]
-	}
-
-	return Inputs{
-		Repo:         repo,
-		WorktreeDir:  worktreeDir,
-		Branch:       branch,
-		BranchExists: exists,
-		Base:         base,
-		PR:           pr,
-		Note:         note,
-	}
+	return bs, ex
 }

@@ -17,6 +17,15 @@ kata is the first queue backend, pi the first runner, git worktrees the
 first workspace. The seams exist so the second of each is an adapter
 rather than a rewrite.
 
+[DESIGN-task.md](DESIGN-task.md) is **built**, and supersedes this document
+wherever the two disagree about what a task is. The task here is a normalized
+queue row with bindings stuck to it as ad-hoc metadata keys; there it is wf's
+own object — an identity, a history of runs, and typed, plural, stateful
+bindings — held in a local ledger beside this config. The seams, the outcome
+protocol and the no-workflow-engine rule below all still stand, and the
+metadata key names in this document are the pre-rename ones (`pi.session` and
+friends), which are read for one release and never written.
+
 ## Non-goals
 
 - No workflow engine. The graph is `ready → lease → run → apply → release`,
@@ -67,10 +76,12 @@ rather than a rewrite.
   (`work.attention=needs-human`), so the escalation queue is a plain
   `kata list --meta` and renders for free in the CLI, TUI and web UI.
 
-- **The pi session is bound to the task by metadata, written at spawn.**
-  `pi.session` (file path), `pi.session_id`, `pi.workspace`, and a
-  `pi.session_history` JSON array. Written *before* the agent produces
-  anything, so a crashed or hung run is still attachable — `wf attach
+- **The agent session is bound to the task by metadata, written at spawn.**
+  `wf.session` (file path), `wf.session_id`, `wf.workspace`, and a
+  `wf.session_history` JSON array — role names, with the runner carried as a
+  value on the binding rather than as half of a key. The `pi.*` names these
+  replaced are read for one release and never written. Written *before* the
+  agent produces anything, so a crashed or hung run is still attachable — `wf attach
   <ref>` resolves the metadata and execs `pi --session <path>`. Rejected:
   recording the session on completion (loses exactly the runs you most
   need to inspect) and deriving session names from the issue ref (pi
@@ -287,7 +298,9 @@ rather than a rewrite.
   `ctx.ui` to approve through anyway.
 
 - **Obsidian is the prose layer, joined by an id pair.** Note frontmatter
-  carries `kata-issue: <ULID>`; the issue carries `obsidian.note: <path>`.
+  carries `kata-issue: <ULID>`; the issue carries `wf.doc: <path>` (which
+  `obsidian.note` was renamed to, for the same reason: the key names the
+  role, and the store is a value on the binding).
   ULID rather than short id because kata documents it as the ref that
   survives renames and moves. Nothing is mirrored — titles and status live
   in the tracker, prose in the note, and the only shared state is the pair.

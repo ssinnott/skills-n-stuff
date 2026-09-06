@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -16,8 +15,8 @@ import (
 
 	"github.com/ssinnott/skills-n-stuff/wf/internal/config"
 	"github.com/ssinnott/skills-n-stuff/wf/internal/kata"
-	"github.com/ssinnott/skills-n-stuff/wf/internal/note"
 	"github.com/ssinnott/skills-n-stuff/wf/internal/runner"
+	"github.com/ssinnott/skills-n-stuff/wf/internal/store"
 	"github.com/ssinnott/skills-n-stuff/wf/internal/supervisor"
 	"github.com/ssinnott/skills-n-stuff/wf/internal/wf"
 	"github.com/ssinnott/skills-n-stuff/wf/internal/workflow"
@@ -27,24 +26,37 @@ import (
 const usage = `wf — workflow CLI over pluggable queues
 
   wf ready [--limit N]         actionable work, top of queue first
-  wf show <ref>                one task, with its lease and session
+  wf show <ref>                one task: its runs and what each produced
   wf escalations               tasks flagged needs-human
   wf workflows                 canned workflows loaded from the workflow dir
+  wf task new "<title>"        start a task with no tracker row at all
+  wf task adopt <ref>          file an existing task into the tracker
+         --queue <tracker-id>
+  wf task list                 every task wf has recorded
   wf run [--once] [--ref R]    dispatch work to agents
          [--max N] [--repo P]
+         [--workflow W]
   wf attach <ref>              open the task's pi session
   wf bind <ref> <note.md>      bind a task to an Obsidian note, both ways
+  wf note sync <ref>           write the task's managed block into its note
+  wf note sync --all           refresh every note the ledger knows about
   wf ui <ref>                  print the web UI deep link for a task
   wf review <ref>              resolve the task's diff and open it in difit
   wf review <ref> --stop       stop the running viewer
   wf review comment <ref>      read a pasted review prompt from stdin
+  wf pr refresh [<ref>]        ask GitHub what a task's pull requests did
+  wf gc [--before 30d]         report ledger bindings whose referent is gone
+        [--fix] [--delete]
 
-Add --json to ready, show, escalations, workflows, run and review for
-machine-readable output; that is the protocol both the pi extension and the
-Obsidian plugin speak.
+A <ref> is any of four: wf's own task id, its short handle, the tracker's id
+or the tracker's short id. Ambiguity names the candidates rather than picking.
 
-Config: ~/.wf/config.json (override with --config). KATA_BIN, PI_BIN and
-DIFIT_BIN override binaries that are off PATH.`
+Add --json to ready, show, escalations, workflows, task, run, review and
+note sync for machine-readable output; that is the protocol both the pi
+extension and the Obsidian plugin speak.
+
+Config: ~/.wf/config.json (override with --config). KATA_BIN, PI_BIN,
+DIFIT_BIN and GH_BIN override binaries that are off PATH.`
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -59,8 +71,12 @@ func main() {
 }
 
 type app struct {
-	cfg       *config.Config
-	queue     *kata.Backend
+	cfg   *config.Config
+	queue *kata.Backend
+	// ledger is wf's own task record. It lives beside the config, so
+	// --config moves it exactly as it moves review.json, and opening it
+	// reads nothing — a ledger that does not exist yet is an empty one.
+	ledger    store.Store
 	workflows *workflow.Set
 }
 
@@ -78,6 +94,9 @@ func newApp(args []string) (*app, error) {
 	if v := os.Getenv("DIFIT_BIN"); v != "" {
 		cfg.DifitCommand = v
 	}
+	if v := os.Getenv("GH_BIN"); v != "" {
+		cfg.GhBin = v
+	}
 
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -92,6 +111,7 @@ func newApp(args []string) (*app, error) {
 	return &app{
 		cfg:       cfg,
 		queue:     kata.New(kata.Options{Bin: cfg.KataBin, Cwd: cwd, Actor: cfg.Actor}),
+		ledger:    store.New(store.Root(cfg.Path)),
 		workflows: flows,
 	}, nil
 }
@@ -123,10 +143,18 @@ func run(ctx context.Context, argv []string) (int, error) {
 		return a.cmdAttach(ctx, rest)
 	case "bind":
 		return a.cmdBind(ctx, rest)
+	case "note":
+		return a.cmdNote(rest)
 	case "ui":
 		return a.cmdUI(ctx, rest)
 	case "review":
 		return a.cmdReview(ctx, rest)
+	case "pr":
+		return a.cmdPR(ctx, rest)
+	case "gc":
+		return a.cmdGC(ctx, rest)
+	case "task":
+		return a.cmdTask(ctx, rest)
 	default:
 		return 1, fmt.Errorf("unknown command: %s\n\n%s", cmd, usage)
 	}
@@ -193,53 +221,6 @@ func (a *app) cmdWorkflows(args []string) (int, error) {
 	return 0, nil
 }
 
-func (a *app) cmdShow(ctx context.Context, args []string) (int, error) {
-	ref := firstPositional(args)
-	if ref == "" {
-		return 1, errors.New("wf show <ref>")
-	}
-
-	task, err := a.queue.Get(ctx, ref)
-	if err != nil {
-		return 1, err
-	}
-	if hasFlag(args, "--json") {
-		return 0, emit("task", a.toJSON(task))
-	}
-
-	fmt.Printf("%s  %s\n", task.ShortID, task.Title)
-	fmt.Printf("id       %s\n", task.ID)
-	fmt.Printf("priority %d\n", task.Priority)
-	if len(task.Labels) > 0 {
-		fmt.Printf("labels   %s\n", strings.Join(task.Labels, ", "))
-	}
-	if task.Owner != "" {
-		fmt.Printf("owner    %s\n", task.Owner)
-	}
-	if flow, ok := a.workflows.Select(task); ok {
-		fmt.Printf("workflow %s\n", flow.Name)
-	}
-
-	if lease, ok := wf.ParseLease(task.Meta[wf.LeaseKey]); ok {
-		fmt.Printf("lease    %s\n", lease)
-	} else {
-		fmt.Println("lease    unheld")
-	}
-
-	if binding, ok := wf.BindingFromMeta(task.Meta); ok {
-		fmt.Printf("session  %s\n", binding.Path)
-	} else {
-		fmt.Println("session  none")
-	}
-	if history := wf.HistoryFromMeta(task.Meta); len(history) > 1 {
-		fmt.Printf("runs     %d\n", len(history))
-	}
-	if path, ok := task.Meta[wf.ObsidianNoteKey].(string); ok && path != "" {
-		fmt.Printf("note     %s\n", path)
-	}
-	return 0, nil
-}
-
 func (a *app) cmdRun(ctx context.Context, args []string) (int, error) {
 	repo := flagValue(args, "--repo")
 	if repo == "" {
@@ -252,6 +233,7 @@ func (a *app) cmdRun(ctx context.Context, args []string) (int, error) {
 		Runner:    &runner.Pi{Bin: a.cfg.PiBin, SessionRoot: a.cfg.SessionRoot},
 		Workflows: a.workflows,
 		Config:    a.cfg,
+		Store:     a.ledger,
 		Log:       func(format string, v ...any) { fmt.Printf(format+"\n", v...) },
 		Workspaces: func(w workflow.Workflow) wf.WorkspaceProvider {
 			r := repo
@@ -272,8 +254,21 @@ func (a *app) cmdRun(ctx context.Context, args []string) (int, error) {
 		sup.Log = func(format string, v ...any) { fmt.Fprintf(os.Stderr, format+"\n", v...) }
 	}
 
-	if hasFlag(args, "--once") || flagValue(args, "--ref") != "" {
-		result, err := sup.RunOnce(ctx, flagValue(args, "--ref"))
+	// Two ways to name a task and one meaning: `wf run <ref>` is the form
+	// the design settled on, `--ref` is what already exists and what the
+	// clients call.
+	ref := flagValue(args, "--ref")
+	if ref == "" {
+		ref = firstPositional(args)
+	}
+
+	if hasFlag(args, "--once") || ref != "" {
+		dispatchRef, err := a.dispatchRef(ctx, ref)
+		if err != nil {
+			return 1, err
+		}
+		result, err := sup.RunOnceWith(ctx, dispatchRef,
+			supervisor.Dispatch{Workflow: flagValue(args, "--workflow")})
 		if errors.Is(err, supervisor.ErrNothingReady) {
 			if asJSON {
 				return 0, emit("results", []jsonRunResult{})
@@ -343,16 +338,29 @@ func (a *app) cmdAttach(ctx context.Context, args []string) (int, error) {
 		return 1, errors.New("wf attach <ref>")
 	}
 
-	meta, err := a.queue.GetMeta(ctx, ref)
+	// The ledger answers first, and for a session it is the better answer:
+	// its bindings carry the run that spawned each one and the host that
+	// owns it, where flat metadata has nowhere to put either. A task the
+	// ledger never saw still resolves through the tracker, whose metadata
+	// LoadBindings reads inside a.resolve.
+	found, err := a.resolve(ctx, ref)
 	if err != nil {
 		return 1, err
 	}
-	binding, ok := wf.BindingFromMeta(meta)
+	session, ok := found.Record.Bindings.Current(wf.KindSession)
 	if !ok {
-		return 1, fmt.Errorf("%s has no bound session yet", ref)
+		if session, ok = a.sessionFromMeta(ctx, found); !ok {
+			return 1, fmt.Errorf("%s has no bound session yet", ref)
+		}
+	}
+	if session.Host != "" && session.Host != a.cfg.Actor {
+		// A session file is a fact about one machine. Handing over a path
+		// that will not resolve here reads as a broken install; saying
+		// whose it is reads as the truth.
+		return 1, fmt.Errorf("%s ran on %s — its session lives there, not here", ref, session.Host)
 	}
 
-	dir := binding.Cwd
+	dir := session.Get(wf.MetaCwd)
 	if dir == "" {
 		dir, _ = os.Getwd()
 	}
@@ -362,7 +370,7 @@ func (a *app) cmdAttach(ctx context.Context, args []string) (int, error) {
 	}
 
 	// Hand the terminal to pi; wf has nothing further to do.
-	pi := exec.CommandContext(ctx, bin, binding.AttachArgs()...)
+	pi := exec.CommandContext(ctx, bin, wf.AttachArgs(session)...)
 	pi.Dir = dir
 	pi.Stdin, pi.Stdout, pi.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := pi.Run(); err != nil {
@@ -372,43 +380,6 @@ func (a *app) cmdAttach(ctx context.Context, args []string) (int, error) {
 		}
 		return 1, fmt.Errorf("attach to %s: %w", ref, err)
 	}
-	return 0, nil
-}
-
-func (a *app) cmdBind(ctx context.Context, args []string) (int, error) {
-	positional := positionals(args)
-	if len(positional) < 2 {
-		return 1, errors.New("wf bind <ref> <note.md>")
-	}
-	ref, notePath := positional[0], positional[1]
-
-	task, err := a.queue.Get(ctx, ref)
-	if err != nil {
-		return 1, err
-	}
-
-	abs, err := filepath.Abs(notePath)
-	if err != nil {
-		return 1, fmt.Errorf("resolve %s: %w", notePath, err)
-	}
-	raw, err := os.ReadFile(abs)
-	if err != nil {
-		return 1, fmt.Errorf("read %s: %w", notePath, err)
-	}
-
-	text := string(raw)
-	if existing := note.GetField(text, note.IssueKey); existing != "" && existing != task.ID {
-		return 1, fmt.Errorf("%s is already bound to %s", notePath, existing)
-	}
-
-	if err := os.WriteFile(abs, []byte(note.SetField(text, note.IssueKey, task.ID)), 0o644); err != nil {
-		return 1, fmt.Errorf("write %s: %w", notePath, err)
-	}
-	if err := a.queue.SetMeta(ctx, task.ID, wf.ObsidianNoteKey, notePath, wf.SetMetaOptions{}); err != nil {
-		return 1, fmt.Errorf("bind note path on %s: %w", task.ShortID, err)
-	}
-
-	fmt.Printf("bound %s ↔ %s\n", task.ShortID, notePath)
 	return 0, nil
 }
 
@@ -448,7 +419,8 @@ func (a *app) summary(t wf.Task) string {
 // flag values without a full flag parser.
 var knownFlags = map[string]bool{
 	"--limit": true, "--max": true, "--repo": true, "--ref": true, "--config": true,
-	"--vault": true, "--pr": true, "--format": true,
+	"--vault": true, "--pr": true, "--format": true, "--before": true,
+	"--handle": true, "--queue": true, "--workflow": true,
 }
 
 func flagValue(args []string, flag string) string {

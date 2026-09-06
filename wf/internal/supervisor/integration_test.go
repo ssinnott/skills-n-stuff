@@ -12,6 +12,7 @@ import (
 	"github.com/ssinnott/skills-n-stuff/wf/internal/kata"
 	"github.com/ssinnott/skills-n-stuff/wf/internal/note"
 	"github.com/ssinnott/skills-n-stuff/wf/internal/runner"
+	"github.com/ssinnott/skills-n-stuff/wf/internal/store"
 	"github.com/ssinnott/skills-n-stuff/wf/internal/wf"
 	"github.com/ssinnott/skills-n-stuff/wf/internal/workflow"
 	"github.com/ssinnott/skills-n-stuff/wf/internal/workspace"
@@ -33,6 +34,10 @@ type harness struct {
 	repo      string
 	agent     string
 	workflows *workflow.Set
+	// ledger is wf's own record: the runs and the typed bindings each run
+	// produced. Real rather than stubbed, because what lands on disk is the
+	// thing worth checking.
+	ledger *store.FileStore
 }
 
 func requireTools(t *testing.T) (kataBin string) {
@@ -95,7 +100,8 @@ func newHarness(t *testing.T, agentScript string, workflows map[string]string) *
 	}
 
 	return &harness{
-		queue: kata.New(kata.Options{Bin: kataBin, Cwd: wsDir, Project: project, Actor: "wf-test"}),
+		ledger: store.New(t.TempDir()),
+		queue:  kata.New(kata.Options{Bin: kataBin, Cwd: wsDir, Project: project, Actor: "wf-test"}),
 		cfg: &config.Config{
 			Actor:           "wf-test",
 			Vault:           vault,
@@ -144,9 +150,31 @@ func (h *harness) supervisor() *Supervisor {
 		Runner:    &runner.Pi{Bin: h.agent, SessionRoot: h.cfg.SessionRoot},
 		Workflows: h.workflows,
 		Config:    h.cfg,
+		Store:     h.ledger,
 		Workspaces: func(w workflow.Workflow) wf.WorkspaceProvider {
 			return &workspace.Provider{Repo: h.repo, Root: h.cfg.WorktreeRoot}
 		},
+	}
+}
+
+// record reads the task's ledger entry. wf mints the id now, so the tracker
+// id is a ref that finds the record through its queue binding rather than
+// the key the record is filed under.
+func (h *harness) record(t *testing.T, ref string) wf.Record {
+	t.Helper()
+	rec, err := h.ledger.Resolve(ref)
+	if err != nil {
+		t.Fatalf("no ledger record for %s: %v", ref, err)
+	}
+	return rec
+}
+
+// setAgent rewrites the stub agent in place, so a second dispatch against
+// one task can behave differently from the first.
+func (h *harness) setAgent(t *testing.T, script string) {
+	t.Helper()
+	if err := os.WriteFile(h.agent, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -268,8 +296,8 @@ func TestE2EBindsArtifactIntoVault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if meta[wf.ObsidianNoteKey] != result.Applied.Bound[0].VaultPath {
-		t.Errorf("task metadata = %v, want the vault path", meta[wf.ObsidianNoteKey])
+	if meta[wf.DocKey] != result.Applied.Bound[0].VaultPath {
+		t.Errorf("task metadata = %v, want the vault path", meta[wf.DocKey])
 	}
 
 	// A workflow with no workspace still ran; nothing was left behind.
@@ -468,5 +496,265 @@ func TestE2EConcurrentRunsDoNotCollide(t *testing.T) {
 			t.Errorf("two tasks shared session %s", r.Session)
 		}
 		seen[r.Session] = true
+	}
+}
+
+// --- the ledger, end to end ---------------------------------------------
+
+const diesAgent = `#!/bin/sh
+echo "starting on the parser"
+exit 3
+`
+
+func TestE2ERunSurvivesACrashedAgent(t *testing.T) {
+	// A run is recorded at spawn, not at completion, for the same reason the
+	// session binding is: this agent produced nothing at all, so the record
+	// is the only thing that knows the run happened — and it is exactly the
+	// kind of run a human goes looking for.
+	h := newHarness(t, diesAgent, nil)
+	ctx := context.Background()
+
+	created, err := h.queue.Create(ctx, wf.CreateInput{Title: "Work that dies"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := h.supervisor().RunOnce(ctx, "")
+	if err != nil {
+		t.Fatalf("RunOnce() error = %v", err)
+	}
+	if !result.Applied.Escalated {
+		t.Fatalf("Applied = %+v, want escalated", result.Applied)
+	}
+
+	rec := h.record(t, created.ID)
+	if len(rec.Runs) != 1 {
+		t.Fatalf("runs = %+v, want the dead run recorded", rec.Runs)
+	}
+	run := rec.Runs[0]
+	if run.ID != result.Run {
+		t.Errorf("run id = %q, want %q", run.ID, result.Run)
+	}
+	if !run.Done() || run.Outcome != wf.SessionEscalated {
+		t.Errorf("run = %+v, want settled as escalated", run)
+	}
+	if run.Host != h.cfg.Actor {
+		t.Errorf("run host = %q, want %q", run.Host, h.cfg.Actor)
+	}
+
+	// Its session file is on disk and bound, so `wf attach` still works.
+	session, ok := rec.Bindings.Current(wf.KindSession)
+	if !ok {
+		t.Fatal("the dead run left no session binding")
+	}
+	if session.Via != run.ID {
+		t.Errorf("session Via = %q, want the run that spawned it", session.Via)
+	}
+	// The path, not the file: wf mints it and hands it to the runner, and
+	// the stub agent standing in for pi never writes one. That the binding
+	// exists at all is the property under test — it was written at spawn,
+	// before this agent had produced anything, and it survived the agent
+	// producing nothing.
+	if !strings.HasSuffix(session.Ref, ".jsonl") {
+		t.Errorf("session ref = %q, want a minted session path", session.Ref)
+	}
+
+	// And its checkout is live, recorded with the branch it is actually on.
+	space, ok := rec.Bindings.Current(wf.KindWorkspace)
+	if !ok || space.State != wf.BindingLive {
+		t.Fatalf("workspace binding = %+v, want it live", space)
+	}
+	if _, err := os.Stat(space.Ref); err != nil {
+		t.Errorf("kept checkout is not on disk: %v", err)
+	}
+	branch := space.Get(wf.MetaBranch)
+	if branch == "" {
+		t.Fatal("the workspace binding did not record its branch")
+	}
+	if !workspace.BranchExists(ctx, "", h.repo, branch) {
+		t.Errorf("recorded branch %q is not a ref in the repo", branch)
+	}
+	if space.Host != h.cfg.Actor {
+		t.Errorf("workspace host = %q, want %q", space.Host, h.cfg.Actor)
+	}
+}
+
+func TestE2ERerunSupersedesWithoutDestroyingTheFirstCheckout(t *testing.T) {
+	// The bug the whole design exists to fix, against real git: a re-run used
+	// to overwrite the one workspace key, and with it the checkout an
+	// escalated run had been deliberately kept on disk to be inspected.
+	h := newHarness(t, stuckAgent, nil)
+	ctx := context.Background()
+
+	created, err := h.queue.Create(ctx, wf.CreateInput{Title: "Ambiguous work"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := h.supervisor().RunOnce(ctx, "")
+	if err != nil {
+		t.Fatalf("first RunOnce() error = %v", err)
+	}
+	if !first.Applied.Escalated {
+		t.Fatalf("Applied = %+v, want the first run escalated", first.Applied)
+	}
+
+	kept, ok := h.record(t, created.ID).Bindings.Current(wf.KindWorkspace)
+	if !ok {
+		t.Fatal("the escalated run recorded no checkout")
+	}
+
+	// Re-dispatch by ref, the way `wf run --ref` does: the task is flagged
+	// for a human, so the ready queue will not offer it up again.
+	h.setAgent(t, shipAgent)
+	second, err := h.supervisor().RunOnce(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("second RunOnce() error = %v", err)
+	}
+	if !second.Applied.Closed {
+		t.Fatalf("Applied = %+v, want the re-run to close", second.Applied)
+	}
+	if first.Run == second.Run {
+		t.Fatal("a re-run must be its own run")
+	}
+
+	rec := h.record(t, created.ID)
+	if len(rec.Runs) != 2 {
+		t.Fatalf("runs = %+v, want two", rec.Runs)
+	}
+
+	spaces := rec.Bindings.ByKind(wf.KindWorkspace)
+	if len(spaces) != 2 {
+		t.Fatalf("workspace bindings = %+v, want one per run", spaces)
+	}
+	byRun := map[string]wf.Binding{}
+	for _, b := range spaces {
+		byRun[b.Via] = b
+	}
+
+	old, ok := byRun[first.Run]
+	if !ok {
+		t.Fatalf("the first run's checkout is no longer recorded: %+v", spaces)
+	}
+	if old.Ref != kept.Ref {
+		t.Errorf("first checkout ref moved from %q to %q", kept.Ref, old.Ref)
+	}
+	if old.State != wf.BindingSuperseded {
+		t.Errorf("first checkout state = %q, want superseded", old.State)
+	}
+	// The evidence itself: still on disk, still on its own branch.
+	if _, err := os.Stat(old.Ref); err != nil {
+		t.Errorf("the escalated run's checkout was destroyed: %v", err)
+	}
+	if branch := old.Get(wf.MetaBranch); branch == "" {
+		t.Error("the first checkout lost its branch")
+	} else if !workspace.BranchExists(ctx, "", h.repo, branch) {
+		t.Errorf("the first run's branch %q was deleted by the re-run", branch)
+	}
+
+	fresh, ok := byRun[second.Run]
+	if !ok {
+		t.Fatalf("the re-run's checkout was not recorded: %+v", spaces)
+	}
+	if fresh.Ref == old.Ref {
+		t.Fatal("the two runs shared a checkout")
+	}
+	if fresh.State != wf.BindingDisposed {
+		t.Errorf("second checkout state = %q, want disposed after a clean close", fresh.State)
+	}
+	if _, err := os.Stat(fresh.Ref); !os.IsNotExist(err) {
+		t.Errorf("a cleanly closed run should have removed its checkout: %v", err)
+	}
+}
+
+const producingAgent = `#!/bin/sh
+cat > plan.md <<'EOF'
+# Plan
+
+Split the separator handling out first.
+EOF
+echo "REPO: /code/app"
+echo "PR: https://example.com/pr/42 — Add the parser"
+echo "ISSUE: https://example.com/i/7 — Separator handling is untested"
+echo "DOC: plan.md — The parser plan"
+echo "DONE Landed the parser, wrote the plan up, and filed the gap separately."
+`
+
+func TestE2EBindingsCarryTheirRunID(t *testing.T) {
+	h := newHarness(t, producingAgent, map[string]string{
+		"plan.md": "---\nname: plan\nlabels: plan\nbind-docs: true\nvault-dir: Research\n---\nPlan {{TASK_TITLE}}\n",
+	})
+	ctx := context.Background()
+
+	created, err := h.queue.Create(ctx, wf.CreateInput{
+		Title:  "Add the parser",
+		Labels: []string{"plan"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := h.supervisor().RunOnce(ctx, "")
+	if err != nil {
+		t.Fatalf("RunOnce() error = %v", err)
+	}
+	if !result.Applied.Closed {
+		t.Fatalf("Applied = %+v, want closed", result.Applied)
+	}
+
+	rec := h.record(t, created.ID)
+	produced := rec.Produced(result.Run)
+	byKind := map[wf.Kind]wf.Binding{}
+	for _, b := range produced {
+		if b.Via != result.Run {
+			t.Fatalf("Produced returned a binding from another run: %+v", b)
+		}
+		byKind[b.Kind] = b
+	}
+	for _, kind := range []wf.Kind{wf.KindWorkspace, wf.KindSession, wf.KindPR, wf.KindIssue, wf.KindDoc} {
+		if _, ok := byKind[kind]; !ok {
+			t.Errorf("no %s binding tagged with run %s: %+v", kind, result.Run, produced)
+		}
+	}
+	if pr := byKind[wf.KindPR]; pr.Ref != "https://example.com/pr/42" {
+		t.Errorf("pr binding = %+v", pr)
+	}
+
+	// The document binding names where the file actually ended up, not where
+	// the agent wrote it inside a checkout that is now gone.
+	doc := byKind[wf.KindDoc]
+	if doc.Get(wf.MetaStore) != "vault" {
+		t.Errorf("doc binding = %+v, want it marked as living in the vault", doc)
+	}
+	if _, err := os.Stat(filepath.Join(h.vault, doc.Ref)); err != nil {
+		t.Errorf("doc binding does not point at the bound document: %v", err)
+	}
+
+	// The repo the run named is the task's own, not one run's output.
+	repo, ok := rec.Bindings.Current(wf.KindRepo)
+	if !ok || repo.Ref != "/code/app" {
+		t.Fatalf("repo binding = %+v", repo)
+	}
+	if repo.Via != "" {
+		t.Errorf("repo binding Via = %q, want the task's own", repo.Via)
+	}
+
+	// Publication to the tracker is unchanged: the same flat keys, still
+	// written, still what kata's own surfaces render.
+	meta, err := h.queue.GetMeta(ctx, created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta[wf.RepoKey] != "/code/app" {
+		t.Errorf("tracker repo metadata = %v", meta[wf.RepoKey])
+	}
+	if len(wf.PRsFromMeta(meta)) != 1 {
+		t.Errorf("tracker PR metadata = %v", meta[wf.PRsKey])
+	}
+	if len(wf.IssuesFromMeta(meta)) != 1 {
+		t.Errorf("tracker issue metadata = %v", meta[wf.IssuesKey])
+	}
+	if meta[wf.DocKey] == nil {
+		t.Error("tracker doc metadata was dropped")
 	}
 }

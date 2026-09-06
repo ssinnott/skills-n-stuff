@@ -96,7 +96,7 @@ export class WfQueueView extends ItemView {
         const box = this.body.createDiv({ cls: "pi-wf-error" });
         if (err instanceof WfError && err.missingBinary) {
             box.createEl("p", { text: err.message });
-            box.createEl("p", { text: "Set the wf binary path in pi-tasks settings." });
+            box.createEl("p", { text: "Set the wf binary path in this plugin's settings." });
             return;
         }
         box.createEl("p", { text: err instanceof Error ? err.message : String(err) });

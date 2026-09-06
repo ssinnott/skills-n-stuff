@@ -29,16 +29,28 @@ type Config struct {
 	WorkflowDir string `json:"workflowDir"`
 	// Vault is the Obsidian vault root that artifacts bind into.
 	Vault string `json:"vault"`
+	// NoteDir is where `wf note sync` creates a task note for a task that
+	// has none, relative to the vault root. Separate from a workflow's
+	// vault-dir because the two hold different things: produced documents
+	// land where the workflow that produced them says, while a task note
+	// is wf's own face for the task and belongs wherever the vault keeps
+	// those. Empty takes notesync's default; the fallback lives there
+	// rather than here because config cannot import it without a cycle.
+	NoteDir string `json:"noteDir"`
 	// Profiles maps workflow profile names to PI_CODING_AGENT_DIR paths.
 	Profiles map[string]string `json:"profiles"`
 	// DefaultProfile is used when a workflow names none.
 	DefaultProfile string `json:"defaultProfile"`
 	// DefaultModel is used when a workflow names none.
 	DefaultModel string `json:"defaultModel"`
-	// KataBin and PiBin override binaries that are often off PATH under a
-	// launchd or systemd unit.
+	// KataBin, PiBin and GhBin override binaries that are often off PATH
+	// under a launchd or systemd unit. GhBin is the GitHub CLI wf asks
+	// about pull request state; like the others its absence is a runtime
+	// failure, and one that degrades to "state unknown" rather than to a
+	// wrong answer.
 	KataBin string `json:"kataBin"`
 	PiBin   string `json:"piBin"`
+	GhBin   string `json:"ghBin"`
 	// DifitCommand is the review viewer, as a shell-style command line
 	// rather than a bare binary: the default is the two-word "npx difit"
 	// so a checkout with no global install still works. DIFIT_BIN
