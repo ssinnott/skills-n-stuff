@@ -22,8 +22,8 @@ row in the queue comes from `wf --json`, every action writes back through
 `wf`, and the plugin can be closed and reopened without losing anything.
 
 This includes a bound note's task block: opening the note, and dispatching
-its task, renders `wf show --json`'s `record` into the region between `%%
-wf:begin %%` and `%% wf:end %%` (see `src/taskblock.ts`). Everything outside
+its task, renders `wf show --json`'s single object into the region between
+`%% wf:begin %%` and `%% wf:end %%` (see `src/taskblock.ts`). Everything outside
 those two lines is the user's — the plugin never touches it — and the block
 itself can be deleted at any time; it comes back, unchanged, the next time
 the note is opened or its task runs again.

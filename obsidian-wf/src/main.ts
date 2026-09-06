@@ -31,7 +31,7 @@ import { WfQueueView, VIEW_TYPE_WF_QUEUE } from "./queue";
 import { KataFrameView, VIEW_TYPE_KATA_FRAME, KATA_ISSUE_KEY } from "./kataframe";
 import { DifitFrameView, VIEW_TYPE_DIFIT_FRAME } from "./difitframe";
 import { WfClient, WfError } from "./wf";
-import type { WfReview, WfRecord, WfTask } from "./wf";
+import type { WfReview, WfShow, WfTask } from "./wf";
 import { applyBlock } from "./taskblock";
 
 export interface WfSettings {
@@ -472,9 +472,9 @@ export default class WfPlugin extends Plugin {
      * stale block.
      */
     async refreshTaskBlock(file: TFile, ref: string): Promise<void> {
-        let record: WfRecord;
+        let shown: WfShow;
         try {
-            ({ record } = await this.wf().show(ref));
+            shown = await this.wf().show(ref);
         } catch (err) {
             console.warn(`wf: could not fetch task ${ref} for its note block`, err);
             return;
@@ -482,9 +482,9 @@ export default class WfPlugin extends Plugin {
 
         try {
             const current = await this.app.vault.read(file);
-            const next = applyBlock(current, record);
+            const next = applyBlock(current, shown);
             if (next === current) return;
-            await this.app.vault.process(file, (text) => applyBlock(text, record));
+            await this.app.vault.process(file, (text) => applyBlock(text, shown));
         } catch (err) {
             console.warn(`wf: could not render the task block for ${ref}`, err);
         }

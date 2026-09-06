@@ -29,7 +29,6 @@ export interface WfTask {
     lease?: WfLease;
     session?: string;
     cwd?: string;
-    runs?: number;
     /** Vault-relative path of the bound note, when there is one. */
     note?: string;
     needsHuman?: boolean;
@@ -74,32 +73,21 @@ export interface WfRun {
 }
 
 /**
- * wf's own task object: identity, runs, and the bindings no run produced.
- * Mirrors `jsonRecord` in output.go, under the `record` key of `wf show
- * --json` alongside `task`. This is what the Obsidian plugin renders into
- * a note's managed block (see taskblock.ts) — the tracker row (`task`)
- * still owns title, priority and state, and is never mirrored here.
+ * `wf show <ref> --json`: the task fields at the top level (mirrors
+ * `jsonTask` in wf's `cmd/wf/output.go`), plus the task's own bindings, its
+ * runs in chronological order (each with the bindings that run produced),
+ * and the ledger record's last-update time. There is no `task` / `record`
+ * wrapper — this is the whole response. This is what the Obsidian plugin
+ * renders into a note's managed block (see taskblock.ts).
  */
-export interface WfRecord {
-    id: string;
-    handle?: string;
-    title?: string;
-    queue?: string;
-    queueShortId?: string;
-    /** RFC3339 timestamp. */
-    created?: string;
-    /** RFC3339 timestamp — the clock the note block's ages are anchored to. */
-    updated?: string;
-    filed: boolean;
-    runs?: WfRun[];
+export type WfShow = WfTask & {
     /** The task's own bindings — the ones no run produced. */
     bindings?: WfBinding[];
-}
-
-export interface WfShowResult {
-    task: WfTask;
-    record: WfRecord;
-}
+    /** Chronological, oldest first. */
+    runs?: WfRun[];
+    /** RFC3339 timestamp — the clock the note block's ages are anchored to. */
+    updated?: string;
+};
 
 export interface WfRunResult {
     task: WfTask;
@@ -243,15 +231,14 @@ export class WfClient {
     }
 
     /**
-     * `wf show <ref> --json`, both halves: the tracker row (`task`) and
-     * wf's own record (`record`) the Obsidian plugin renders into a note's
-     * managed block. A task with no ledger record at all (never dispatched)
-     * still gets an empty one, rather than making every caller check.
+     * `wf show <ref> --json`: one object, the task's own fields plus its
+     * bindings, runs, and the ledger record's last-update time. The
+     * Obsidian plugin renders it straight into a note's managed block.
      */
-    async show(ref: string): Promise<WfShowResult> {
-        const out = await this.json<{ task?: WfTask; record?: WfRecord }>(["show", ref]);
-        if (!out.task) throw new WfError(`no task ${ref}`);
-        return { task: out.task, record: out.record ?? { id: "", filed: false } };
+    async show(ref: string): Promise<WfShow> {
+        const out = await this.json<Partial<WfShow>>(["show", ref]);
+        if (!out.id) throw new WfError(`no task ${ref}`);
+        return out as WfShow;
     }
 
     async workflows(): Promise<WfWorkflow[]> {

@@ -1,12 +1,13 @@
 /**
- * Renders a wf task record into the managed block of an Obsidian note.
+ * Renders a wf task (`wf show --json`'s single object) into the managed
+ * block of an Obsidian note.
  *
  * This is a port of wf's own `internal/note/taskblock` (Go), which rendered
  * this block before Stage 2 of DESIGN-slim.md moved rendering to whichever
  * surface displays it. Everything here is a pure string transform over the
- * `record` object `wf show --json` emits — no vault, no filesystem, no
- * Obsidian API — because the projection is the part worth pinning with
- * tests, and it needs none of those to be tested.
+ * object `wf show --json` emits — no vault, no filesystem, no Obsidian API
+ * — because the projection is the part worth pinning with tests, and it
+ * needs none of those to be tested.
  *
  * Two properties carry over from the Go version and are still load-bearing:
  *
@@ -14,12 +15,12 @@
  *     everything outside them is the human's. wf is a third writer into a
  *     file an agent and Obsidian also touch, so it owns a region rather
  *     than merging into prose it does not.
- *   - Nothing in the output moves unless the record moved. Ages are coarse
- *     ("12m ago") and anchored to the record's own `updated` time, not the
+ *   - Nothing in the output moves unless the task moved. Ages are coarse
+ *     ("12m ago") and anchored to the task's own `updated` time, not the
  *     wall clock, so re-rendering an unchanged task is byte-identical.
  */
 
-import type { WfBinding, WfRecord, WfRun } from "./wf";
+import type { WfBinding, WfRun, WfShow } from "./wf";
 
 /** Frontmatter field naming the bound wf task — the durable half of the join. */
 export const TASK_KEY = "wf-task";
@@ -36,7 +37,7 @@ const EMPTY_BLOCK = "_No runs or bindings yet._";
  * what this module owns: `applyBlock`'s replacement span is defined by
  * exactly these two lines.
  */
-export function renderBlock(record: WfRecord): string {
+export function renderBlock(record: WfShow): string {
     return [BEGIN_MARKER, ...blockLines(record), END_MARKER].join("\n");
 }
 
@@ -50,7 +51,7 @@ export function renderBlock(record: WfRecord): string {
  * through) is dropped before rendering: a wikilink to itself is a link
  * nobody can follow and a self-edge in the graph the design never wanted.
  */
-export function applyBlock(noteText: string, record: WfRecord): string {
+export function applyBlock(noteText: string, record: WfShow): string {
     let text = noteText;
     // An id-less record has no join to write. Stamping an empty field would
     // claim a binding that does not exist.
@@ -143,7 +144,7 @@ interface RunGroup {
     bindings: WfBinding[];
 }
 
-function blockLines(record: WfRecord): string[] {
+function blockLines(record: WfShow): string[] {
     const runs = record.runs ?? [];
     const bindings = allBindings(record);
     const anchor = renderAnchor(record, runs, bindings);
@@ -164,7 +165,7 @@ function blockLines(record: WfRecord): string[] {
 }
 
 /** Reconstructs the record's flat binding list from the two places `wf show --json` splits it across. */
-function allBindings(record: WfRecord): WfBinding[] {
+function allBindings(record: WfShow): WfBinding[] {
     const out = [...(record.bindings ?? [])];
     for (const run of record.runs ?? []) {
         out.push(...(run.bindings ?? []));
@@ -246,9 +247,7 @@ const KIND_ORDER: Record<string, number> = {
     task: 3,
     workspace: 4,
     session: 5,
-    review: 6,
-    repo: 7,
-    queue: 8,
+    repo: 6,
 };
 
 function kindRank(kind: string): number {
@@ -297,12 +296,6 @@ export function bindingSubject(b: WfBinding): string {
             return "worktree `" + baseName(b.ref) + "`";
         case "session":
             return "session `" + sessionName(b) + "`";
-        case "review":
-            return "review " + linkOrCode(b.ref, reviewText(b));
-        case "queue": {
-            const backend = b.meta?.backend;
-            return backend ? "queue " + linkOrCode(b.ref, backend + " " + b.ref) : "queue " + linkOrCode(b.ref, b.ref);
-        }
         case "repo":
             return "repo `" + b.ref + "`";
         case "task": {
@@ -361,14 +354,6 @@ function linkOrCode(ref: string, text: string): string {
     return "`" + text + "`";
 }
 
-function reviewText(b: WfBinding): string {
-    let text = b.label ?? "";
-    const port = b.meta?.port;
-    if (port) text = (text + " :" + port).trim();
-    if (!text) text = b.ref;
-    return text;
-}
-
 /** Prefers the runner's own session id: Ref holds a path, which is what reattaching uses and not what a reader needs to see. */
 function sessionName(b: WfBinding): string {
     const id = b.meta?.session_id;
@@ -407,11 +392,11 @@ function parseTime(s?: string): Date | null {
  * it moves every minute regardless. A record with no clock at all falls
  * back to the newest timestamp it carries; with none, ages are omitted.
  */
-function renderAnchor(record: WfRecord, runs: WfRun[], bindings: WfBinding[]): Date | null {
+function renderAnchor(record: WfShow, runs: WfRun[], bindings: WfBinding[]): Date | null {
     const updated = parseTime(record.updated);
     if (updated) return updated;
 
-    let newest = parseTime(record.created);
+    let newest: Date | null = null;
     const consider = (s?: string) => {
         const t = parseTime(s);
         if (t && (!newest || t.getTime() > newest.getTime())) newest = t;
@@ -446,7 +431,7 @@ function ageText(t: Date | null, anchor: Date | null): string {
  * identified the same way wf's `Bindings.Note()` does. Dropped before
  * rendering so a note never links to itself.
  */
-function dropOwnNote(record: WfRecord): WfRecord {
+function dropOwnNote(record: WfShow): WfShow {
     const bindings = record.bindings ?? [];
     let best: WfBinding | null = null;
     for (const b of bindings) {

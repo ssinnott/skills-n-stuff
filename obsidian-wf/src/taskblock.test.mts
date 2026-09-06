@@ -8,19 +8,22 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { applyBlock, bindingSubject, renderBlock } from "./taskblock.ts";
-import type { WfBinding, WfRecord } from "./wf.ts";
+import type { WfBinding, WfShow } from "./wf.ts";
 
 function ts(h: number, m: number): string {
     return `2026-03-04T${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:00Z`;
 }
 
+/** Minimal identity fields every fixture needs — the rest of WfTask is optional. */
+function baseTask(): WfShow {
+    return { id: "01M1S", shortId: "neck", title: "Add the parser", priority: 2 };
+}
+
 /** The design's own example: a first run that escalated after producing a plan, and a re-run that shipped a PR. */
-function twoRuns(): WfRecord {
+function twoRuns(): WfShow {
     return {
-        id: "01M1S",
+        ...baseTask(),
         updated: ts(12, 0),
-        created: ts(9, 0),
-        filed: false,
         runs: [
             {
                 id: "run-1",
@@ -84,7 +87,7 @@ const twoRunsWorkspace2: WfBinding = {
     host: "wf-laptop",
 };
 
-function twoRunsFull(): WfRecord {
+function twoRunsFull(): WfShow {
     const rec = twoRuns();
     rec.runs![0].bindings = [rec.bindings![0], twoRunsWorkspace1];
     rec.runs![1].bindings = [rec.bindings![1], twoRunsWorkspace2];
@@ -124,16 +127,15 @@ test("ages are anchored to the record's clock, not wall time", () => {
 });
 
 test("age is omitted without a clock", () => {
-    const rec: WfRecord = { id: "01M1S", filed: false, runs: [{ id: "run-1", workflow: "research" }] };
+    const rec: WfShow = { ...baseTask(), runs: [{ id: "run-1", workflow: "research" }] };
     const want = "%% wf:begin %%\n- **run 1** · research · running\n%% wf:end %%";
     assert.equal(renderBlock(rec), want);
 });
 
 test("dead bindings are shown with their state, never hidden", () => {
-    const rec: WfRecord = {
-        id: "01M1S",
+    const rec: WfShow = {
+        ...baseTask(),
         updated: ts(12, 0),
-        filed: false,
         runs: [
             {
                 id: "run-1",
@@ -183,10 +185,9 @@ test("dead bindings are shown with their state, never hidden", () => {
 });
 
 test("machine-local bindings carry their host, a vault doc never does", () => {
-    const rec: WfRecord = {
-        id: "01M1S",
+    const rec: WfShow = {
+        ...baseTask(),
         updated: ts(12, 0),
-        filed: false,
         bindings: [
             { kind: "workspace", ref: "/w/neck", state: "live", stateLabel: "live", at: ts(11, 0), host: "wf-laptop" },
             { kind: "doc", ref: "Research/plan.md", at: ts(11, 0) },
@@ -199,15 +200,13 @@ test("machine-local bindings carry their host, a vault doc never does", () => {
 });
 
 test("bindings with no run are the task's own, and lead", () => {
-    const rec: WfRecord = {
-        id: "01M1S",
+    const rec: WfShow = {
+        ...baseTask(),
         updated: ts(12, 0),
-        filed: false,
         runs: [{ id: "run-1", workflow: "plan-to-pr", started: ts(11, 0), bindings: [
             { kind: "workspace", ref: "/w/neck", state: "live", stateLabel: "live", at: ts(11, 0), via: "run-1", host: "wf-laptop" },
         ] }],
         bindings: [
-            { kind: "queue", ref: "01M1SQUEUE", at: ts(9, 0), meta: { backend: "kata" } },
             { kind: "repo", ref: "~/code/app", at: ts(9, 0), host: "wf-laptop" },
         ],
     };
@@ -216,7 +215,6 @@ test("bindings with no run are the task's own, and lead", () => {
         "%% wf:begin %%",
         "- **task**",
         "  - repo `~/code/app` *(wf-laptop)*",
-        "  - queue `kata 01M1SQUEUE`",
         "- **run 1** · plan-to-pr · running · 1h ago",
         "  - worktree `neck` — live *(wf-laptop)*",
         "%% wf:end %%",
@@ -226,10 +224,9 @@ test("bindings with no run are the task's own, and lead", () => {
 });
 
 test("bindings from an unknown run are not dropped", () => {
-    const rec: WfRecord = {
-        id: "01M1S",
+    const rec: WfShow = {
+        ...baseTask(),
         updated: ts(12, 0),
-        filed: false,
         bindings: [{ kind: "doc", ref: "Notes/found.md", at: ts(11, 0), via: "run-gone" }],
     };
 
@@ -240,7 +237,7 @@ test("bindings from an unknown run are not dropped", () => {
 
 test("an empty record says so", () => {
     const want = "%% wf:begin %%\n_No runs or bindings yet._\n%% wf:end %%";
-    assert.equal(renderBlock({ id: "01M1S", filed: false }), want);
+    assert.equal(renderBlock(baseTask()), want);
 });
 
 test("doc links", () => {
@@ -287,16 +284,6 @@ test("other kind subjects", () => {
             "session `neck-a1b2`",
         ],
         [
-            "review links its pane",
-            { kind: "review", ref: "http://localhost:4980", label: "difit", meta: { port: "4980" } },
-            "review [difit :4980](http://localhost:4980)",
-        ],
-        [
-            "queue names its backend",
-            { kind: "queue", ref: "01M1SQ9F2", meta: { backend: "kata" } },
-            "queue `kata 01M1SQ9F2`",
-        ],
-        [
             "a sibling task carries its relation and title",
             { kind: "task", ref: "01M1TB2", label: "Wire the parser into the CLI", meta: { relation: "next" } },
             "next task `01M1TB2` · Wire the parser into the CLI",
@@ -327,7 +314,7 @@ test("applyBlock appends below existing frontmatter", () => {
 });
 
 test("applyBlock replaces only the block", () => {
-    const first = applyBlock("---\nwf-task: 01M1S\n---\n# Add the parser\n\nMine.\n", { id: "01M1S", filed: false });
+    const first = applyBlock("---\nwf-task: 01M1S\n---\n# Add the parser\n\nMine.\n", baseTask());
     const got = applyBlock(first, twoRunsFull());
 
     assert.ok(!got.includes("_No runs or bindings yet._"));
@@ -389,7 +376,7 @@ test("applyBlock is idempotent across a range of note shapes", () => {
         "crlf note": "---\r\nstatus: draft\r\n---\r\n# T\r\n\r\nNotes.\r\n",
     };
 
-    for (const rec of [twoRunsFull(), { id: "01M1S", filed: false } as WfRecord, { id: "", filed: false } as WfRecord]) {
+    for (const rec of [twoRunsFull(), baseTask(), { ...baseTask(), id: "" }]) {
         for (const [name, note] of Object.entries(notes)) {
             const once = applyBlock(note, rec);
             const twice = applyBlock(once, rec);
@@ -399,7 +386,7 @@ test("applyBlock is idempotent across a range of note shapes", () => {
 });
 
 test("applyBlock without an id leaves frontmatter alone", () => {
-    const got = applyBlock("# Task\n", { id: "", filed: false });
+    const got = applyBlock("# Task\n", { ...baseTask(), id: "" });
     assert.ok(!got.includes("wf-task"));
     assert.ok(got.includes("_No runs or bindings yet._"));
 });
@@ -407,10 +394,9 @@ test("applyBlock without an id leaves frontmatter alone", () => {
 // Self-link suppression: the note's own bound document never becomes a
 // wikilink to itself, while a document some run produced still renders.
 test("applyBlock drops the note's own doc binding so it never links to itself", () => {
-    const rec: WfRecord = {
-        id: "01M1S",
+    const rec: WfShow = {
+        ...baseTask(),
         updated: ts(12, 0),
-        filed: false,
         bindings: [
             // The note's own binding to itself: no run produced it, and it
             // lives in the vault.
