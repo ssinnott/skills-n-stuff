@@ -6,7 +6,7 @@ A workflow CLI that runs agent work off a queue.
 worktree, runs a coding agent under a canned workflow, parses the agent's
 outcome verbs, and writes the results back as comments, links, and
 evidence-backed closes. Documents the agent produces land in your Obsidian
-vault, linked to the task in both directions.
+vault, and the plugin renders the task into the note it is bound to.
 
 The interactive agent session is a client of this CLI, not its host —
 restarting your TUI means nothing to running work.
@@ -41,7 +41,8 @@ wf gc [--delete]                                             # report ledger bin
 ```
 
 A `<ref>` is anything `kata show` accepts: the issue's ULID or its short id.
-`wf task list` is `kata list`.
+There is no listing command of wf's own beyond `ready` and `escalations`;
+run `kata list` directly for a full listing.
 
 Add `--json` to `ready`, `show`, `escalations`, `workflows`, `run` and
 `review` for machine-readable output. That is the protocol both clients
@@ -58,11 +59,22 @@ machine-local and lives in the local ledger, never on the tracker, so
 `ready`, `escalations` and `run --json` — which never load the ledger —
 leave both empty.
 
+`wf ready --json`:
+
 ```json
 { "tasks": [ { "id": "01M1S…", "shortId": "neck", "title": "Add the parser",
               "priority": 1, "workflow": "plan-to-pr",
               "lease": { "actor": "wf-laptop", "stale": false },
               "note": "Research/plan.md", "needsHuman": false } ] }
+```
+
+`wf show neck --json` — one object, no `tasks` wrapper, `session`/`cwd` filled
+in, and the two fields no other command emits:
+
+```json
+{ "id": "01M1S…", "shortId": "neck", "title": "Add the parser", "session": "~/.wf/sessions/neck.jsonl",
+  "bindings": [ { "kind": "repo", "ref": "app" }, { "kind": "doc", "ref": "Research/plan.md" } ],
+  "runs": [ { "id": "01M2X…", "workflow": "plan-to-pr", "outcome": "closed", "bindings": [ { "kind": "pr", "ref": "https://github.com/…/pull/9" } ] } ] }
 ```
 
 ## Config
@@ -92,7 +104,9 @@ the default itself is two words; `DIFIT_BIN` replaces the whole thing.
 
 **Upgrading.** The ledger is now keyed by the tracker's id. After upgrading
 run `wf migrate-ledger` once, or delete `~/.wf/tasks` if nothing in it
-matters; the pre-slim build is tagged in git history.
+matters; the pre-slim build is tagged in git history. `wf migrate-ledger` is
+hidden from `wf help` — it is a one-off tool, not part of the surface — and
+will be removed in the next release.
 
 ## Collecting the dead
 
@@ -146,28 +160,30 @@ default.
 
 ## How the pieces bind
 
-**Task ↔ session.** A session and the workspace it ran in are recorded in
-the local ledger (`~/.wf/tasks/<id>.json`) at spawn — before the agent
-produces anything, so a crashed or hung run is still attachable — and never
-on the tracker. `wf attach` reads the binding from the ledger and execs `pi
---session <path>`. A session is a fact about one machine: it is meaningless
-on another, so it is never published anywhere a second host would read it
-back from.
+A fact lives in exactly one place, and which place follows from what kind of
+fact it is.
 
-The runner is a value on the binding, not half of a key name: *which*
-runner produced a session is carried as data, so a second runner is a new
-value rather than a parallel set of keys.
+**Shareable facts** — the repo, PRs, filed issues, produced documents,
+`wf.state`, the lease, `work.attention` — live on the tracker as plain
+metadata keys. The run loop is what writes them, and nothing reads them back
+from anywhere but the tracker itself.
 
-**Task ↔ note.** The note's frontmatter carries `wf-task: <id>` — the durable
-half, since it survives a rename in Obsidian — alongside `kata-issue: <ULID>`
-naming the tracker row. `wf.doc: <path>` on the tracker is the other half of
-the binding, published once by `wf bind` or by a workflow with `bind-docs`.
-Nothing is mirrored: titles and status live in the tracker, prose lives in
-the note, and the only shared state is the id pair.
+**Machine-local facts** — a run's worktree checkout, its session file — live
+in the local ledger, one JSON record per task at `~/.wf/tasks/<ulid>.json`.
+They are written at spawn, before the agent produces anything, so a crashed
+or hung run is still attachable through `wf attach`. A binding like this is a
+fact about one host, and is never published anywhere a second host would
+read it back from — a binding recorded by another host is annotated with it
+and left alone.
 
-The Obsidian plugin renders the task's managed block — its runs and what each
-produced — from `wf show --json`, delimited by `%% wf:begin %%` and
-`%% wf:end %%`. Everything outside the block is yours and is never touched.
+**Task ↔ note.** The join is the id pair: the note's frontmatter carries
+`wf-task: <id>`, the durable half since it survives a rename in Obsidian,
+alongside `kata-issue: <ULID>` naming the tracker row; `wf.doc: <path>` on
+the tracker is the other half, written by `wf bind` or by a workflow with
+`bind-docs`. Nothing else is mirrored — titles and status live in the
+tracker, prose lives in the note — and the Obsidian plugin renders the
+task's managed block, its runs and what each produced, straight from `wf
+show --json`.
 
 **Agent ↔ tracker.** The seed prompt names the agent's issue, so it can read
 context and comment progress itself. But claim, close and lease transitions
@@ -310,7 +326,9 @@ Obsidian side because
 an embedded page cannot tell the host what you clicked; clicking a queue row
 opens the bound note and points the frame at the task. Renaming a bound note
 rewrites `wf.doc` through `wf bind`, so bindings survive a
-reorganization.
+reorganization. The plugin also owns the note's managed task block: it
+renders a bound note's runs and bindings straight from `wf show --json` on
+open, so wf itself never writes prose into your vault.
 
 ## Layout
 
@@ -318,11 +336,13 @@ reorganization.
 cmd/wf/                command dispatch
 internal/wf/           task model, outcome protocol, leases, sessions, apply
 internal/supervisor/   the dispatch loop
+internal/store/        the local ledger: runs and machine-local bindings
+internal/gc/           sweeps the ledger for dead local bindings
 internal/workflow/     canned workflows
 internal/kata/         kata queue backend (the only wire-format assumptions)
 internal/runner/       pi runner
 internal/workspace/    git worktrees
-internal/note/         Obsidian frontmatter binding
+internal/note/         frontmatter read/write only — the plugin renders the note
 internal/review/       target ladder, difit lifecycle, finding seeds
 internal/config/       settings
 workflows/             example workflows to copy into ~/.wf/workflows
@@ -331,3 +351,13 @@ workflows/             example workflows to copy into ~/.wf/workflows
 Leases and the work-state vocabulary live in `internal/wf`, deliberately
 above the backend interface: no tracker in scope implements either, so
 pushing them down would mean writing them once per adapter.
+
+## Design
+
+[DESIGN.md](DESIGN.md) says what wf is and where the seams sit — kata,
+pi, and git worktrees as the three adapters, and the non-goals that keep
+it a wrapper rather than a platform. [DESIGN-task.md](DESIGN-task.md) is
+superseded: it is where the local ledger came from, and it still holds the
+multi-host and re-run findings that justified keeping one. [DESIGN-slim.md](DESIGN-slim.md)
+is the plan that cut wf back down to size — what got deleted at each stage
+and why, and what the numbers looked like before and after.
