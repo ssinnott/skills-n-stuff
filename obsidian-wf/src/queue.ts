@@ -144,6 +144,11 @@ export class WfQueueView extends ItemView {
             dispatch.addEventListener("click", () => void this.dispatch(task.shortId));
         }
 
+        // Review is a separate action from Dispatch: it looks at what a run
+        // already produced rather than starting one.
+        const review = actions.createEl("button", { text: "Review" });
+        review.addEventListener("click", () => void this.plugin.reviewTask(task.shortId));
+
         if (task.session) {
             const attach = actions.createEl("button", { text: "Copy attach" });
             attach.addEventListener("click", () => {

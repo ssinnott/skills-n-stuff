@@ -28,8 +28,9 @@ import {
 
 import { WfQueueView, VIEW_TYPE_WF_QUEUE } from "./queue";
 import { KataFrameView, VIEW_TYPE_KATA_FRAME, KATA_ISSUE_KEY } from "./kataframe";
-import { WfClient } from "./wf";
-import type { WfTask } from "./wf";
+import { DifitFrameView, VIEW_TYPE_DIFIT_FRAME } from "./difitframe";
+import { WfClient, WfError } from "./wf";
+import type { WfReview, WfTask } from "./wf";
 
 export interface WfSettings {
     /** Path to the wf binary, which fronts the agent work queue. */
@@ -92,6 +93,11 @@ export default class WfPlugin extends Plugin {
             (leaf: WorkspaceLeaf) => new KataFrameView(leaf, this),
         );
 
+        this.registerView(
+            VIEW_TYPE_DIFIT_FRAME,
+            (leaf: WorkspaceLeaf) => new DifitFrameView(leaf, this),
+        );
+
         this.addRibbonIcon("list-ordered", "Open agent queue", () => void this.openQueue());
 
         // A note that moves must not leave the tracker pointing at its old
@@ -140,6 +146,12 @@ export default class WfPlugin extends Plugin {
             name: "Dispatch the next ready task",
             callback: () => void this.dispatchNext(),
         });
+
+        this.addCommand({
+            id: "review-note-task",
+            name: "Review this note's task",
+            callback: () => void this.reviewNoteTask(),
+        });
     }
 
     /**
@@ -167,6 +179,60 @@ export default class WfPlugin extends Plugin {
     async showTaskInFrame(ref: string): Promise<void> {
         const view = await this.openKataFrame();
         await view?.openTask(ref);
+    }
+
+    async openDifitFrame(): Promise<DifitFrameView | null> {
+        const leaf = await this.revealView(VIEW_TYPE_DIFIT_FRAME, "right");
+        const view = leaf?.view;
+        return view instanceof DifitFrameView ? view : null;
+    }
+
+    /**
+     * Start review for a task and route the result: a document isn't a diff,
+     * so it opens in the vault like any other note, never in the difit
+     * frame; everything else reveals the difit pane pointed at wf's session.
+     * Kept in one place because both the command and the queue row's Review
+     * button need exactly this routing.
+     */
+    async reviewTask(ref: string): Promise<void> {
+        let review: WfReview;
+        try {
+            review = await this.wf().review(ref);
+        } catch (err) {
+            this.notifyWfError(err);
+            return;
+        }
+
+        if (review.seeded) {
+            new Notice(`${review.seeded} agent finding${review.seeded === 1 ? "" : "s"} seeded`);
+        }
+
+        if (review.kind === "doc") {
+            await this.openVaultPath(review.note);
+            return;
+        }
+
+        const view = await this.openDifitFrame();
+        await view?.openReview(review);
+    }
+
+    private async reviewNoteTask(): Promise<void> {
+        const file = this.app.workspace.getActiveFile();
+        const ref = file ? this.boundTask(file) : null;
+        if (!ref) {
+            new Notice("This note is not bound to a task.");
+            return;
+        }
+        await this.reviewTask(ref);
+    }
+
+    /** Same missing-binary guidance the queue pane gives, as a one-shot Notice. */
+    private notifyWfError(err: unknown): void {
+        if (err instanceof WfError && err.missingBinary) {
+            new Notice(`${err.message}. Set the wf binary path in wf Agent Queue settings.`, 8000);
+            return;
+        }
+        new Notice(err instanceof Error ? err.message : String(err), 8000);
     }
 
     async openVaultPath(path: string): Promise<void> {

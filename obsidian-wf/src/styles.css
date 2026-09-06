@@ -139,3 +139,68 @@
     border: none;
     display: flex;
 }
+
+/* --- framed difit UI ----------------------------------------------------- */
+
+.pi-difit-frame .view-content {
+    display: flex;
+    flex-direction: column;
+    padding: 0;
+}
+
+.pi-difit-frame-bar {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--background-modifier-border);
+    font-size: var(--font-ui-smaller);
+}
+
+.pi-difit-frame-ref {
+    font-family: var(--font-monospace);
+}
+
+.pi-difit-frame-status {
+    color: var(--text-muted);
+    margin-left: auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.pi-difit-frame-host {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+}
+
+.pi-difit-frame-view {
+    width: 100%;
+    height: 100%;
+    border: none;
+    display: flex;
+}
+
+/* An author `display` beats the UA's [hidden] rule, so hiding the frame
+   while the empty state shows needs saying explicitly — otherwise a blank
+   white frame sits behind the message. */
+.pi-difit-frame-view[hidden] {
+    display: none;
+}
+
+/* Shown instead of a bare, src-less frame when nothing is under review. */
+.pi-difit-frame-empty {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    text-align: center;
+    color: var(--text-muted);
+}
+
+.pi-difit-frame-empty[hidden] {
+    display: none;
+}

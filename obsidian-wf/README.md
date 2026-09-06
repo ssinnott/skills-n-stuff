@@ -1,12 +1,15 @@
 # wf Agent Queue
 
 An Obsidian plugin that fronts the [wf](../wf) agent work queue: a queue
-pane listing what is ready and what needs you, and a framed pane showing
-[kata](https://www.katatracker.com)'s own UI for the task under point.
-Dispatching a task runs a wf workflow — a canned recipe naming a pi profile,
-a model, a prompt, and resources — against the tracker; artifacts the run
-produces (documents, pull requests, issues) land back on the task and, for
-documents, in this vault.
+pane listing what is ready and what needs you, a framed pane showing
+[kata](https://www.katatracker.com)'s own UI for the task under point, and a
+framed pane showing [difit](https://github.com/yoshiko-pg/difit)'s diff
+review UI for the task under review. Dispatching a task runs a wf workflow —
+a canned recipe naming a pi profile, a model, a prompt, and resources —
+against the tracker; artifacts the run produces (documents, pull requests,
+issues) land back on the task and, for documents, in this vault. Reviewing a
+task hands the diff to difit — with any agent findings wf already seeded as
+comments — so the loop is a handoff, not just a viewer.
 
 Deliberately separate from
 [obsidian-pi-tasks](../obsidian-pi-tasks): that plugin binds pi sessions to
@@ -31,6 +34,10 @@ row in the queue comes from `wf --json`, every action writes back through
   [`wf/README.md`](../wf/README.md).
 - **kata** running (`kata mcp serve`, or however you run its daemon) — wf
   talks to it as the queue backend, and the framed pane embeds its web UI.
+- **difit** reachable by whatever command wf is configured to run it with
+  (e.g. `npx difit`) — wf starts it per review and reports back the URL;
+  this plugin only frames whatever URL it is given. That command lives in
+  wf's own config, not this plugin's settings.
 - Everything wf itself needs to actually run a workflow — pi on PATH, pi
   profiles configured, a git remote if workflows open pull requests — lives
   in wf's own prerequisites, not this plugin's.
@@ -68,6 +75,13 @@ place.)
    frontmatter line and dispatching that task shows its progress in the
    kata pane whenever the note is open (if **auto-open** is on) or via
    **Show this note's task in the kata pane**.
+5. Once a task has something to look at, a row's **Review** button (or
+   **Review this note's task**) runs `wf review`. For a PR, worktree, or
+   branch this opens the difit pane pointed at wf's session; for a task
+   whose review target is a document, the note opens instead — a document
+   isn't a diff. Read the comments off, then use difit's own **Copy All
+   Prompt** and paste it into the task's session tab; **Stop** in the difit
+   pane's toolbar ends wf's difit process when you're done.
 
 ## Commands
 
@@ -79,6 +93,9 @@ place.)
   the note's `kata-issue` frontmatter.
 - **Dispatch the next ready task** — run `wf run` once and report what
   happened (closed, or escalated with its reason).
+- **Review this note's task** — run `wf review` for the active note's bound
+  task: opens the difit pane on a diff, or the note itself when the review
+  target is a document.
 
 ## Settings
 
@@ -115,6 +132,27 @@ at the cost of one thing an embedded page cannot do: tell Obsidian what
 you clicked inside it. That is why selection lives in the queue pane, not
 the frame — clicking a row in the queue pane is what points the frame at a
 task, and opening a bound note is what points it via the id pair above.
+
+The same argument, and the same shape of pane, covers difit: a diff-review
+web app is not something worth rebuilding inside a plugin. Both framed panes
+share their mechanics (`src/frame.ts`) and differ only in what points them
+and how: the kata pane follows whatever note you're reading, because
+watching a task's progress ambiently is the point of it; the difit pane
+never does, because review is a deliberate act you start (a queue row's
+**Review** button, or a command) — you would not want the pane to jump to a
+different diff just because you opened a different note.
+
+difit is a sharper case of "an embedded page cannot tell Obsidian what you
+clicked" than kata is: kata at least has a queue this plugin can re-poll for
+task state, but difit's line comments live only in the embedded page's own
+browser localStorage, and difit exposes no API to read them back (`/api/diff`
+exists; there is no `/api/comments`). So this plugin does not poll for
+comments — there is nothing to poll — and never will. The loop is, and is
+meant to stay, a clipboard action: difit's own **Copy All Prompt** button,
+pasted into the task's session tab by hand. That is not a workaround; it is
+the actual handoff this feature exists to make convenient — wf pre-seeding
+agent findings as comments turns that same clipboard trip into a review of
+what an agent already flagged, rather than a blank diff.
 
 ## How it fits together
 
