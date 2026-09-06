@@ -327,13 +327,12 @@ views of individual bindings: the queue pane lists tasks and opens their
 notes, the kata frame shows the `queue` binding's discussion, difit shows
 whatever `wf review` resolved.
 
-**The plugins converge.** obsidian-wf and obsidian-pi-tasks are separate
-today for two stated reasons — different sources of truth (a document's
-checkbox lines versus kata's ledger) and different dependency lists — and
-the task object removes both. Worked out in
-[obsidian-wf/DESIGN-tasks.md](../obsidian-wf/DESIGN-tasks.md): pi-tasks
-drops its vendored agent console, keeps its document layer and its board,
-and the board projects wf tasks. The task note above is what it renders.
+**obsidian-wf is the only plugin.** obsidian-pi-tasks — the first attempt
+at this idea, with the task hung off a pi session instead of standing on
+its own — has been deleted, and what it proved is harvested in
+[obsidian-wf/DESIGN-tasks.md](../obsidian-wf/DESIGN-tasks.md). obsidian-wf
+takes over its board and its document layer, written against `wf --json`
+rather than ported. The task note above is what it renders.
 
 ## Non-goals
 

@@ -268,9 +268,8 @@ task's agent session via pi's own session replacement. The extension holds no
 orchestration logic; it shells out to `wf` and renders the JSON.
 
 **Obsidian** — [`obsidian-wf`](../obsidian-wf) adds an agent queue pane and a
-framed kata UI, deliberately separate from `obsidian-pi-tasks` (that plugin
-binds pi sessions to documents; this one binds agent runs to tracker issues,
-and needs only the `wf` binary). Selection lives on the Obsidian side because
+framed kata UI, and needs only the `wf` binary. Selection lives on the
+Obsidian side because
 an embedded page cannot tell the host what you clicked; clicking a queue row
 opens the bound note and points the frame at the task. Renaming a bound note
 rewrites `obsidian.note` through `wf bind`, so bindings survive a
