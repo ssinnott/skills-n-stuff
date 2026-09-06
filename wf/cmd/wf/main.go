@@ -35,13 +35,16 @@ const usage = `wf — workflow CLI over pluggable queues
   wf attach <ref>              open the task's pi session
   wf bind <ref> <note.md>      bind a task to an Obsidian note, both ways
   wf ui <ref>                  print the web UI deep link for a task
+  wf review <ref>              resolve the task's diff and open it in difit
+  wf review <ref> --stop       stop the running viewer
+  wf review comment <ref>      read a pasted review prompt from stdin
 
-Add --json to ready, show, escalations, workflows and run for
+Add --json to ready, show, escalations, workflows, run and review for
 machine-readable output; that is the protocol both the pi extension and the
 Obsidian plugin speak.
 
-Config: ~/.wf/config.json (override with --config). KATA_BIN and PI_BIN
-override binaries that are off PATH.`
+Config: ~/.wf/config.json (override with --config). KATA_BIN, PI_BIN and
+DIFIT_BIN override binaries that are off PATH.`
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -71,6 +74,9 @@ func newApp(args []string) (*app, error) {
 	}
 	if v := os.Getenv("PI_BIN"); v != "" {
 		cfg.PiBin = v
+	}
+	if v := os.Getenv("DIFIT_BIN"); v != "" {
+		cfg.DifitCommand = v
 	}
 
 	cwd, err := os.Getwd()
@@ -119,6 +125,8 @@ func run(ctx context.Context, argv []string) (int, error) {
 		return a.cmdBind(ctx, rest)
 	case "ui":
 		return a.cmdUI(ctx, rest)
+	case "review":
+		return a.cmdReview(ctx, rest)
 	default:
 		return 1, fmt.Errorf("unknown command: %s\n\n%s", cmd, usage)
 	}
@@ -440,7 +448,7 @@ func (a *app) summary(t wf.Task) string {
 // flag values without a full flag parser.
 var knownFlags = map[string]bool{
 	"--limit": true, "--max": true, "--repo": true, "--ref": true, "--config": true,
-	"--vault": true,
+	"--vault": true, "--pr": true, "--format": true,
 }
 
 func flagValue(args []string, flag string) string {

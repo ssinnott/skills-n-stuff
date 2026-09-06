@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -171,6 +172,69 @@ func TestApplyEscalatesDoneWithoutEvidence(t *testing.T) {
 				t.Errorf("the escalation should say why: %v", q.comments)
 			}
 		})
+	}
+}
+
+func TestApplyRecordsReportedRepo(t *testing.T) {
+	q := newFakeQueue()
+	transcript := "REPO: /src/app\nPR: https://a/1 — Add it\nDONE Shipped\n"
+
+	if _, err := Apply(context.Background(), q, task(), ParseOutcomes(transcript), ApplyOptions{Transcript: transcript}); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	if q.meta[RepoKey] != "/src/app" {
+		t.Errorf("repo metadata = %v, want the reported repo", q.meta[RepoKey])
+	}
+}
+
+func TestApplyRecordsRunFactsEvenWhenEscalated(t *testing.T) {
+	// An escalated run that still opened a PR or named its repo must not
+	// lose that trace — those are exactly the runs `wf review` needs to
+	// find later.
+	q := newFakeQueue()
+	transcript := "REPO: /src/app\nPR: https://a/1 — Opened a PR\n" // no DONE: escalates
+
+	got, err := Apply(context.Background(), q, task(), ParseOutcomes(transcript), ApplyOptions{Transcript: transcript})
+	if err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	if !got.Escalated {
+		t.Fatalf("Apply() = %+v, want escalated", got)
+	}
+	if q.meta[RepoKey] != "/src/app" {
+		t.Errorf("repo metadata = %v, want it recorded despite escalation", q.meta[RepoKey])
+	}
+	if prs := PRsFromMeta(q.meta); len(prs) != 1 || prs[0] != "https://a/1" {
+		t.Errorf("PRsFromMeta() = %v, want the reported PR despite escalation", prs)
+	}
+}
+
+func TestApplyRecordsPRsAndFiledIssues(t *testing.T) {
+	q := newFakeQueue()
+	transcript := "PR: https://a/1 — First\nPR: https://a/2 — Second\n" +
+		"ISSUE: https://a/i1 — internal/foo.go:42 nil check\nDONE Shipped\n"
+
+	if _, err := Apply(context.Background(), q, task(), ParseOutcomes(transcript), ApplyOptions{Transcript: transcript}); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+
+	if prs := PRsFromMeta(q.meta); !reflect.DeepEqual(prs, []string{"https://a/1", "https://a/2"}) {
+		t.Errorf("PRsFromMeta() = %v", prs)
+	}
+	issues := IssuesFromMeta(q.meta)
+	if len(issues) != 1 || issues[0].URL != "https://a/i1" || issues[0].Title != "internal/foo.go:42 nil check" {
+		t.Errorf("IssuesFromMeta() = %+v", issues)
+	}
+}
+
+func TestPRsAndIssuesFromMetaTolerance(t *testing.T) {
+	for _, value := range []any{nil, "", "not json", 42} {
+		if got := PRsFromMeta(map[string]any{PRsKey: value}); len(got) != 0 {
+			t.Errorf("PRsFromMeta(%#v) = %v, want empty", value, got)
+		}
+		if got := IssuesFromMeta(map[string]any{IssuesKey: value}); len(got) != 0 {
+			t.Errorf("IssuesFromMeta(%#v) = %v, want empty", value, got)
+		}
 	}
 }
 

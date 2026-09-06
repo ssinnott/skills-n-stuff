@@ -18,6 +18,8 @@
 import {
     App,
     FuzzySuggestModal,
+    MarkdownView,
+    Modal,
     Notice,
     Plugin,
     PluginSettingTab,
@@ -28,8 +30,9 @@ import {
 
 import { WfQueueView, VIEW_TYPE_WF_QUEUE } from "./queue";
 import { KataFrameView, VIEW_TYPE_KATA_FRAME, KATA_ISSUE_KEY } from "./kataframe";
-import { WfClient } from "./wf";
-import type { WfTask } from "./wf";
+import { DifitFrameView, VIEW_TYPE_DIFIT_FRAME } from "./difitframe";
+import { WfClient, WfError } from "./wf";
+import type { WfReview, WfTask } from "./wf";
 
 export interface WfSettings {
     /** Path to the wf binary, which fronts the agent work queue. */
@@ -75,6 +78,66 @@ class TaskSuggestModal extends FuzzySuggestModal<WfTask> {
     }
 }
 
+/** Loose enough to match GitHub Enterprise hosts too, not just github.com. */
+const PR_URL_RE = /https?:\/\/\S*\/pull\/\d+\S*/;
+
+/**
+ * Obsidian has no built-in text-prompt API, so "Review a pull request…"
+ * needs its own small Modal — same shape as obsidian-pi-tasks' NewTaskModal
+ * (a Setting+addText, Enter submits, autofocus), not a new pattern.
+ */
+class PRUrlModal extends Modal {
+    private url: string;
+    private onSubmit: (url: string) => void;
+
+    constructor(app: App, prefill: string | null, onSubmit: (url: string) => void) {
+        super(app);
+        this.url = prefill ?? "";
+        this.onSubmit = onSubmit;
+    }
+
+    onOpen(): void {
+        this.titleEl.setText("Review a pull request");
+
+        const submit = () => {
+            const trimmed = this.url.trim();
+            if (!trimmed) return;
+            this.close();
+            this.onSubmit(trimmed);
+        };
+
+        new Setting(this.contentEl)
+            .setName("Pull request URL")
+            .addText((t) => {
+                t.setValue(this.url)
+                    .setPlaceholder("https://github.com/org/repo/pull/123")
+                    .onChange((v) => {
+                        this.url = v;
+                    });
+                t.inputEl.style.width = "100%";
+                t.inputEl.addEventListener("keydown", (e) => {
+                    if (e.key === "Enter") {
+                        e.preventDefault();
+                        submit();
+                    }
+                });
+                // Prefilled from a detected link, so select-all lets a
+                // pasted replacement overwrite it in one keystroke.
+                window.setTimeout(() => {
+                    t.inputEl.focus();
+                    t.inputEl.select();
+                }, 0);
+            });
+
+        new Setting(this.contentEl)
+            .addButton((b) => b.setButtonText("Review").setCta().onClick(submit));
+    }
+
+    onClose(): void {
+        this.contentEl.empty();
+    }
+}
+
 export default class WfPlugin extends Plugin {
     settings: WfSettings = DEFAULT_SETTINGS;
 
@@ -90,6 +153,11 @@ export default class WfPlugin extends Plugin {
         this.registerView(
             VIEW_TYPE_KATA_FRAME,
             (leaf: WorkspaceLeaf) => new KataFrameView(leaf, this),
+        );
+
+        this.registerView(
+            VIEW_TYPE_DIFIT_FRAME,
+            (leaf: WorkspaceLeaf) => new DifitFrameView(leaf, this),
         );
 
         this.addRibbonIcon("list-ordered", "Open agent queue", () => void this.openQueue());
@@ -140,6 +208,24 @@ export default class WfPlugin extends Plugin {
             name: "Dispatch the next ready task",
             callback: () => void this.dispatchNext(),
         });
+
+        this.addCommand({
+            id: "review-note-task",
+            name: "Review this note's task",
+            callback: () => void this.reviewNoteTask(),
+        });
+
+        this.addCommand({
+            id: "review-pull-request",
+            name: "Review a pull request…",
+            callback: () => void this.reviewPullRequestCommand(),
+        });
+
+        this.addCommand({
+            id: "save-review-comments",
+            name: "Save review comments to the task",
+            callback: () => void this.saveReviewComments(),
+        });
     }
 
     /**
@@ -167,6 +253,117 @@ export default class WfPlugin extends Plugin {
     async showTaskInFrame(ref: string): Promise<void> {
         const view = await this.openKataFrame();
         await view?.openTask(ref);
+    }
+
+    async openDifitFrame(): Promise<DifitFrameView | null> {
+        const leaf = await this.revealView(VIEW_TYPE_DIFIT_FRAME, "right");
+        const view = leaf?.view;
+        return view instanceof DifitFrameView ? view : null;
+    }
+
+    /**
+     * Start review for a task and route the result. Kept in one place
+     * because both the command and the queue row's Review button need
+     * exactly this call-then-route sequence; only the "how do I get a ref"
+     * step differs between callers.
+     */
+    async reviewTask(ref: string): Promise<void> {
+        let review: WfReview;
+        try {
+            review = await this.wf().review(ref);
+        } catch (err) {
+            this.notifyWfError(err);
+            return;
+        }
+        await this.routeReview(review);
+    }
+
+    /**
+     * The ad-hoc counterpart to reviewTask: a PR you opened yourself, or one
+     * predating the queue, has no task to review through. Same routing once
+     * wf has answered — the two entry points only differ in how they ask.
+     */
+    async reviewPR(url: string): Promise<void> {
+        let review: WfReview;
+        try {
+            review = await this.wf().reviewPR(url);
+        } catch (err) {
+            this.notifyWfError(err);
+            return;
+        }
+        await this.routeReview(review);
+    }
+
+    /**
+     * Where a review result goes once wf has answered: a document isn't a
+     * diff, so it opens in the vault like any other note, never in the
+     * difit frame; everything else reveals the difit pane pointed at wf's
+     * session. Shared by reviewTask and reviewPR so the routing exists once.
+     */
+    private async routeReview(review: WfReview): Promise<void> {
+        if (review.seeded) {
+            new Notice(`${review.seeded} agent finding${review.seeded === 1 ? "" : "s"} seeded`);
+        }
+
+        if (review.kind === "doc") {
+            await this.openVaultPath(review.note);
+            return;
+        }
+
+        const view = await this.openDifitFrame();
+        await view?.openReview(review);
+    }
+
+    private async reviewNoteTask(): Promise<void> {
+        const file = this.app.workspace.getActiveFile();
+        const ref = file ? this.boundTask(file) : null;
+        if (!ref) {
+            new Notice("This note is not bound to a task.");
+            return;
+        }
+        await this.reviewTask(ref);
+    }
+
+    /**
+     * Source a PR URL from wherever the user's attention already is (a link
+     * on the current line or selection) before falling back to asking, so
+     * the common case — cursor sitting on a PR link — is one keystroke.
+     */
+    private async reviewPullRequestCommand(): Promise<void> {
+        new PRUrlModal(this.app, this.detectPRUrl(), (url) => void this.reviewPR(url)).open();
+    }
+
+    /** A PR link under the selection, or on the cursor's line, if any. */
+    private detectPRUrl(): string | null {
+        const editor = this.app.workspace.getActiveViewOfType(MarkdownView)?.editor;
+        if (!editor) return null;
+        const text = editor.getSelection() || editor.getLine(editor.getCursor().line);
+        return text.match(PR_URL_RE)?.[0] ?? null;
+    }
+
+    /** The open difit pane, if there is one — commands that act on it (Save
+     * review comments) should not conjure one into existence just to fail. */
+    private difitView(): DifitFrameView | null {
+        const leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE_DIFIT_FRAME)[0];
+        return leaf?.view instanceof DifitFrameView ? leaf.view : null;
+    }
+
+    private async saveReviewComments(): Promise<void> {
+        const view = this.difitView();
+        if (!view) {
+            new Notice("Open the review pane first — there's nothing to harvest from.");
+            return;
+        }
+        await view.saveCommentsCommand();
+    }
+
+    /** Same missing-binary guidance the queue pane gives, as a one-shot Notice. */
+    private notifyWfError(err: unknown): void {
+        if (err instanceof WfError && err.missingBinary) {
+            new Notice(`${err.message}. Set the wf binary path in wf Agent Queue settings.`, 8000);
+            return;
+        }
+        new Notice(err instanceof Error ? err.message : String(err), 8000);
     }
 
     async openVaultPath(path: string): Promise<void> {

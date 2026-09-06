@@ -2,6 +2,7 @@ package wf
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -23,7 +24,123 @@ const (
 	// escalation queue is a plain list query in every tracker surface
 	// rather than something only wf can see.
 	AttentionKey = "work.attention"
+	// RepoKey records the repo a REPO: outcome named. Without it a closed
+	// task carries which PR shipped but not which checkout it shipped
+	// from, which is what `wf review` needs once the worktree that ran
+	// the agent has been disposed.
+	RepoKey = "wf.repo"
+	// PRsKey records PR: outcomes as a JSON array of URLs. kata's own
+	// evidence trail is write-only from wf's side — Close turns these into
+	// repeated `--evidence pr:<url>` flags, but NormalizeIssue never reads
+	// an evidence field back, and kata's wire format here is undocumented
+	// (see DESIGN.md's standing risk). Recording the URLs as wf's own
+	// metadata, the same way RepoKey does, is what lets a task be resolved
+	// straight to its PR later without guessing at that format.
+	PRsKey = "wf.pr"
+	// IssuesKey records ISSUE: outcomes as JSON, so a `wf review` running
+	// long after the agent's process has exited can still turn anchored
+	// findings into review comments — the transcript they came from does
+	// not survive past that process.
+	IssuesKey = "wf.issue"
 )
+
+// IssueRecord is the persisted shape of one ISSUE: outcome — a URL and a
+// title, exactly what the outcome protocol carries for it and no more.
+type IssueRecord struct {
+	URL   string `json:"url"`
+	Title string `json:"title"`
+}
+
+// PRsFromMeta reads recorded PR urls, if any. Garbage or absent metadata
+// reads as empty rather than failing: like HistoryFromMeta, this is a
+// convenience read, not a lifecycle input.
+func PRsFromMeta(meta map[string]any) []string {
+	data, ok := metaJSONBytes(meta[PRsKey])
+	if !ok {
+		return nil
+	}
+	var out []string
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil
+	}
+	return out
+}
+
+// IssuesFromMeta reads recorded ISSUE outcomes, if any.
+func IssuesFromMeta(meta map[string]any) []IssueRecord {
+	data, ok := metaJSONBytes(meta[IssuesKey])
+	if !ok {
+		return nil
+	}
+	var out []IssueRecord
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil
+	}
+	return out
+}
+
+// metaJSONBytes normalizes a metadata value into JSON bytes, whether the
+// backend handed it back as an already-decoded string or re-marshaled it
+// into some other JSON type.
+func metaJSONBytes(raw any) ([]byte, bool) {
+	if raw == nil {
+		return nil, false
+	}
+	if s, ok := raw.(string); ok {
+		return []byte(s), true
+	}
+	b, err := json.Marshal(raw)
+	if err != nil {
+		return nil, false
+	}
+	return b, true
+}
+
+// recordRunFacts persists what a run reported about itself — repo, PRs,
+// filed issues — regardless of how the run settles. Recording these only on
+// a clean close would lose exactly the runs `wf review` most needs to find:
+// an escalated run that still opened a PR, or named its checkout, leaves
+// that trace right here rather than nowhere.
+func recordRunFacts(ctx context.Context, q Queue, task Task, outcomes []Outcome) error {
+	if repo := ReportedRepo(outcomes); repo != "" {
+		if err := q.SetMeta(ctx, task.ID, RepoKey, repo, SetMetaOptions{}); err != nil {
+			return fmt.Errorf("record repo on %s: %w", task.ShortID, err)
+		}
+	}
+
+	var prs []string
+	for _, o := range outcomes {
+		if o.Verb == VerbPR {
+			prs = appendUnique(prs, o.URL)
+		}
+	}
+	if len(prs) > 0 {
+		encoded, err := json.Marshal(prs)
+		if err != nil {
+			return fmt.Errorf("encode PR urls for %s: %w", task.ShortID, err)
+		}
+		if err := q.SetMeta(ctx, task.ID, PRsKey, string(encoded), SetMetaOptions{JSON: true}); err != nil {
+			return fmt.Errorf("record PR urls on %s: %w", task.ShortID, err)
+		}
+	}
+
+	issues, _ := Spawned(outcomes)
+	if len(issues) > 0 {
+		records := make([]IssueRecord, 0, len(issues))
+		for _, o := range issues {
+			records = append(records, IssueRecord{URL: o.URL, Title: o.Title})
+		}
+		encoded, err := json.Marshal(records)
+		if err != nil {
+			return fmt.Errorf("encode filed issues for %s: %w", task.ShortID, err)
+		}
+		if err := q.SetMeta(ctx, task.ID, IssuesKey, string(encoded), SetMetaOptions{JSON: true}); err != nil {
+			return fmt.Errorf("record filed issues on %s: %w", task.ShortID, err)
+		}
+	}
+
+	return nil
+}
 
 // ApplyResult reports what a run's outcomes did to the task.
 type ApplyResult struct {
@@ -93,6 +210,10 @@ func Apply(
 	outcomes []Outcome,
 	opts ApplyOptions,
 ) (ApplyResult, error) {
+	if err := recordRunFacts(ctx, q, task, outcomes); err != nil {
+		return ApplyResult{}, err
+	}
+
 	if len(outcomes) == 0 {
 		return Escalate(ctx, q, task, "the run reported no outcomes", opts.Transcript)
 	}

@@ -152,6 +152,21 @@ func TestProviderRequiresConfiguration(t *testing.T) {
 	}
 }
 
+func TestBranchExists(t *testing.T) {
+	repo := initRepo(t)
+	ctx := context.Background()
+
+	if BranchExists(ctx, "git", repo, "no-such-branch") {
+		t.Error("BranchExists() = true for a branch that was never created")
+	}
+	if _, err := runGit(ctx, "git", repo, "branch", "wf/task-1"); err != nil {
+		t.Fatal(err)
+	}
+	if !BranchExists(ctx, "git", repo, "wf/task-1") {
+		t.Error("BranchExists() = false for a branch that exists")
+	}
+}
+
 func TestIsRepo(t *testing.T) {
 	if !IsRepo(context.Background(), "git", initRepo(t)) {
 		t.Error("IsRepo() = false for a real repository")

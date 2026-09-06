@@ -7,15 +7,14 @@
  * what you clicked in there. Everything that drives the frame therefore
  * originates here: the queue pane, the active note's binding, or a command.
  *
- * Rendering prefers Electron's <webview> over <iframe>. A webview is a
- * separate top-level browsing context, so X-Frame-Options and
- * frame-ancestors do not apply to it — and whether the kata daemon sends
- * either is not documented. The iframe is the fallback for builds without
- * the webview tag.
+ * Frame mechanics (webview/iframe creation, navigate/reload/status) live in
+ * frame.ts, shared with difitframe.ts. What stays here is kata-specific:
+ * following the active note's binding, and the toolbar's follow toggle.
  */
 
-import { ItemView, TFile, WorkspaceLeaf } from "obsidian";
+import { TFile, WorkspaceLeaf } from "obsidian";
 
+import { FramedView } from "./frame";
 import type WfPlugin from "./main";
 
 export const VIEW_TYPE_KATA_FRAME = "wf-kata-frame";
@@ -23,13 +22,10 @@ export const VIEW_TYPE_KATA_FRAME = "wf-kata-frame";
 /** Frontmatter field naming the bound task; written by `wf bind`. */
 export const KATA_ISSUE_KEY = "kata-issue";
 
-export class KataFrameView extends ItemView {
+export class KataFrameView extends FramedView {
     private plugin: WfPlugin;
-    private frame: HTMLElement | null = null;
-    private status: HTMLElement | null = null;
     /** When true, the frame follows whichever bound note you are reading. */
     private follow = true;
-    private currentUrl = "";
 
     constructor(leaf: WorkspaceLeaf, plugin: WfPlugin) {
         super(leaf);
@@ -48,12 +44,11 @@ export class KataFrameView extends ItemView {
         return "list-checks";
     }
 
-    async onOpen(): Promise<void> {
-        this.containerEl.addClass("pi-kata-frame");
-        const root = this.containerEl.children[1] as HTMLElement;
-        root.empty();
+    protected get cssPrefix(): string {
+        return "pi-kata-frame";
+    }
 
-        const bar = root.createDiv({ cls: "pi-kata-frame-bar" });
+    protected buildToolbar(bar: HTMLElement): void {
         const followToggle = bar.createEl("label", { cls: "pi-kata-frame-follow" });
         const checkbox = followToggle.createEl("input", { type: "checkbox" });
         checkbox.checked = this.follow;
@@ -63,14 +58,10 @@ export class KataFrameView extends ItemView {
             if (this.follow) void this.syncToActiveNote();
         });
 
-        const reload = bar.createEl("button", { text: "Reload" });
-        reload.addEventListener("click", () => this.reload());
+        this.addReloadButton(bar);
+    }
 
-        this.status = bar.createSpan({ cls: "pi-kata-frame-status" });
-
-        const host = root.createDiv({ cls: "pi-kata-frame-host" });
-        this.frame = this.createFrame(host);
-
+    protected async afterOpen(): Promise<void> {
         // The frame tracks whatever bound note you move to, which is the
         // note-on-the-left, issue-on-the-right pairing this exists for.
         this.registerEvent(
@@ -81,41 +72,6 @@ export class KataFrameView extends ItemView {
 
         await this.openOrigin();
         void this.syncToActiveNote();
-    }
-
-    /**
-     * Build a webview when the tag exists, an iframe otherwise. An unknown
-     * element parses as HTMLUnknownElement, which is the reliable test.
-     */
-    private createFrame(host: HTMLElement): HTMLElement {
-        const webview = document.createElement("webview");
-        if (!(webview instanceof HTMLUnknownElement)) {
-            webview.setAttribute("allowpopups", "false");
-            webview.addClass("pi-kata-frame-view");
-            host.appendChild(webview);
-            return webview;
-        }
-
-        const iframe = host.createEl("iframe", { cls: "pi-kata-frame-view" });
-        iframe.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-popups");
-        return iframe;
-    }
-
-    private setStatus(text: string): void {
-        if (this.status) this.status.setText(text);
-    }
-
-    private navigate(url: string): void {
-        if (!this.frame || url === this.currentUrl) return;
-        this.currentUrl = url;
-        this.frame.setAttribute("src", url);
-    }
-
-    private reload(): void {
-        if (!this.frame) return;
-        const url = this.currentUrl;
-        this.frame.setAttribute("src", "about:blank");
-        window.setTimeout(() => this.frame?.setAttribute("src", url), 50);
     }
 
     /** Point the frame at the daemon root, resolving its port at runtime. */
@@ -156,9 +112,5 @@ export class KataFrameView extends ItemView {
         const trimmed = value.trim();
         if (!trimmed || trimmed === "—" || trimmed === "-") return null;
         return trimmed;
-    }
-
-    async onClose(): Promise<void> {
-        this.frame = null;
     }
 }

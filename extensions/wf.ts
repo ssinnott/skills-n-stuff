@@ -79,6 +79,25 @@ interface RunResult {
 	created?: string[];
 }
 
+/**
+ * `wf review --json`. A doc-kind review carries a note path and no viewer,
+ * because a document is not a diff — wf decides which it is, not this.
+ */
+interface Review {
+	ref: string;
+	kind?: "pr" | "worktree" | "branch" | "doc";
+	url?: string;
+	port?: number;
+	pid?: number;
+	repo?: string;
+	target?: string;
+	base?: string;
+	pr?: string;
+	seeded?: number;
+	note?: string;
+	stopped?: boolean;
+}
+
 const USAGE = [
 	"/wf — agent work queue",
 	"",
@@ -90,6 +109,8 @@ const USAGE = [
 	"  /wf run --ref <ref>    dispatch one task",
 	"  /wf workflows          canned workflows that are loaded",
 	"  /wf bind <ref> <note>  bind a task to a vault note",
+	"  /wf review <ref>       open the task's diff in difit",
+	"  /wf review <ref> --stop  stop the running viewer",
 ].join("\n");
 
 function wfBin(): string {
@@ -150,6 +171,22 @@ function renderDetail(task: Task): string {
 	if (task.note) lines.push(`note      ${task.note}`);
 	if (task.session) lines.push("", `Attach with: /wf attach ${task.shortId}`);
 	if (task.body) lines.push("", task.body);
+	return lines.join("\n");
+}
+
+function renderReview(r: Review): string {
+	if (r.stopped) return `Stopped the viewer for ${r.ref}.`;
+	if (r.kind === "doc") return `${r.ref} is a document, not a diff: ${r.note}`;
+
+	const lines = [`Reviewing ${r.ref} (${r.kind}) at ${r.url}`];
+	if (r.pr) lines.push(`  ${r.pr}`);
+	else if (r.target) lines.push(`  ${r.target}${r.base ? ` vs ${r.base}` : ""}`);
+	if (r.seeded) {
+		lines.push(`  ${r.seeded} agent finding${r.seeded === 1 ? "" : "s"} seeded as comments`);
+	}
+	// The comments only come back by hand: difit keeps them in the page's
+	// own localStorage and exposes no endpoint to read them.
+	lines.push("", `Copy All Prompt in difit, then: /wf review comment ${r.ref}`);
 	return lines.join("\n");
 }
 
@@ -258,6 +295,13 @@ export default function wfExtension(pi: ExtensionAPI): void {
 						const e = err as { stderr?: string; message?: string };
 						return (e.stderr || e.message || String(err)).trim();
 					}
+				}
+
+				case "review": {
+					if (rest.length === 0) return "usage: /wf review <ref> [--stop]";
+					const out = await wfJSON<Review>(["review", ...rest], cwd);
+					if (typeof out === "string") return out;
+					return renderReview(out);
 				}
 
 				default:
