@@ -435,6 +435,12 @@ func matchFold(rec wf.Record, ref string) bool {
 		if strings.EqualFold(b.Ref, ref) {
 			return true
 		}
+		// The short id folds for the same reason the long one does: a
+		// human copies it in whichever case the surface they copied from
+		// displayed, and kata lowercases where its web UI does not.
+		if short := b.Get(wf.MetaShortID); short != "" && strings.EqualFold(short, ref) {
+			return true
+		}
 	}
 	return false
 }

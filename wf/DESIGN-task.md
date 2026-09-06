@@ -163,6 +163,17 @@ Five concrete failures follow from that shape, and none of them is stylistic:
   being a bypass and becomes an ordinary task carrying exactly one `pr`
   binding — same code path, one binding shorter.
 
+  Building it confirmed this needs no special case at all: `Resolve` over a
+  one-binding set produces the identical target and argv the bypass built by
+  hand, so the second entry point collapsed into "here are some bindings,
+  open the strongest one." The piece that did *not* follow from the type is
+  the lookup — reviewing a PR twice has to find the first task rather than
+  file a second, or the remembered port that keeps difit's comments alive is
+  spread across one record per invocation. That is a scan for a matching
+  `pr` binding, deliberately not something `Resolve` learns: a pasted URL is
+  not a ref anyone abbreviates, and widening the resolver to cover it would
+  widen what can be ambiguous.
+
 - **`NEXT` still creates a sibling task, and the link becomes a binding.**
   Follow-on work has its own lifecycle, so it stays its own task rather than
   a queued second run. What changes is that the parent/child edge is a
@@ -565,10 +576,28 @@ Staged so that each stage is shippable and the risky one is last.
       and `Apply` writes bindings tagged `via: <run-id>` instead of flat
       keys. Record the branch. Fixes the multi-host clobber, and makes a
       re-run possible while a kept checkout is still on disk.
-- [ ] **4 — Standalone identity and explicit dispatch.** wf-minted ids,
+- [x] **4 — Standalone identity and explicit dispatch.** wf-minted ids,
       `wf task new`, adopt into a tracker, ref resolution across both id
       spaces, `wf run <ref> --workflow <name>`. `wf review --pr` becomes a
       one-binding task.
+
+      Two things this stage found. **The title had nowhere to live.** "A task
+      exists whether or not a tracker row does" and "the tracker keeps work
+      state — title, priority, open/closed" are in tension the moment
+      `wf task new "fix the parser"` has to write that string down. The
+      record grew a `Title`, and it is a *fallback*, not a mirror: nothing
+      refreshes it, and `Record.Name()` prefers the queue binding's label as
+      soon as one exists. The disjointness rule holds everywhere else.
+
+      **`wf run <ref>` on a task with no tracker row does not work yet**, and
+      "Done means" below claims it does. The loop leases, claims, sets state
+      and applies outcomes through the `Queue`, so a task with no row has
+      nothing for any of those verbs to act on. Closing that needs a Queue
+      adapter over the ledger — which is exactly what the seam was cut for,
+      and is the shape the vault-as-tracker variant would take too — or work
+      state on the record, which the disjointness rule forbids. Stage 4 mints
+      the identity, files it, dispatches explicitly against a filed task, and
+      says so plainly when a task is unfiled; the adapter is the open piece.
 - [ ] **5 — The note projection.** `wf note sync <ref>` writing the managed
       block; the plugin calling it on open and after dispatch; wikilinks for
       produced docs; host annotation on machine-local bindings.
@@ -619,11 +648,27 @@ Staged so that each stage is shippable and the risky one is last.
 
 ## Done means
 
-`wf task new "fix the parser"` with no kata running produces a task; `wf run
-<ref> --workflow plan-to-pr` gives it a worktree, a session and a run record
-that everything it produced hangs off; `wf show` renders that as one object
-and an Obsidian note renders the same object without a second
-implementation; filing it into kata later adds a row without disturbing any
-of it; and `wf review` picks what to open by asking the task what it has
-rather than by rebuilding the answer from six metadata reads and a guess at
-a branch name.
+`wf task new "fix the parser"` with no kata running produces a task; `wf show`
+renders it as one object; an Obsidian note renders the same object without a
+second implementation; filing it into kata later with `wf task adopt` adds a
+row without disturbing any of it; and `wf review` picks what to open by asking
+the task what it has rather than by rebuilding the answer from six metadata
+reads and a guess at a branch name.
+
+**One clause of this is not met, and the gap is structural rather than
+unfinished work.** Earlier drafts said `wf run <ref> --workflow plan-to-pr`
+would give a *trackerless* task a worktree, a session and a run record.
+It cannot. Every write in the dispatch loop — the lease, the claim,
+`SetState`, `BindSession`, and `Apply`'s comment, close and create — goes
+through the `Queue`, so a task with no row has nothing for any of them to act
+on. `wf run` on an unfiled task therefore refuses, and names the fix:
+`wf task adopt <ref> --queue <tracker-id>`.
+
+So "a task exists whether or not a tracker row does" is true for creating,
+showing, noting, reviewing and adopting a task, and false for running one.
+Closing that needs one of two things, neither of them small: a `Queue`
+adapter over the ledger — which is what that seam was cut for, and the same
+shape the "vault as the tracker" variant above would take — or work state on
+the `Record`, which the disjointness rule forbids. The first is the honest
+next step if trackerless dispatch is wanted; nothing else in this document
+depends on it.

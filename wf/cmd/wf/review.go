@@ -15,6 +15,8 @@ import (
 
 	"github.com/ssinnott/skills-n-stuff/wf/internal/config"
 	"github.com/ssinnott/skills-n-stuff/wf/internal/review"
+	"github.com/ssinnott/skills-n-stuff/wf/internal/store"
+	"github.com/ssinnott/skills-n-stuff/wf/internal/wf"
 )
 
 func (a *app) reviewSession() *review.Session {
@@ -76,15 +78,23 @@ func (a *app) cmdReview(ctx context.Context, args []string) (int, error) {
 	}
 
 	if prURL != "" {
-		// The ad-hoc PR path: no task, no queue call, so it works with no
-		// kata running at all.
+		// Still no queue call — that was always the point of --pr and it
+		// has not changed. What has is that the PR is now a task: it gets
+		// a ledger record carrying exactly one binding, so a PR a human
+		// opened by hand finally has somewhere to hang, and the second
+		// review of it finds the first rather than starting over.
 		repo := flagValue(args, "--repo")
 		if repo == "" {
 			repo = a.cfg.Repo
 		}
 		repo = config.Expand(repo)
 
-		result, err := sess.OpenPR(ctx, prURL, repo)
+		rec, err := a.taskForPR(prURL)
+		if err != nil {
+			return 1, err
+		}
+		result, err := sess.OpenBindings(ctx, review.PRHandle(prURL), rec.Bindings,
+			review.Externals{Repo: repo})
 		if err != nil {
 			return 1, err
 		}
@@ -99,11 +109,20 @@ func (a *app) cmdReview(ctx context.Context, args []string) (int, error) {
 		return 1, errors.New("wf review <ref> | --pr <url>")
 	}
 
-	task, err := a.queue.Get(ctx, ref)
+	found, err := a.resolve(ctx, ref)
 	if err != nil {
 		return 1, err
 	}
-	result, err := sess.Open(ctx, task, a.cfg)
+	// A task the tracker still holds goes through the ladder over its
+	// metadata, exactly as before. One the ledger minted has no row and no
+	// metadata, and its bindings are the record's own.
+	var result review.Result
+	if found.Task.ID != "" {
+		result, err = sess.Open(ctx, found.Task, a.cfg)
+	} else {
+		result, err = sess.OpenBindings(ctx, found.Record.Ref(), found.Record.Bindings,
+			review.Externals{Repo: a.cfg.Repo, Base: reviewBase(a.cfg.Base)})
+	}
 	if err != nil {
 		return 1, err
 	}
@@ -115,11 +134,75 @@ func (a *app) cmdReview(ctx context.Context, args []string) (int, error) {
 	return 0, nil
 }
 
+// taskForPR finds or mints the task a pull request URL belongs to.
+//
+// Finding it matters as much as minting it: reviewing the same PR twice must
+// land on one task, or the ledger fills with a record per invocation and the
+// port memory that makes difit's comments survive is spread across all of
+// them. The lookup is by binding rather than through store.Resolve, whose
+// business is refs a human types.
+//
+// A ledger that cannot be written costs the record, never the review: the
+// bindings are built either way and the viewer opens on them.
+func (a *app) taskForPR(url string) (wf.Record, error) {
+	bare := wf.Record{ID: wf.NewTaskID(now()), Bindings: review.PRBindings(url)}
+
+	recs, err := a.ledger.List()
+	if err != nil {
+		var skip *store.SkipError
+		if !errors.As(err, &skip) {
+			return bare, nil
+		}
+		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
+	}
+	for _, rec := range recs {
+		for _, b := range rec.Bindings.ByKind(wf.KindPR) {
+			if b.Ref == url {
+				return rec, nil
+			}
+		}
+	}
+
+	bare.Handle = review.PRHandle(url)
+	if err := wf.ValidHandle(bare.Handle); err != nil {
+		// "acme/widgets#482" is a fine thing to print and a poor thing to
+		// type, so it stays the display ref and the record goes unhandled.
+		bare.Handle = ""
+	}
+	bare.Title = "PR " + review.PRHandle(url)
+	bare.Created = now().UTC()
+	if err := a.ledger.Save(bare); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: record PR task: %v\n", err)
+	}
+	return bare, nil
+}
+
+// reviewBase is the branch a diff is taken against when nothing names one.
+// BuildLadder applies the same default for a tracker-backed task; a ledger
+// task takes this path instead and must not end up with an empty base.
+func reviewBase(base string) string {
+	if base == "" {
+		return "main"
+	}
+	return base
+}
+
 func (a *app) cmdReviewComment(ctx context.Context, args, positional []string) (int, error) {
 	if len(positional) < 2 {
 		return 1, errors.New("wf review comment <ref>")
 	}
 	ref := positional[1]
+
+	found, err := a.resolve(ctx, ref)
+	if err != nil {
+		return 1, err
+	}
+	// A comment goes on the tracker row: it is the discussion surface, and
+	// wf keeps no thread of its own.
+	task, err := a.requireTask(found)
+	if err != nil {
+		return 1, err
+	}
 
 	raw, err := io.ReadAll(os.Stdin)
 	if err != nil {
@@ -150,10 +233,6 @@ func (a *app) cmdReviewComment(ctx context.Context, args, positional []string) (
 		return 1, fmt.Errorf("wf review comment: unknown --format %q, want text or difit", format)
 	}
 
-	task, err := a.queue.Get(ctx, ref)
-	if err != nil {
-		return 1, err
-	}
 	if err := a.queue.Comment(ctx, task.ID, body); err != nil {
 		return 1, fmt.Errorf("comment on %s: %w", task.ShortID, err)
 	}

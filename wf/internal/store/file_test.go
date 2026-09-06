@@ -643,6 +643,16 @@ func TestResolveByRecordedShortID(t *testing.T) {
 	if got.ID != rec.ID {
 		t.Errorf("Resolve(f7eg).ID = %q, want %q", got.ID, rec.ID)
 	}
+
+	// And in whichever case the surface it was copied from displayed it —
+	// kata lowercases its short ids where its web UI does not.
+	got, err = s.Resolve("F7EG")
+	if err != nil {
+		t.Fatalf("Resolve(F7EG): %v", err)
+	}
+	if got.ID != rec.ID {
+		t.Errorf("Resolve(F7EG).ID = %q, want %q", got.ID, rec.ID)
+	}
 }
 
 // The recorded short id must not out-rank a record whose own id is what was

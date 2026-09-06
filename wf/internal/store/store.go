@@ -66,9 +66,12 @@ type Store interface {
 	// Delete removes a record. Removing one that is already gone is not an
 	// error: deleting twice must not fail the second time.
 	Delete(id string) error
-	// Resolve finds a record by wf id, handle, or the ref of any queue
-	// binding — the ref forms a human actually types. Ambiguity is an
-	// error naming the candidates, never a pick.
+	// Resolve finds a record by any of the four refs a human types: wf's
+	// own id, its short handle, the ref of any queue binding, or that
+	// binding's recorded short id. Two id spaces meet here, which is the
+	// whole of what "wf mints the id and the tracker row is a binding"
+	// costs at the surface. Ambiguity is an error naming the candidates,
+	// never a pick.
 	Resolve(ref string) (wf.Record, error)
 }
 

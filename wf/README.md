@@ -28,10 +28,14 @@ No dependencies beyond the standard library.
 
 ```sh
 wf ready --limit 10          # actionable work, top of queue first
-wf show abc4                 # task, workflow, lease, session, bound note
+wf show neck                 # one task: its runs and what each produced
 wf workflows                 # canned workflows that are loaded
+wf task new "Add the parser" # start a task with no tracker row at all
+wf task adopt neck --queue 01M1S…    # file it into the tracker later
+wf task list                 # every task wf has recorded
 wf run --once                # dispatch the top claimable task
 wf run --ref abc4            # dispatch one specific task
+wf run neck --workflow plan-to-pr    # run a named recipe on a named task
 wf run --max 3               # drain the queue, three agents at a time
 wf escalations               # what needs a human
 wf attach abc4               # reopen the pi session that ran this task
@@ -52,10 +56,20 @@ wf gc --fix                  # correct their recorded state
 wf gc --delete --before 30d  # drop records that point at nothing, and are old
 ```
 
-Add `--json` to `ready`, `show`, `escalations`, `workflows`, `run`, `review`
-and `note sync` for machine-readable output. That is the protocol both clients
+A `<ref>` is any of four: wf's own task id, its short handle, the tracker's
+id, or the tracker's short id. wf mints the first two; the tracker row is a
+binding on the task rather than the task's identity, which is what lets work
+start before it is filed. An ambiguous ref names its candidates and picks
+nothing.
+
+Add `--json` to `ready`, `show`, `escalations`, `workflows`, `task`, `run`,
+`review` and `note sync` for machine-readable output. That is the protocol both clients
 speak — the pi extension and the Obsidian plugin talk to wf, never to kata
 directly, so the queue backend can change without touching either.
+
+`wf show --json` carries both: `task` is the tracker row as it always was,
+and `record` is wf's own object — the task's own bindings, then each run
+with what that run produced.
 
 ```json
 { "tasks": [ { "id": "01M1S…", "shortId": "neck", "title": "Add the parser",
@@ -235,14 +249,16 @@ tries, in order, the first rung that matches:
 4. **A bound note.** A workflow that only produced a document has no diff at
    all; `wf review` reports the vault path and opens nothing.
 
-`wf review --pr <url> [--repo <path>]` reviews any PR directly, bypassing
-the ladder (and any task or queue lookup) entirely — it works with no kata
-running at all. Use it for a PR a human opened by hand, or one that
-predates `wf.pr` metadata ever being recorded. `--repo` defaults to
-`config.Repo`. It participates in the same one-viewer-at-a-time lifecycle
-as a task review, and the positional `<ref>` and `--pr` are mutually
-exclusive — passing both is a usage error. There is no task, so nothing is
-seeded.
+`wf review --pr <url> [--repo <path>]` reviews any PR directly, with no kata
+running at all. Use it for a PR a human opened by hand, or one that predates
+`wf.pr` metadata ever being recorded. It is no longer a bypass: the URL
+becomes a task carrying exactly one `pr` binding and goes through the same
+ladder, so reviewing that PR again finds the task rather than filing a
+second one — which is what keeps its remembered port, and difit's comments
+with it. `--repo` defaults to `config.Repo`. It participates in the same
+one-viewer-at-a-time lifecycle as a task review, and the positional `<ref>`
+and `--pr` are mutually exclusive — passing both is a usage error. A task
+with one binding has no filed issues, so nothing is seeded.
 
 Findings the run filed as `ISSUE:` outcomes seed the viewer as difit review
 threads (`--comment`), when the issue's own title names a file and line

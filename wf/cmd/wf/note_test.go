@@ -27,7 +27,9 @@ func noteApp(t *testing.T) (*app, string) {
 		t.Fatal(err)
 	}
 	cfg := &config.Config{Vault: vault, Path: filepath.Join(root, "config.json")}
-	return &app{cfg: cfg}, vault
+	// The ledger is a field built in newApp rather than opened on demand, so
+	// a hand-built app has to supply it the same way newApp does.
+	return &app{cfg: cfg, ledger: store.New(store.Root(cfg.Path))}, vault
 }
 
 func TestCmdNoteUsage(t *testing.T) {

@@ -20,20 +20,14 @@ import (
 
 	"github.com/ssinnott/skills-n-stuff/wf/internal/note"
 	"github.com/ssinnott/skills-n-stuff/wf/internal/notesync"
-	"github.com/ssinnott/skills-n-stuff/wf/internal/store"
 	"github.com/ssinnott/skills-n-stuff/wf/internal/wf"
 )
-
-// ledger opens the task store. It lives beside the config, so --config
-// moves it exactly as it moves review.json — the same resolution cmdRun
-// uses.
-func (a *app) ledger() store.Store { return store.New(store.Root(a.cfg.Path)) }
 
 func (a *app) syncer() *notesync.Syncer {
 	return &notesync.Syncer{
 		Vault: a.cfg.Vault,
 		Dir:   a.cfg.NoteDir,
-		Store: a.ledger(),
+		Store: a.ledger,
 	}
 }
 
@@ -87,7 +81,7 @@ func (a *app) noteSyncOne(args []string, ref string) (int, error) {
 	// what is authoritative for those. It also means `wf note sync` needs
 	// no tracker running at all, which is the point of a note you can open
 	// on a device the tracker does not reach.
-	rec, err := a.ledger().Resolve(ref)
+	rec, err := a.ledger.Resolve(ref)
 	if err != nil {
 		return 1, err
 	}

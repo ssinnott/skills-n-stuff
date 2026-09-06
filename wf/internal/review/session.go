@@ -48,15 +48,26 @@ func (s *Session) now() time.Time {
 // the task once, through LoadBindings: the target and the findings are two
 // questions about the same set of bindings.
 func (s *Session) Open(ctx context.Context, task wf.Task, cfg *config.Config) (Result, error) {
-	bs, ex := BuildLadder(ctx, task, cfg, s.BranchExists)
-	target, err := Resolve(bs, ex)
-	if err != nil {
-		return Result{}, err
-	}
-
 	ref := task.ShortID
 	if ref == "" {
 		ref = task.ID
+	}
+	bs, ex := BuildLadder(ctx, task, cfg, s.BranchExists)
+	return s.OpenBindings(ctx, ref, bs, ex)
+}
+
+// OpenBindings runs the ladder over whatever bindings the caller holds.
+//
+// This is the whole of `wf review`, and it takes bindings rather than a task
+// because a task is no longer the only thing that has them: DESIGN-task.md's
+// stage 4 turns `--pr` from a bypass into a task carrying exactly one PR
+// binding, and a task the ledger knows about has bindings without any queue
+// row to read them off. One entry point, one ladder, and the caller decides
+// where the bindings came from.
+func (s *Session) OpenBindings(ctx context.Context, ref string, bs wf.Bindings, ex Externals) (Result, error) {
+	target, err := Resolve(bs, ex)
+	if err != nil {
+		return Result{}, err
 	}
 
 	if target.Kind == KindDoc {
@@ -75,20 +86,26 @@ func (s *Session) Open(ctx context.Context, task wf.Task, cfg *config.Config) (R
 	return Result{Ref: ref, Target: target, Viewer: spawned, Seeded: len(findings)}, nil
 }
 
-// OpenPR reviews a PR directly, bypassing the target ladder entirely: no
-// task lookup, no queue call at all. It exists for a PR the ladder can
-// never reach — one a human opened, or one that predates any task
-// recording `wf.pr` metadata — so it must work with no kata running.
-// There is no task, so nothing is seeded.
-func (s *Session) OpenPR(ctx context.Context, url, repo string) (Result, error) {
-	ref := PRHandle(url)
-	target := Target{Kind: KindPR, Repo: repo, PR: url, Args: []string{"--pr", url}}
+// PRBindings is the whole of a task whose only fact is a pull request
+// someone opened by hand.
+//
+// It is what turned `--pr` from a documented second entry point into an
+// ordinary one-binding task. The bypass existed because rung 1 only fires on
+// `wf.pr` metadata, so a PR with no tracker row could never reach the ladder
+// no matter how the ladder was ordered — and stage 4's answer is that the
+// row was never what a task needed. A binding is, and one is enough.
+func PRBindings(url string) wf.Bindings {
+	return wf.Bindings{{Kind: wf.KindPR, Ref: url, State: wf.BindingLive}}
+}
 
-	spawned, err := s.launch(ctx, ref, target, nil)
-	if err != nil {
-		return Result{}, err
-	}
-	return Result{Ref: ref, Target: target, Viewer: spawned}, nil
+// OpenPR reviews a PR by URL. It still works with no kata running — that
+// was always the point of `--pr` and it is unchanged — but it is no longer a
+// separate code path: the URL becomes the one binding a task has, and the
+// ladder resolves it like any other. Nothing is seeded because a task with
+// one PR binding has no filed issues to seed from, not because seeding was
+// skipped.
+func (s *Session) OpenPR(ctx context.Context, url, repo string) (Result, error) {
+	return s.OpenBindings(ctx, PRHandle(url), PRBindings(url), Externals{Repo: repo})
 }
 
 // launch is the one-viewer-at-a-time lifecycle shared by a task review and
