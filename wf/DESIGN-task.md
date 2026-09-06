@@ -444,11 +444,23 @@ Each of these is currently either impossible or a special case:
 
 Named rather than quietly decided, because each could go the other way:
 
-- **Who creates the task note, and when.** Eagerly on task creation (every
+- **Who creates the task note, and when.** ~~Eagerly on task creation (every
   task is a note, the vault fills with stubs) or lazily on first open or
   first produced document (fewer notes, but "open this task" sometimes has
   to create one). Leaning lazy, with `wf note sync <ref>` as the explicit
-  verb.
+  verb.~~ Settled by building it, and lazily: `wf note sync <ref>` creates
+  the note, because a human who typed that verb has asked for one, while
+  `wf note sync --all` refreshes the notes that exist and creates none — a
+  sweep that made one note per ledger record is the eager option wearing a
+  flag, and it is what fills a vault with stubs.
+
+  Two things the question did not anticipate. The task note has to be told
+  apart from a *produced* document, since both are `doc` bindings in the
+  vault: the note is the one no run produced (`via` empty), and writing a
+  task's history into the middle of a research document it happened to
+  produce would otherwise be the wrong file every time. And the note must
+  not link to itself — its own binding is dropped before rendering, or the
+  block puts a self-edge in the graph the doc→task backlinks exist for.
 - **Reconciliation.** A tracker row closed by a human while the ledger holds
   a live worktree. The disjointness rule says the tracker wins on work state
   and the worktree is then garbage — but "closed remotely" is probably worth

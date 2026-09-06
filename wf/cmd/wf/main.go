@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -16,7 +15,6 @@ import (
 
 	"github.com/ssinnott/skills-n-stuff/wf/internal/config"
 	"github.com/ssinnott/skills-n-stuff/wf/internal/kata"
-	"github.com/ssinnott/skills-n-stuff/wf/internal/note"
 	"github.com/ssinnott/skills-n-stuff/wf/internal/runner"
 	"github.com/ssinnott/skills-n-stuff/wf/internal/store"
 	"github.com/ssinnott/skills-n-stuff/wf/internal/supervisor"
@@ -35,14 +33,16 @@ const usage = `wf — workflow CLI over pluggable queues
          [--max N] [--repo P]
   wf attach <ref>              open the task's pi session
   wf bind <ref> <note.md>      bind a task to an Obsidian note, both ways
+  wf note sync <ref>           write the task's managed block into its note
+  wf note sync --all           refresh every note the ledger knows about
   wf ui <ref>                  print the web UI deep link for a task
   wf review <ref>              resolve the task's diff and open it in difit
   wf review <ref> --stop       stop the running viewer
   wf review comment <ref>      read a pasted review prompt from stdin
 
-Add --json to ready, show, escalations, workflows, run and review for
-machine-readable output; that is the protocol both the pi extension and the
-Obsidian plugin speak.
+Add --json to ready, show, escalations, workflows, run, review and note sync
+for machine-readable output; that is the protocol both the pi extension and
+the Obsidian plugin speak.
 
 Config: ~/.wf/config.json (override with --config). KATA_BIN, PI_BIN and
 DIFIT_BIN override binaries that are off PATH.`
@@ -124,6 +124,8 @@ func run(ctx context.Context, argv []string) (int, error) {
 		return a.cmdAttach(ctx, rest)
 	case "bind":
 		return a.cmdBind(ctx, rest)
+	case "note":
+		return a.cmdNote(rest)
 	case "ui":
 		return a.cmdUI(ctx, rest)
 	case "review":
@@ -379,43 +381,6 @@ func (a *app) cmdAttach(ctx context.Context, args []string) (int, error) {
 		}
 		return 1, fmt.Errorf("attach to %s: %w", ref, err)
 	}
-	return 0, nil
-}
-
-func (a *app) cmdBind(ctx context.Context, args []string) (int, error) {
-	positional := positionals(args)
-	if len(positional) < 2 {
-		return 1, errors.New("wf bind <ref> <note.md>")
-	}
-	ref, notePath := positional[0], positional[1]
-
-	task, err := a.queue.Get(ctx, ref)
-	if err != nil {
-		return 1, err
-	}
-
-	abs, err := filepath.Abs(notePath)
-	if err != nil {
-		return 1, fmt.Errorf("resolve %s: %w", notePath, err)
-	}
-	raw, err := os.ReadFile(abs)
-	if err != nil {
-		return 1, fmt.Errorf("read %s: %w", notePath, err)
-	}
-
-	text := string(raw)
-	if existing := note.GetField(text, note.IssueKey); existing != "" && existing != task.ID {
-		return 1, fmt.Errorf("%s is already bound to %s", notePath, existing)
-	}
-
-	if err := os.WriteFile(abs, []byte(note.SetField(text, note.IssueKey, task.ID)), 0o644); err != nil {
-		return 1, fmt.Errorf("write %s: %w", notePath, err)
-	}
-	if err := a.queue.SetMeta(ctx, task.ID, wf.DocKey, notePath, wf.SetMetaOptions{}); err != nil {
-		return 1, fmt.Errorf("bind note path on %s: %w", task.ShortID, err)
-	}
-
-	fmt.Printf("bound %s ↔ %s\n", task.ShortID, notePath)
 	return 0, nil
 }
 

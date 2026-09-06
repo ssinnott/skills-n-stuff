@@ -29,6 +29,14 @@ type Config struct {
 	WorkflowDir string `json:"workflowDir"`
 	// Vault is the Obsidian vault root that artifacts bind into.
 	Vault string `json:"vault"`
+	// NoteDir is where `wf note sync` creates a task note for a task that
+	// has none, relative to the vault root. Separate from a workflow's
+	// vault-dir because the two hold different things: produced documents
+	// land where the workflow that produced them says, while a task note
+	// is wf's own face for the task and belongs wherever the vault keeps
+	// those. Empty takes notesync's default; the fallback lives there
+	// rather than here because config cannot import it without a cycle.
+	NoteDir string `json:"noteDir"`
 	// Profiles maps workflow profile names to PI_CODING_AGENT_DIR paths.
 	Profiles map[string]string `json:"profiles"`
 	// DefaultProfile is used when a workflow names none.

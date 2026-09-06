@@ -36,6 +36,8 @@ wf run --max 3               # drain the queue, three agents at a time
 wf escalations               # what needs a human
 wf attach abc4               # reopen the pi session that ran this task
 wf bind abc4 notes/plan.md   # bind a task to a note by hand
+wf note sync abc4            # write the task's managed block into its note
+wf note sync --all           # refresh every note the ledger already knows
 wf ui abc4                   # deep link into kata's web UI
 wf ui                        # the daemon's origin, for a framed UI
 wf review abc4               # resolve the task's diff and open it in difit
@@ -45,8 +47,8 @@ wf review comment abc4       # read a pasted review prompt from stdin
 wf review comment abc4 --format difit   # ingest difit's own comment store
 ```
 
-Add `--json` to `ready`, `show`, `escalations`, `workflows`, `run` and
-`review` for machine-readable output. That is the protocol both clients
+Add `--json` to `ready`, `show`, `escalations`, `workflows`, `run`, `review`
+and `note sync` for machine-readable output. That is the protocol both clients
 speak — the pi extension and the Obsidian plugin talk to wf, never to kata
 directly, so the queue backend can change without touching either.
 
@@ -67,6 +69,7 @@ directly, so the queue backend can change without touching either.
   "actor": "wf-laptop",
   "repo": "~/code/app",
   "vault": "~/vault",
+  "noteDir": "Tasks",
   "worktreeRoot": "~/.wf/worktrees",
   "workflowDir": "~/.wf/workflows",
   "profiles": { "coding": "~/.pi/profiles/coding", "writer": "~/.pi/profiles/writer" },
@@ -133,12 +136,24 @@ value on the binding, not half of a key name, so a second runner is a new
 value rather than a parallel set of keys. The `pi.*` names these replaced are
 still read for one release, and never written.
 
-**Task ↔ note.** The note's frontmatter carries `kata-issue: <ULID>`; the task
-carries `wf.doc: <path>` (formerly `obsidian.note`, still read). Workflows
-with `bind-docs` do this
-automatically for every document produced. Nothing is mirrored: titles and
-status live in the tracker, prose lives in the note, and the only shared state
-is the id pair.
+**Task ↔ note.** The note's frontmatter carries `wf-task: <id>` — the durable
+half, since it survives a rename in Obsidian — alongside `kata-issue: <ULID>`
+naming the tracker row. The task carries the note as a `doc` binding with
+`store: vault` (and `wf.doc: <path>` on the tracker, formerly `obsidian.note`,
+still read). Workflows with `bind-docs` do this automatically for every
+document produced. Nothing is mirrored: titles and status live in the tracker,
+prose lives in the note, and the only shared state is the id pair.
+
+`wf note sync <ref>` renders the task — its runs and what each produced — into
+a managed block in that note, delimited by `%% wf:begin %%` and `%% wf:end %%`.
+Everything outside the block is yours and is never touched; the block is
+regenerated wholesale, so deleting it loses nothing. A task with no note gets
+one under `noteDir` (default `Tasks`), named for its title and joined by
+frontmatter rather than by its filename, so renaming or moving it in Obsidian
+is safe — the next sync finds it again and repoints the binding. `--all`
+sweeps the ledger, refreshing the notes that exist and creating none: a note
+per task is a choice a human makes one task at a time. Nothing is written when
+nothing changed, because the note lives in a synced vault.
 
 **Agent ↔ tracker.** The seed prompt names the agent's issue, so it can read
 context and comment progress itself. But claim, close and lease transitions
