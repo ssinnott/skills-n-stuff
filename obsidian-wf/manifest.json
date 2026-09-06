@@ -1,0 +1,9 @@
+{
+  "id": "wf-queue",
+  "name": "wf Agent Queue",
+  "version": "0.1.0",
+  "minAppVersion": "1.4.0",
+  "description": "Agent work queue in Obsidian: see what is ready and what needs you, dispatch runs, and read the tracker issue beside the note it produced.",
+  "author": "ssinnott",
+  "isDesktopOnly": true
+}
