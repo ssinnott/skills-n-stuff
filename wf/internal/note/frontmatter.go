@@ -19,6 +19,15 @@ import (
 // persisted binding needs.
 const IssueKey = "kata-issue"
 
+// TaskKey is the frontmatter field naming the bound wf task, and the
+// durable half of the join: it survives rename, it is visible to the human
+// reading the note, and it is what the managed block is rendered from.
+// Deliberately a second field beside IssueKey rather than a replacement —
+// the tracker row is one binding among a task's many, so "which task is
+// this note" and "which row is that task filed under" stopped being the
+// same question.
+const TaskKey = "wf-task"
+
 // Deliberately not a YAML parser: wf reads and writes exactly one scalar
 // key per call, and anything richer belongs to the note's author.
 var frontmatterRe = regexp.MustCompile(`(?s)\A---\r?\n(.*?)\r?\n---\r?\n?`)
