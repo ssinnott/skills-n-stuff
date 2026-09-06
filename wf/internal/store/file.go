@@ -106,12 +106,13 @@ func validID(id string) error {
 // writing the same task on the same host share no mutex, and the honest
 // reason that is acceptable is os.Rename — a reader on any process sees the
 // old file or the new one, never a mix, so the failure mode is a lost update
-// rather than a corrupt ledger. Nor does the lock make Load-then-Save atomic
-// even in-process: this interface has no transaction, and a caller that needs
-// read-modify-write on one task must serialize itself, which is what the
-// lease in internal/wf already does for the run loop. A file lock would close
-// the cross-process gap; it is not here because nothing yet needs it and an
-// unused lock is a liveness bug waiting to happen.
+// rather than a corrupt ledger. Update is what makes read-modify-write safe
+// in-process — it holds this same lock across the whole load, mutate and
+// write — and the lease in internal/wf is deliberately not relied on for it,
+// because `wf bind` and a running dispatch both write bindings and only one
+// of them takes a lease. A file lock would close the cross-process gap; it is
+// not here because nothing yet needs it and an unused lock is a liveness bug
+// waiting to happen.
 //
 // Keyed by absolute file path rather than by store instance so two FileStores
 // over one root in the same process still share a lock. The map grows by one
@@ -139,6 +140,15 @@ func (s *FileStore) Load(id string) (wf.Record, error) {
 	if err := validID(id); err != nil {
 		return wf.Record{}, err
 	}
+	// Deliberately unlocked: os.Rename makes a read see the old record or
+	// the new one, never a mix, so a lock here would buy nothing a reader
+	// can observe.
+	return s.read(id)
+}
+
+// read is Load without the id check, so Update can reuse it inside the lock
+// it has already taken.
+func (s *FileStore) read(id string) (wf.Record, error) {
 	path := s.path(id)
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -161,6 +171,69 @@ func (s *FileStore) Save(rec wf.Record) error {
 	if err := validID(rec.ID); err != nil {
 		return err
 	}
+	mu := lockFor(s.path(rec.ID))
+	mu.Lock()
+	defer mu.Unlock()
+
+	return s.write(rec)
+}
+
+// Update reads, mutates and writes one record under the per-id lock, which
+// is the one thing Load followed by Save cannot do: the gap between them is
+// where a concurrent writer's record is lost, and every caller that records
+// what a run produced has to widen an existing record rather than replace it.
+//
+// The lock is held for the whole read-mutate-write, so within this process
+// two Updates on one id serialize and neither loses the other's work. Across
+// processes it guarantees nothing at all — there is no file lock here, for
+// the reasons the lock comment above gives — so the cross-process story is
+// still os.Rename's: a reader sees one whole record or the other, and a
+// simultaneous writer in another process costs an update, never the file.
+//
+// A missing record is created rather than refused. fn then sees a zero
+// Record carrying only its ID and a Created stamp, so "record this run,
+// filing the task if this is the first wf has heard of it" is one call
+// instead of a load, a test and a save with a race between them.
+//
+// fn's error aborts the write and comes back unwrapped, so a caller can
+// decide mid-flight that there is nothing to write and say so with its own
+// sentinel.
+func (s *FileStore) Update(id string, fn func(*wf.Record) error) error {
+	if err := validID(id); err != nil {
+		return err
+	}
+	if fn == nil {
+		return fmt.Errorf("update task %s: no mutation given", id)
+	}
+
+	mu := lockFor(s.path(id))
+	mu.Lock()
+	defer mu.Unlock()
+
+	rec, err := s.read(id)
+	if err != nil {
+		var missing *NotFoundError
+		if !errors.As(err, &missing) {
+			return err
+		}
+		rec = wf.Record{ID: id, Created: time.Now().UTC()}
+	}
+
+	if err := fn(&rec); err != nil {
+		return err
+	}
+	// fn mutates freely, but it does not get to move the record to another
+	// file: the id names the lock that was taken, so a changed id would
+	// write outside the serialization this whole method exists to provide.
+	rec.ID = id
+
+	return s.write(rec)
+}
+
+// write encodes and lands a record. Callers hold the per-id lock; splitting
+// it out is what lets Save and Update share one definition of "what landing
+// a record means" rather than drifting.
+func (s *FileStore) write(rec wf.Record) error {
 	rec.Updated = time.Now().UTC()
 
 	encoded, err := json.MarshalIndent(rec, "", "  ")
@@ -172,13 +245,7 @@ func (s *FileStore) Save(rec wf.Record) error {
 	if err := os.MkdirAll(s.dir, 0o755); err != nil {
 		return fmt.Errorf("create %s: %w", s.dir, err)
 	}
-
-	path := s.path(rec.ID)
-	mu := lockFor(path)
-	mu.Lock()
-	defer mu.Unlock()
-
-	return writeAtomic(path, encoded)
+	return writeAtomic(s.path(rec.ID), encoded)
 }
 
 // writeAtomic writes through a temp file in the same directory and renames

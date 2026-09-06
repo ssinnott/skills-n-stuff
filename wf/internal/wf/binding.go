@@ -47,6 +47,24 @@ const (
 	KindTask Kind = "task"
 )
 
+// MachineLocal reports whether a kind's Ref only resolves on the host that
+// recorded it. A worktree path, a session file and a browser origin are
+// facts about one machine; a pull request URL, a vault-relative document
+// and a tracker id are facts anywhere.
+//
+// The distinction has one job: bindings of these kinds carry Host, so a
+// laptop and a desktop against one queue stop silently overwriting each
+// other's answer to "where is the checkout." Everything downstream — the
+// task block's *(wf-laptop)* annotation, a future `wf gc` — reads that
+// field rather than re-deciding which kinds deserve one.
+func (k Kind) MachineLocal() bool {
+	switch k {
+	case KindWorkspace, KindSession, KindReview:
+		return true
+	}
+	return false
+}
+
 // BindingState is one binding's own lifecycle — never the task's. A task's
 // progress is WorkState (see task.go); these say whether the thing a
 // binding points at is still there and still current.
@@ -100,7 +118,8 @@ const (
 	MetaPort = "port"
 	// MetaPID is the process id of a review pane.
 	MetaPID = "pid"
-	// MetaRelation is how a task binding relates: "parent" or "next".
+	// MetaRelation is how a task binding relates: RelationParent or
+	// RelationNext.
 	MetaRelation = "relation"
 	// MetaShortID is a tracker's own human-facing ref for a queue binding,
 	// recorded because it cannot be derived. kata builds its short id from
@@ -108,6 +127,16 @@ const (
 	// a resolver that guessed at that would be encoding one backend's
 	// convention in the one place that is supposed to be backend-neutral.
 	MetaShortID = "short_id"
+)
+
+// The values MetaRelation takes on a KindTask binding. Named rather than
+// spelled out at each call site because both ends of a NEXT edge have to
+// agree on the word, and they are written by different code paths.
+const (
+	// RelationNext is follow-on work this task spawned.
+	RelationNext = "next"
+	// RelationParent is the task this one was spawned from.
+	RelationParent = "parent"
 )
 
 // Binding is one typed, stateful reference hanging off a task.

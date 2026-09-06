@@ -97,8 +97,21 @@ type Queue interface {
 
 // Workspace is an isolated checkout for one task. One worktree per task:
 // two agents in one checkout is the failure that costs an afternoon.
+//
+// Repo and Branch are on the interface because a run has to *record* them,
+// not merely use them. Without Branch the only way back to a checkout's
+// branch was workspace.WorktreeName re-deriving it from the task's title —
+// so renaming a task in the tracker orphaned the branch a run had already
+// created, and `wf review` went looking for a ref that no longer answered
+// to that name. A fact a run established belongs on the binding it
+// produced, not recomputed from a field a human is free to edit.
 type Workspace interface {
 	Path() string
+	// Repo is the repository this checkout came from.
+	Repo() string
+	// Branch is the ref the checkout is on. Empty is honest for a
+	// provider that has no branch of its own to name.
+	Branch() string
 	Dispose(ctx context.Context) error
 }
 

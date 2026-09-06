@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/ssinnott/skills-n-stuff/wf/internal/config"
+	"github.com/ssinnott/skills-n-stuff/wf/internal/store"
 	"github.com/ssinnott/skills-n-stuff/wf/internal/wf"
 	"github.com/ssinnott/skills-n-stuff/wf/internal/workflow"
 )
@@ -31,6 +32,12 @@ type Supervisor struct {
 	Runner    wf.Runner
 	Workflows *workflow.Set
 	Config    *config.Config
+	// Store is wf's own task ledger: runs, and the typed bindings each run
+	// produced. Nil disables it, and the loop runs unchanged — nothing here
+	// takes a lifecycle decision from the ledger, so a missing one costs
+	// history and never work. See ledger.go for what is written and why the
+	// tracker keeps being written alongside it.
+	Store store.Store
 	// Workspaces builds a provider for a workflow. Injected so the loop can
 	// be tested without git.
 	Workspaces func(w workflow.Workflow) wf.WorkspaceProvider
@@ -63,6 +70,9 @@ type Result struct {
 	Task    wf.Task
 	Applied wf.ApplyResult
 	Session string
+	// Run is the id this dispatch was recorded under, and the Via every
+	// binding it produced carries.
+	Run string
 }
 
 // RunOnce dispatches a single task. An empty ref takes the top claimable
@@ -234,6 +244,22 @@ func (s *Supervisor) dispatch(ctx context.Context, task wf.Task) (Result, error)
 		}
 	}()
 
+	// The run is recorded before it has produced anything, which is the same
+	// argument the spawn-time session binding rests on: a run written down
+	// when it finishes is exactly the run that never gets written down.
+	startedAt := time.Now().UTC()
+	runID := newRunID(startedAt)
+	s.beginRun(task, flow, runID, startedAt)
+	// Every path out of here settles the run. A dispatch that died on a
+	// tracker write or a broken checkout is still a run that happened, and a
+	// row left open forever would read as one still going.
+	settled := false
+	defer func() {
+		if !settled {
+			s.endRun(task, runID, wf.SessionFailed, nil, time.Now().UTC())
+		}
+	}()
+
 	workspaceDir := ""
 	var space wf.Workspace
 	if flow.NeedsWorkspace() {
@@ -245,6 +271,7 @@ func (s *Supervisor) dispatch(ctx context.Context, task wf.Task) (Result, error)
 			return Result{}, err
 		}
 		workspaceDir = space.Path()
+		s.recordWorkspace(task, runID, space, time.Now().UTC())
 	}
 	if workspaceDir == "" {
 		workspaceDir = s.vaultOrCwd()
@@ -276,6 +303,7 @@ func (s *Supervisor) dispatch(ctx context.Context, task wf.Task) (Result, error)
 	if err := wf.BindSession(ctx, s.Queue, task.ID, binding); err != nil {
 		return Result{}, err
 	}
+	s.recordSession(task, runID, binding)
 
 	stopRenewal := s.renewLease(ctx, task)
 	runResult, runErr := handle.Wait(ctx)
@@ -288,7 +316,11 @@ func (s *Supervisor) dispatch(ctx context.Context, task wf.Task) (Result, error)
 			return Result{}, escErr
 		}
 		s.keepWorkspace(space)
-		return Result{Task: task, Applied: applied, Session: binding.Path}, nil
+		// The checkout stays live and stays bound: a crashed agent is the
+		// case the whole record exists to make inspectable.
+		s.endRun(task, runID, wf.SessionFailed, applied.Bindings, time.Now().UTC())
+		settled = true
+		return Result{Task: task, Applied: applied, Session: binding.Path, Run: runID}, nil
 	}
 
 	outcomes := wf.ParseOutcomes(runResult.TranscriptTail)
@@ -297,6 +329,9 @@ func (s *Supervisor) dispatch(ctx context.Context, task wf.Task) (Result, error)
 		// Keyed on the session so a retried run closes once, not twice.
 		IdempotencyKey: "wf-close-" + binding.ID,
 		Bind:           s.bindOptions(flow, workspaceDir),
+		// Everything this run produced comes back tagged with the run,
+		// which is what turns a flat pile of artifacts into a history.
+		Run: runID,
 	})
 	if err != nil {
 		return Result{}, err
@@ -317,10 +352,15 @@ func (s *Supervisor) dispatch(ctx context.Context, task wf.Task) (Result, error)
 	} else if space != nil {
 		if err := space.Dispose(ctx); err != nil {
 			s.logf("%s: dispose workspace: %v", task.ShortID, err)
+		} else {
+			s.disposedWorkspace(task, runID, space)
 		}
 	}
 
-	return Result{Task: task, Applied: applied, Session: binding.Path}, nil
+	s.endRun(task, runID, outcome, applied.Bindings, time.Now().UTC())
+	settled = true
+
+	return Result{Task: task, Applied: applied, Session: binding.Path, Run: runID}, nil
 }
 
 // resolveWorkflow selects the canned workflow for a task, escalating rather

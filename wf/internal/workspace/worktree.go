@@ -31,7 +31,12 @@ type Worktree struct {
 }
 
 func (w *Worktree) Path() string   { return w.dir }
+func (w *Worktree) Repo() string   { return w.repo }
 func (w *Worktree) Branch() string { return w.branch }
+
+// compile-time proof the accessors a run records through are the ones the
+// seam promises.
+var _ wf.Workspace = (*Worktree)(nil)
 
 // Keep marks the worktree to survive Dispose.
 func (w *Worktree) Keep() { w.keep = true }
@@ -83,9 +88,17 @@ func (p *Provider) prefix() string {
 	return p.BranchPrefix
 }
 
-// Create cuts a worktree for the task on a fresh branch. It fails rather
-// than reusing an existing directory: silently handing an agent someone
-// else's checkout is worse than refusing to start.
+// Create cuts a worktree for the task on a fresh branch.
+//
+// It never reuses an existing directory — silently handing an agent someone
+// else's checkout is the failure this package exists to prevent — and it no
+// longer *refuses* one either. WorktreeName is derived from the task, so the
+// name a re-run computes is the name its predecessor already holds, and a
+// run that escalated has its checkout deliberately kept on disk: refusing
+// meant a task could never be re-run while the evidence from its last run
+// was still there, which is precisely the case a re-run is for. A taken name
+// takes the next free suffix instead, the same answer artifact binding
+// already gives two runs producing one filename.
 func (p *Provider) Create(ctx context.Context, task wf.Task) (wf.Workspace, error) {
 	if p.Repo == "" {
 		return nil, fmt.Errorf("worktree provider: no repository configured")
@@ -94,13 +107,11 @@ func (p *Provider) Create(ctx context.Context, task wf.Task) (wf.Workspace, erro
 		return nil, fmt.Errorf("worktree provider: no root directory configured")
 	}
 
-	name := WorktreeName(task)
-	dir := filepath.Join(p.Root, name)
-	branch := p.prefix() + name
-
-	if _, err := os.Stat(dir); err == nil {
-		return nil, fmt.Errorf("worktree %s already exists — release the previous run first", dir)
+	dir, branch, err := p.free(ctx, WorktreeName(task))
+	if err != nil {
+		return nil, err
 	}
+
 	if err := os.MkdirAll(p.Root, 0o755); err != nil {
 		return nil, fmt.Errorf("create worktree root %s: %w", p.Root, err)
 	}
@@ -116,10 +127,51 @@ func (p *Provider) Create(ctx context.Context, task wf.Task) (wf.Workspace, erro
 	return &Worktree{dir: dir, branch: branch, repo: p.Repo, git: p.git()}, nil
 }
 
+// maxWorktrees bounds the search for a free name. It is a guard against a
+// root nobody ever cleans up, not a policy: fifty kept checkouts of one task
+// is a `wf gc` problem, and looping forever to find the fifty-first would
+// hide it.
+const maxWorktrees = 50
+
+// free returns the first directory and branch pair that nothing holds.
+//
+// Both halves have to be free, not just the directory: Dispose removes the
+// branch on a best-effort basis, so a branch can outlive its checkout, and
+// `git worktree add -b` refuses a name that is already a ref.
+func (p *Provider) free(ctx context.Context, base string) (dir, branch string, err error) {
+	if base == "" {
+		base = "task"
+	}
+	for n := 1; n <= maxWorktrees; n++ {
+		name := base
+		if n > 1 {
+			name = fmt.Sprintf("%s-%d", base, n)
+		}
+		dir = filepath.Join(p.Root, name)
+		branch = p.prefix() + name
+
+		if _, statErr := os.Stat(dir); statErr == nil {
+			continue
+		}
+		if BranchExists(ctx, p.git(), p.Repo, branch) {
+			continue
+		}
+		return dir, branch, nil
+	}
+	return "", "", fmt.Errorf("no free worktree name for %s under %s after %d tries — clean up old checkouts", base, p.Root, maxWorktrees)
+}
+
 var unsafeChars = regexp.MustCompile(`[^a-z0-9]+`)
 
 // WorktreeName builds a directory name that is stable for a task and safe
 // on disk: the short id keeps it unique, the slug keeps it readable.
+//
+// It is the naming rule for a *new* worktree and deliberately not the
+// lookup rule for an existing one. The slug comes from the task's title, so
+// a rename in the tracker changes what this returns while the checkout and
+// the branch on disk keep the old name — which is why a run records its
+// branch on the workspace binding it produced (see wf.MetaBranch) rather
+// than expecting anyone to recompute it from here later.
 func WorktreeName(task wf.Task) string {
 	slug := unsafeChars.ReplaceAllString(strings.ToLower(task.Title), "-")
 	slug = strings.Trim(slug, "-")
@@ -153,10 +205,9 @@ func IsRepo(ctx context.Context, git, dir string) bool {
 
 // BranchExists reports whether branch is a local ref in repo. `wf review`
 // uses this to decide whether a task's worktree branch is still around
-// after its checkout was disposed — the branch name itself is never
-// persisted anywhere, since Create derives it deterministically from the
-// task (see WorktreeName), so this is the only way to tell "branch was
-// never pushed" apart from "branch merged and deleted."
+// after its checkout was disposed: which branch to ask about now comes off
+// the workspace binding the run recorded, and this is what tells "branch
+// was never pushed" apart from "branch merged and deleted."
 func BranchExists(ctx context.Context, git, repo, branch string) bool {
 	if git == "" {
 		git = "git"
