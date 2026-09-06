@@ -38,12 +38,15 @@ wf attach abc4               # reopen the pi session that ran this task
 wf bind abc4 notes/plan.md   # bind a task to a note by hand
 wf ui abc4                   # deep link into kata's web UI
 wf ui                        # the daemon's origin, for a framed UI
+wf review abc4               # resolve the task's diff and open it in difit
+wf review abc4 --stop        # stop the running viewer
+wf review comment abc4       # read a pasted review prompt from stdin
 ```
 
-Add `--json` to `ready`, `show`, `escalations`, `workflows` and `run` for
-machine-readable output. That is the protocol both clients speak — the pi
-extension and the Obsidian plugin talk to wf, never to kata directly, so the
-queue backend can change without touching either.
+Add `--json` to `ready`, `show`, `escalations`, `workflows`, `run` and
+`review` for machine-readable output. That is the protocol both clients
+speak — the pi extension and the Obsidian plugin talk to wf, never to kata
+directly, so the queue backend can change without touching either.
 
 ```json
 { "tasks": [ { "id": "01M1S…", "shortId": "neck", "title": "Add the parser",
@@ -72,8 +75,10 @@ queue backend can change without touching either.
 }
 ```
 
-`KATA_BIN` and `PI_BIN` override binaries that are off `PATH` — they usually
-are under a launchd or systemd unit.
+`KATA_BIN`, `PI_BIN` and `DIFIT_BIN` override binaries that are off `PATH` —
+they usually are under a launchd or systemd unit. `difitCommand` (default
+`npx difit`) is a shell-style command line rather than a bare binary, since
+the default itself is two words; `DIFIT_BIN` replaces the whole thing.
 
 ## Canned workflows
 
@@ -158,6 +163,43 @@ kata enforces the same rule independently, refusing an evidence-free close.
 wf does not synthesize evidence to get past it: invented evidence is precisely
 what would make a closed task worthless.
 
+## Review
+
+`wf review <ref>` resolves a task to something a human can look at and opens
+it in [difit](https://github.com/yoshiko-pg/difit), a local diff viewer. It
+tries, in order, the first rung that matches:
+
+1. **A PR.** If the task recorded one (`wf.pr` metadata, written when a run
+   reports `PR:`), difit opens `--pr <url>` — the shipped truth once one
+   exists.
+2. **A live worktree.** If the run's checkout (`pi.workspace`) is still on
+   disk, difit opens it directly with `--include-untracked` — this is the
+   rung that matters most, because an escalated run that produced no PR is
+   exactly what a human needs to look at, and its checkout is the only place
+   the agent's untracked and uncommitted state still lives.
+3. **A surviving branch.** If the worktree was disposed but its branch is
+   still around, difit diffs it against the repo's base branch with
+   `--merge-base`.
+4. **A bound note.** A workflow that only produced a document has no diff at
+   all; `wf review` reports the vault path and opens nothing.
+
+Findings the run filed as `ISSUE:` outcomes seed the viewer as difit review
+threads (`--comment`), when the issue's own title names a file and line
+(`internal/foo.go:42 — nil check`) — most filed issues carry only a tracker
+link and a title, not a location, and those are left unseeded rather than
+guessed onto a line.
+
+`wf review <ref> --stop` kills the running viewer. There is one review pane
+at a time: a new `wf review` replaces whatever difit is already running, the
+same way one worktree per task keeps two agents from fighting over a
+checkout.
+
+Feedback flows back by hand: difit keeps its comments in the browser's own
+storage with no API to read them back, so open its "Copy All Prompt" button,
+copy what it renders, and run `wf review comment <ref>`, pasting into stdin.
+It lands on the task prefixed as human review feedback, distinct from an
+agent's own comments.
+
 ## Testing
 
 ```sh
@@ -176,6 +218,10 @@ Unit tests run anywhere. The integration tests need the real `kata` binary on
   worktrees, and a stub agent — closing a real issue, escalating and keeping
   the worktree, moving a produced document into a vault and binding it both
   ways, spawning a linked follow-on, and four concurrent runs.
+- **`internal/review`** never needs difit, kata or a real repo installed:
+  the target ladder is a pure function over already-resolved inputs, and
+  difit's own process is stubbed behind a `Spawner` the same way pi is
+  stubbed in the supervisor tests.
 
 The agent is a stub rather than pi itself because pi needs a provider key and
 would make the tests non-deterministic. `BuildArgs` in `internal/runner/pi.go`
@@ -217,6 +263,7 @@ internal/kata/         kata queue backend (the only wire-format assumptions)
 internal/runner/       pi runner
 internal/workspace/    git worktrees
 internal/note/         Obsidian frontmatter binding
+internal/review/       target ladder, difit lifecycle, finding seeds
 internal/config/       settings
 workflows/             example workflows to copy into ~/.wf/workflows
 ```

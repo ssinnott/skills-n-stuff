@@ -18,6 +18,9 @@ func TestLoadMissingFileUsesDefaults(t *testing.T) {
 	if cfg.MaxConcurrent != 1 {
 		t.Errorf("MaxConcurrent = %d, want 1", cfg.MaxConcurrent)
 	}
+	if cfg.DifitCommand != "npx difit" {
+		t.Errorf("DifitCommand = %q, want the npx default", cfg.DifitCommand)
+	}
 }
 
 func TestLoadReadsAndExpands(t *testing.T) {

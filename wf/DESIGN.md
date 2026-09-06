@@ -159,6 +159,62 @@ rather than a rewrite.
   elsewhere, not that this task's work exists. Triage workflows ask their
   agent for a writeup, which does.
 
+- **wf.repo, wf.pr and wf.issue are wf's own memory, not a read of kata's
+  evidence.** `Close` turns `CloseResult` into repeated
+  `--evidence pr:<url>` flags, but `NormalizeIssue` never reads an evidence
+  field back — kata's wire format there is undocumented, and guessing at it
+  would repeat exactly the mistake the five wire-format surprises above were
+  fixed to stop making. So a run's repo, PRs and filed issues are recorded
+  as wf's own metadata at the same seam that already applies outcomes,
+  independent of how the run settles: an escalated run that still opened a
+  PR, or named its checkout, leaves that trace right there rather than
+  nowhere. This is what makes `wf review`'s first rung — jump straight to a
+  task's PR — possible at all without shelling out to `gh` or parsing a
+  format nothing pins.
+
+- **`wf review`'s target ladder tries the strongest evidence first, and
+  falls through in the order a human would.** A shipped PR is the truth
+  once one exists. A live worktree beats a pushed branch even though a
+  branch is "more finished," because the worktree still holds whatever the
+  agent left untracked or uncommitted — exactly the state an escalated run
+  (which is kept on disk for precisely this reason) needs a human to see.
+  A branch is what is left once that checkout is disposed. A bound note is
+  what is left when there was never a diff at all. Every rung reads a fact
+  that already exists on the task or in config; the ladder invents nothing,
+  including a repo path when PR evidence is not there — that would be
+  fabricating a place to look, not reporting one. Case 2's disk check
+  (`os.Stat`) is what keeps a disposed worktree from being handed to difit
+  as if it were live.
+
+- **One review pane, replaced rather than accumulated.** `wf review`
+  records the live viewer (ref, pid, port, url) next to wf's own config, the
+  same neighborhood as sessions and worktrees, and a new invocation kills
+  the previous pid before spawning. This mirrors the one-worktree-per-task
+  rule: a second background difit server nobody is looking at is the same
+  kind of mess as a second agent in the same checkout, just quieter about
+  it. Rejected: one viewer per task, left running — orphaned Node
+  processes accumulate silently, and there is only one human looking at
+  one diff at a time regardless of how many tasks are in flight.
+
+- **Findings seed the viewer; comments come back by a clipboard, not a
+  pipe.** Machine → human is automated: a task's `ISSUE:` outcomes that
+  name a file and line become difit's `--comment` threads at spawn time,
+  because that information already exists and rendering it costs nothing.
+  Human → machine cannot be automated the same way: difit keeps comments in
+  the browser's own `localStorage` and ships no endpoint to read them back
+  (verified against v5.0.12 — `/api/diff` exists, `/api/comments` 404s), so
+  `wf review comment <ref>` reads whatever a human pasted from difit's
+  "Copy All Prompt" button off stdin and appends it to the task, prefixed
+  so it reads as review feedback rather than an agent's own comment. The
+  asymmetry is real, not an oversight: one direction is wired through data
+  wf already has, the other is a hop through a UI action a script cannot
+  trigger. Rejected: **polling difit for comments** — there is no endpoint
+  to poll, verified rather than assumed, so this was never a timing problem
+  to solve. Rejected: **a native diff renderer** built into wf — difit
+  already does threaded, line-anchored review with a UI worth pasting text
+  out of, and duplicating that (in Go, in a terminal) to save one clipboard
+  step is a worse trade than the asymmetry it would remove.
+
 - **Interactive pi is a client, not the host.** The pi extension registers
   slash commands that shell out to `wf`; it holds no orchestration state.
   Restarting the TUI means nothing to running work. Rejected: an extension
@@ -240,6 +296,10 @@ rather than a rewrite.
       bind command, and rename sync.
 - [ ] Retry with backoff and a dead-letter state, if escalation-only proves
       too blunt in practice.
+- [x] `wf review`: the target ladder (PR, live worktree, surviving branch,
+      bound note), difit spawn/parse/kill behind a stubbed seam, one
+      recorded viewer at a time, findings seeded as `--comment` threads,
+      and `wf review comment` for the human side of feedback.
 
 ## What the live protocol turned out to be
 
@@ -283,6 +343,14 @@ with kata's wire format, and the integration tests are what keep it honest.
   invocation; escalation is the only recovery. Anything cleverer needs a
   backoff and a dead-letter state, which is the point at which the event
   orchestrator this design rejected starts earning its keep again.
+- **difit's own CLI surface is unverified against any published reference,**
+  the same category of risk as pi's `BuildArgs` above: `--pr`,
+  `--merge-base`, `--include-untracked`, `--comment`'s JSON shape, and the
+  background-mode JSON line were confirmed empirically against v5.0.12, not
+  against documentation, and its exit code is already known not to be a
+  reliable success signal. Mitigation is the same shape as pi's: the seam
+  is narrow (`Spawner.Spawn` plus `ParseSpawned`), so the first live run
+  that disagrees names exactly what to change.
 
 ## Done means
 

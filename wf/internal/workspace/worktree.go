@@ -151,6 +151,20 @@ func IsRepo(ctx context.Context, git, dir string) bool {
 	return err == nil
 }
 
+// BranchExists reports whether branch is a local ref in repo. `wf review`
+// uses this to decide whether a task's worktree branch is still around
+// after its checkout was disposed — the branch name itself is never
+// persisted anywhere, since Create derives it deterministically from the
+// task (see WorktreeName), so this is the only way to tell "branch was
+// never pushed" apart from "branch merged and deleted."
+func BranchExists(ctx context.Context, git, repo, branch string) bool {
+	if git == "" {
+		git = "git"
+	}
+	_, err := runGit(ctx, git, repo, "show-ref", "--verify", "--quiet", "refs/heads/"+branch)
+	return err == nil
+}
+
 func runGit(ctx context.Context, git, dir string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, git, args...)
 	cmd.Dir = dir

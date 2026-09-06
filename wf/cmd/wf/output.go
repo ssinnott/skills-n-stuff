@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/ssinnott/skills-n-stuff/wf/internal/review"
 	"github.com/ssinnott/skills-n-stuff/wf/internal/supervisor"
 	"github.com/ssinnott/skills-n-stuff/wf/internal/wf"
 	"github.com/ssinnott/skills-n-stuff/wf/internal/workflow"
@@ -51,6 +52,50 @@ type jsonWorkflow struct {
 	Labels      []string `json:"labels,omitempty"`
 	BindDocs    bool     `json:"bindDocs,omitempty"`
 	VaultDir    string   `json:"vaultDir,omitempty"`
+}
+
+// jsonReview is the `wf review` contract. Another client codes directly
+// against these field names, so they are additive-only: a new rung or
+// flag gets a new omitempty field, never a renamed one.
+type jsonReview struct {
+	Ref  string `json:"ref"`
+	Kind string `json:"kind,omitempty"`
+
+	URL  string `json:"url,omitempty"`
+	Port int    `json:"port,omitempty"`
+	PID  int    `json:"pid,omitempty"`
+
+	Repo   string `json:"repo,omitempty"`
+	Target string `json:"target,omitempty"`
+	Base   string `json:"base,omitempty"`
+	PR     string `json:"pr,omitempty"`
+	Seeded int    `json:"seeded,omitempty"`
+
+	// Note is set instead of the viewer fields when kind is "doc": there is
+	// no diff to open, only a vault-relative path.
+	Note string `json:"note,omitempty"`
+
+	// Stopped and Commented are set only by `--stop` and `review comment`
+	// respectively; a resolve response never carries either.
+	Stopped   bool `json:"stopped,omitempty"`
+	Commented bool `json:"commented,omitempty"`
+}
+
+func reviewToJSON(r review.Result) jsonReview {
+	out := jsonReview{Ref: r.Ref, Kind: string(r.Target.Kind)}
+	if r.Target.Kind == review.KindDoc {
+		out.Note = r.Target.Note
+		return out
+	}
+	out.Repo = r.Target.Repo
+	out.Target = r.Target.Branch
+	out.Base = r.Target.Base
+	out.PR = r.Target.PR
+	out.Seeded = r.Seeded
+	out.URL = r.Viewer.URL
+	out.Port = r.Viewer.Port
+	out.PID = r.Viewer.PID
+	return out
 }
 
 type jsonRunResult struct {

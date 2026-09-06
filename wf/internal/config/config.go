@@ -39,6 +39,12 @@ type Config struct {
 	// launchd or systemd unit.
 	KataBin string `json:"kataBin"`
 	PiBin   string `json:"piBin"`
+	// DifitCommand is the review viewer, as a shell-style command line
+	// rather than a bare binary: the default is the two-word "npx difit"
+	// so a checkout with no global install still works. DIFIT_BIN
+	// overrides it the same way KATA_BIN and PI_BIN override their own
+	// binaries.
+	DifitCommand string `json:"difitCommand"`
 	// MaxConcurrent caps simultaneous runs.
 	MaxConcurrent int `json:"maxConcurrent"`
 	// LeaseTTLSeconds overrides the default lease window.
@@ -103,6 +109,9 @@ func (c *Config) applyDefaults() {
 	}
 	if c.MaxConcurrent <= 0 {
 		c.MaxConcurrent = 1
+	}
+	if c.DifitCommand == "" {
+		c.DifitCommand = "npx difit"
 	}
 
 	c.Repo = Expand(c.Repo)
