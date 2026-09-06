@@ -66,6 +66,7 @@ queue backend can change without touching either.
   "workflowDir": "~/.wf/workflows",
   "profiles": { "coding": "~/.pi/profiles/coding", "writer": "~/.pi/profiles/writer" },
   "defaultProfile": "coding",
+  "defaultModel": "claude-sonnet-5",
   "maxConcurrent": 3,
   "leaseTTLSeconds": 900
 }
@@ -84,6 +85,7 @@ prompt. Copy [`workflows/`](workflows/) to `~/.wf/workflows` to start.
 name: research
 description: Investigate a question and write it up as a vault note
 profile: writer          # → PI_CODING_AGENT_DIR via config.profiles
+model: claude-sonnet-5   # → pi's --model; empty runs config.defaultModel
 workspace: none          # or worktree (default)
 labels: research         # tasks with this label select this workflow
 bind-docs: true          # DOC artifacts move into the vault
@@ -99,11 +101,17 @@ Research {{TASK_TITLE}} and write it up.
 Placeholders: `{{TASK_REF}}`, `{{TASK_ID}}`, `{{TASK_TITLE}}`,
 `{{TASK_BODY}}`, `{{WORKSPACE}}`, `{{RESOURCES}}`, `{{WORKFLOW}}`.
 
-A workflow is dispatch wiring, not expertise — which profile, which prompt,
-which resources, where artifacts land. The judgment lives in the skills the
-profile loads. Selection is `wf.workflow` metadata first, then label match; a
-task naming a workflow that is not loaded escalates rather than running under
-a default.
+A workflow is dispatch wiring, not expertise — which profile, which model,
+which prompt, which resources, where artifacts land. The judgment lives in
+the skills the profile loads. Selection is `wf.workflow` metadata first, then
+label match; a task naming a workflow that is not loaded escalates rather
+than running under a default.
+
+Model lives on the workflow rather than the profile because the two vary
+independently: a plan-and-implement step and a one-line triage step often
+warrant different models under the very same profile. A workflow that names
+none runs under `config.defaultModel`; naming neither runs under pi's own
+default.
 
 ## How the pieces bind
 
@@ -189,11 +197,14 @@ session: `/wf` for the queue, `/wf escalations`, `/wf show <ref>`,
 task's agent session via pi's own session replacement. The extension holds no
 orchestration logic; it shells out to `wf` and renders the JSON.
 
-**Obsidian** — `obsidian-pi-tasks` adds an agent queue pane and a framed kata
-UI. Selection lives on the Obsidian side because an embedded page cannot tell
-the host what you clicked; clicking a queue row opens the bound note and
-points the frame at the task. Renaming a bound note rewrites `obsidian.note`
-through `wf bind`, so bindings survive a reorganization.
+**Obsidian** — [`obsidian-wf`](../obsidian-wf) adds an agent queue pane and a
+framed kata UI, deliberately separate from `obsidian-pi-tasks` (that plugin
+binds pi sessions to documents; this one binds agent runs to tracker issues,
+and needs only the `wf` binary). Selection lives on the Obsidian side because
+an embedded page cannot tell the host what you clicked; clicking a queue row
+opens the bound note and points the frame at the task. Renaming a bound note
+rewrites `obsidian.note` through `wf bind`, so bindings survive a
+reorganization.
 
 ## Layout
 

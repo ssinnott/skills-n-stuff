@@ -33,6 +33,8 @@ type Config struct {
 	Profiles map[string]string `json:"profiles"`
 	// DefaultProfile is used when a workflow names none.
 	DefaultProfile string `json:"defaultProfile"`
+	// DefaultModel is used when a workflow names none.
+	DefaultModel string `json:"defaultModel"`
 	// KataBin and PiBin override binaries that are often off PATH under a
 	// launchd or systemd unit.
 	KataBin string `json:"kataBin"`
@@ -125,6 +127,17 @@ func (c *Config) ProfileDir(name string) string {
 		return ""
 	}
 	return c.Profiles[name]
+}
+
+// ResolveModel picks the model a run should use: the workflow's own choice
+// first, falling back to the configured default. Unlike ProfileDir this
+// needs no lookup table — a workflow's model is already the value pi wants,
+// not a name to resolve further.
+func (c *Config) ResolveModel(workflowModel string) string {
+	if workflowModel != "" {
+		return workflowModel
+	}
+	return c.DefaultModel
 }
 
 // Expand resolves a leading ~ against the home directory.

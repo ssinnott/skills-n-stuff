@@ -45,7 +45,7 @@ func TestNewSessionPathSanitizesRef(t *testing.T) {
 
 func TestBuildArgsPassesSessionAndPrompt(t *testing.T) {
 	p := &Pi{}
-	args := p.BuildArgs("/sessions/abc4.jsonl", "do the thing")
+	args := p.BuildArgs("/sessions/abc4.jsonl", "do the thing", "")
 
 	// wf mints the session path so the binding is writable before the agent
 	// produces anything — that is the whole reason attach works on a crash.
@@ -61,10 +61,31 @@ func TestBuildArgsPassesSessionAndPrompt(t *testing.T) {
 }
 
 func TestBuildArgsIncludesExtras(t *testing.T) {
-	p := &Pi{ExtraArgs: []string{"--model", "fast"}}
-	args := p.BuildArgs("/s/a.jsonl", "prompt")
-	if !contains(args, "--model") || args[len(args)-1] != "prompt" {
+	p := &Pi{ExtraArgs: []string{"--dangerously-skip-permissions"}}
+	args := p.BuildArgs("/s/a.jsonl", "prompt", "")
+	if !contains(args, "--dangerously-skip-permissions") || args[len(args)-1] != "prompt" {
 		t.Errorf("args = %v, want extras before the prompt", args)
+	}
+}
+
+func TestBuildArgsIncludesModel(t *testing.T) {
+	p := &Pi{}
+	args := p.BuildArgs("/s/a.jsonl", "prompt", "opus")
+	if !contains(args, "--model") || args[len(args)-1] != "prompt" {
+		t.Errorf("args = %v, want --model before the prompt", args)
+	}
+	for i, v := range args {
+		if v == "--model" && (i+1 >= len(args) || args[i+1] != "opus") {
+			t.Errorf("args = %v, want opus to follow --model", args)
+		}
+	}
+}
+
+func TestBuildArgsOmitsModelWhenEmpty(t *testing.T) {
+	p := &Pi{}
+	args := p.BuildArgs("/s/a.jsonl", "prompt", "")
+	if contains(args, "--model") {
+		t.Errorf("args = %v, want no --model flag when unset", args)
 	}
 }
 

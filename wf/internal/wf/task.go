@@ -119,6 +119,8 @@ type RunOptions struct {
 	// ProfileDir becomes PI_CODING_AGENT_DIR, selecting the worker's
 	// package and skill set.
 	ProfileDir string
+	// Model becomes pi's --model value; empty runs pi's own default.
+	Model string
 }
 
 // RunResult is what a settled run reports back.

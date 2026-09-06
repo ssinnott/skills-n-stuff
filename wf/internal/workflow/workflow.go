@@ -36,6 +36,12 @@ type Workflow struct {
 	Description string
 	// Profile names a pi profile in config; empty runs the default.
 	Profile string
+	// Model names the model pi should run this workflow under, passed
+	// straight through as pi's --model value; empty runs the configured
+	// default. A plan-and-implement step and a one-line triage step warrant
+	// different models, so this lives on the workflow rather than the
+	// profile, which is about tools and skills, not model choice.
+	Model string
 	// Workspace is "worktree" (default) or "none" for tasks that need no
 	// checkout, such as research that only writes to the vault.
 	Workspace string
@@ -194,6 +200,7 @@ func Parse(text string) (Workflow, error) {
 		Name:        fields["name"],
 		Description: fields["description"],
 		Profile:     fields["profile"],
+		Model:       fields["model"],
 		Workspace:   fields["workspace"],
 		Repo:        fields["repo"],
 		Base:        fields["base"],

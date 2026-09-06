@@ -2,6 +2,7 @@
 name: plan-to-pr
 description: Plan a change, implement it, and open a pull request
 profile: coding
+model: claude-opus-5
 workspace: worktree
 labels: plan-to-pr, feature, bug
 ---

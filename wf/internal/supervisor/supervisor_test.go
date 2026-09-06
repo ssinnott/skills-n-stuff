@@ -169,6 +169,7 @@ type fakeRunner struct {
 	err        error
 	prompts    []string
 	profiles   []string
+	models     []string
 	cwds       []string
 	release    chan struct{}
 	concurrent int
@@ -181,6 +182,7 @@ func (r *fakeRunner) Start(_ context.Context, opts wf.RunOptions) (wf.RunHandle,
 	r.mu.Lock()
 	r.prompts = append(r.prompts, opts.Prompt)
 	r.profiles = append(r.profiles, opts.ProfileDir)
+	r.models = append(r.models, opts.Model)
 	r.cwds = append(r.cwds, opts.Cwd)
 	r.concurrent++
 	if r.concurrent > r.maxSeen {
@@ -460,7 +462,7 @@ func TestRunOnceNothingReady(t *testing.T) {
 
 func TestWorkflowSelectionDrivesPromptAndProfile(t *testing.T) {
 	flows := loadFlows(t, map[string]string{
-		"research.md": "---\nname: research\nprofile: writer\nworkspace: none\nlabels: research\n---\nResearch {{TASK_TITLE}} thoroughly.\n",
+		"research.md": "---\nname: research\nprofile: writer\nmodel: claude-opus-5\nworkspace: none\nlabels: research\n---\nResearch {{TASK_TITLE}} thoroughly.\n",
 	})
 
 	q := newQueue(wf.Task{ID: "01HZ", ShortID: "abc4", Title: "Kata internals", Labels: []string{"research"}})
@@ -468,6 +470,7 @@ func TestWorkflowSelectionDrivesPromptAndProfile(t *testing.T) {
 	p := &fakeProvider{}
 	s := newSupervisor(q, r, p, flows)
 	s.Config.Profiles = map[string]string{"writer": "/profiles/writer"}
+	s.Config.DefaultModel = "claude-sonnet-5"
 	s.Config.Vault = "/vault"
 
 	if _, err := s.RunOnce(context.Background(), ""); err != nil {
@@ -484,12 +487,36 @@ func TestWorkflowSelectionDrivesPromptAndProfile(t *testing.T) {
 	if r.profiles[0] != "/profiles/writer" {
 		t.Errorf("profile = %q, want the workflow's", r.profiles[0])
 	}
+	// The workflow names a model explicitly, so it wins over the configured
+	// default rather than being overridden by it.
+	if r.models[0] != "claude-opus-5" {
+		t.Errorf("model = %q, want the workflow's", r.models[0])
+	}
 	// workspace: none runs in the vault, not a checkout.
 	if len(p.spaces) != 0 {
 		t.Error("workspace: none must not create a worktree")
 	}
 	if r.cwds[0] != "/vault" {
 		t.Errorf("cwd = %q, want the vault", r.cwds[0])
+	}
+}
+
+func TestWorkflowWithNoModelFallsBackToConfigDefault(t *testing.T) {
+	flows := loadFlows(t, map[string]string{
+		"research.md": "---\nname: research\nworkspace: none\nlabels: research\n---\nResearch {{TASK_TITLE}}\n",
+	})
+
+	q := newQueue(wf.Task{ID: "01HZ", ShortID: "abc4", Title: "Kata internals", Labels: []string{"research"}})
+	r := &fakeRunner{transcript: "DONE\n"}
+	s := newSupervisor(q, r, &fakeProvider{}, flows)
+	s.Config.DefaultModel = "claude-sonnet-5"
+	s.Config.Vault = "/vault"
+
+	if _, err := s.RunOnce(context.Background(), ""); err != nil {
+		t.Fatalf("RunOnce() error = %v", err)
+	}
+	if r.models[0] != "claude-sonnet-5" {
+		t.Errorf("model = %q, want the configured default", r.models[0])
 	}
 }
 

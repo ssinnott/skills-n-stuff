@@ -259,6 +259,7 @@ func (s *Supervisor) dispatch(ctx context.Context, task wf.Task) (Result, error)
 		Prompt:     s.prompt(flow, task, workspaceDir),
 		TaskRef:    task.ShortID,
 		ProfileDir: s.Config.ProfileDir(flow.Profile),
+		Model:      s.Config.ResolveModel(flow.Model),
 	})
 	if err != nil {
 		return Result{}, fmt.Errorf("start agent for %s: %w", task.ShortID, err)

@@ -2,6 +2,7 @@
 name: research
 description: Investigate a question and write the answer up as a vault note
 profile: writer
+model: claude-sonnet-5
 workspace: none
 labels: research, question
 bind-docs: true

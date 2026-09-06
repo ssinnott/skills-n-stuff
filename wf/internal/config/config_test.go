@@ -85,6 +85,17 @@ func TestProfileDir(t *testing.T) {
 	}
 }
 
+func TestResolveModel(t *testing.T) {
+	cfg := &Config{DefaultModel: "claude-sonnet-5"}
+
+	if got := cfg.ResolveModel("claude-opus-5"); got != "claude-opus-5" {
+		t.Errorf("ResolveModel() = %q, want the workflow's own choice", got)
+	}
+	if got := cfg.ResolveModel(""); got != "claude-sonnet-5" {
+		t.Errorf("ResolveModel(\"\") = %q, want the default", got)
+	}
+}
+
 func TestExpand(t *testing.T) {
 	home, err := os.UserHomeDir()
 	if err != nil {

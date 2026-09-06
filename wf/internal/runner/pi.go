@@ -157,7 +157,7 @@ func (p *Pi) Start(ctx context.Context, opts wf.RunOptions) (wf.RunHandle, error
 		ref = "run"
 	}
 	id, path := NewSessionPath(root, ref, time.Now())
-	args := p.BuildArgs(path, opts.Prompt)
+	args := p.BuildArgs(path, opts.Prompt, opts.Model)
 
 	cmd := exec.CommandContext(ctx, p.bin(), args...)
 	cmd.Dir = opts.Cwd
@@ -188,12 +188,21 @@ func (p *Pi) Start(ctx context.Context, opts wf.RunOptions) (wf.RunHandle, error
 // BuildArgs assembles pi's argv.
 //
 // ASSUMPTION, unverified against a live pi: print mode takes the prompt as
-// a positional argument, and `--session` accepts a path that does not yet
-// exist. Both are taken from pi's published CLI reference
-// (`-p, --print`, `--session <path|id>`). If the first live run disagrees,
-// this function is the only thing to change.
-func (p *Pi) BuildArgs(sessionPath, prompt string) []string {
+// a positional argument, `--session` accepts a path that does not yet
+// exist, and `--model <name>` selects the model. All three are taken from
+// pi's published CLI reference (`-p, --print`, `--session <path|id>`,
+// `--model <name>`). If the first live run disagrees, this function is the
+// only thing to change.
+//
+// model comes from the dispatched workflow, resolved against config's
+// default before this call — ExtraArgs is the operator's own fixed flags
+// (tool access, sandboxing) and stays put regardless of which model a given
+// run asks for, so the two never fight over the same flag.
+func (p *Pi) BuildArgs(sessionPath, prompt, model string) []string {
 	args := []string{"--session", sessionPath, "-p"}
 	args = append(args, p.ExtraArgs...)
+	if model != "" {
+		args = append(args, "--model", model)
+	}
 	return append(args, prompt)
 }

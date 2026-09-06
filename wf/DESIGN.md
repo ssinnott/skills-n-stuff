@@ -91,16 +91,26 @@ rather than a rewrite.
   checkout is the evidence a human needs to diagnose the run.
 
 - **A canned workflow is dispatch wiring, not agent judgment.** A workflow
-  file names a profile, a prompt, resources, and where artifacts land — it
-  does not contain the expertise. That stays in the skills the profile
-  loads, exactly as pi-tasks decided when it refused to ship workflow
-  skills. Selection is by task metadata (`wf.workflow`) first, then by
-  label, so a queue can route work by labelling it and a one-off task can
+  file names a profile, a model, a prompt, resources, and where artifacts
+  land — it does not contain the expertise. That stays in the skills the
+  profile loads, exactly as pi-tasks decided when it refused to ship
+  workflow skills. Selection is by task metadata (`wf.workflow`) first, then
+  by label, so a queue can route work by labelling it and a one-off task can
   still override. A task naming a workflow that is not loaded escalates
   rather than falling back to a default: running the wrong recipe quietly
   is worse than not running. Rejected: workflows as executable definitions
   (that is the workflow engine this design exists to avoid) and selection
   by title parsing (invisible and unqueryable).
+
+- **Model is a workflow property, not a profile property.** A profile
+  decides what an agent can reach — tools, skills, permissions. A model
+  decides how much thought is worth spending, and that varies by step, not
+  by role: the same coding profile plans under one model and does a
+  mechanical rename under a cheaper one. A workflow with no `model` runs
+  under `config.defaultModel`; wf never picks a model on its own beyond
+  that config default, since guessing "how hard is this task" from a title
+  is exactly the kind of silent judgment call this design keeps out of the
+  dispatcher.
 
 - **Workflow files are markdown with flat frontmatter.** Scalars and
   comma-separated lists, matching the skill and command files these sit

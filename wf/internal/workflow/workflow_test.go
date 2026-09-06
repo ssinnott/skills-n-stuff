@@ -13,6 +13,7 @@ const planToPR = `---
 name: plan-to-pr
 description: Turn an issue into a reviewed pull request
 profile: coding
+model: claude-opus-5
 workspace: worktree
 labels: plan-to-pr, feature
 resources: /vault/templates/plan.md, /vault/checklists/pr.md
@@ -35,7 +36,7 @@ func TestParse(t *testing.T) {
 		t.Fatalf("Parse() error = %v", err)
 	}
 
-	if w.Name != "plan-to-pr" || w.Profile != "coding" {
+	if w.Name != "plan-to-pr" || w.Profile != "coding" || w.Model != "claude-opus-5" {
 		t.Errorf("scalars not parsed: %+v", w)
 	}
 	if len(w.Labels) != 2 || w.Labels[0] != "plan-to-pr" {
