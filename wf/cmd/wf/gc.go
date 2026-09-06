@@ -9,12 +9,18 @@ import (
 )
 
 func (a *app) cmdGC(ctx context.Context, args []string) (int, error) {
-	opts := gc.Options{Delete: hasFlag(args, "--delete")}
+	fs, cf := newFlagSet("gc")
+	del := fs.Bool("delete", false, "drop dead records")
+	if _, err := parseFlags(fs, args); err != nil {
+		return 1, err
+	}
+
+	opts := gc.Options{Delete: *del}
 	report, err := (&gc.GC{Store: store.New(store.Root(a.cfg.Path)), Actor: a.cfg.Actor}).Sweep(ctx, opts)
 	if err != nil {
 		return 1, err
 	}
-	if hasFlag(args, "--json") {
+	if cf.json {
 		out := jsonGC{Records: report.Records, Deleted: opts.Delete, Repaired: report.Repaired()}
 		for _, f := range report.Findings {
 			row := jsonFinding{Kind: string(f.Kind), Task: f.Task,

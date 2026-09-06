@@ -32,11 +32,15 @@ import (
 // task's many rather than the task itself; a note bound before this existed
 // keeps working, and anything reading it keeps reading it.
 func (a *app) cmdBind(ctx context.Context, args []string) (int, error) {
-	positional := positionals(args)
-	if len(positional) < 2 {
+	fs, _ := newFlagSet("bind")
+	positionals, err := parseFlags(fs, args)
+	if err != nil {
+		return 1, err
+	}
+	if len(positionals) < 2 {
 		return 1, errors.New("wf bind <ref> <note.md>")
 	}
-	ref, notePath := positional[0], positional[1]
+	ref, notePath := positionals[0], positionals[1]
 
 	task, err := a.queue.Get(ctx, ref)
 	if err != nil {

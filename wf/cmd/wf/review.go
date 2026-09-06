@@ -28,11 +28,10 @@ func (a *app) reviewSession() *review.Session {
 // reviewArgs decides between the two ways `wf review` can be invoked: a
 // task ref resolved through the target ladder, or an ad-hoc --pr url that
 // bypasses the ladder (and any task lookup) entirely. Passing both is a
-// usage error rather than one silently winning — kept as a pure function
-// so the mutual-exclusion rule is testable without an app or a queue.
-func reviewArgs(args []string) (ref, prURL string, err error) {
-	ref = firstPositional(args)
-	prURL = flagValue(args, "--pr")
+// usage error rather than one silently winning — kept as a pure function,
+// over already-parsed values, so the mutual-exclusion rule is testable
+// without an app, a queue, or a FlagSet.
+func reviewArgs(ref, prURL string) (string, string, error) {
 	if ref != "" && prURL != "" {
 		return "", "", errors.New("wf review: <ref> and --pr are mutually exclusive")
 	}
@@ -40,27 +39,37 @@ func reviewArgs(args []string) (ref, prURL string, err error) {
 }
 
 func (a *app) cmdReview(ctx context.Context, args []string) (int, error) {
-	positional := positionals(args)
-	if len(positional) > 0 && positional[0] == "comment" {
-		return a.cmdReviewComment(ctx, args, positional)
+	if len(args) > 0 && args[0] == "comment" {
+		return a.cmdReviewComment(ctx, args[1:])
 	}
 
-	asJSON := hasFlag(args, "--json")
+	fs, cf := newFlagSet("review")
+	stop := fs.Bool("stop", false, "stop the running viewer")
+	prURLFlag := fs.String("pr", "", "review an ad-hoc PR url instead of a task")
+	repoFlag := fs.String("repo", "", "repo root, used with --pr")
+	positionals, err := parseFlags(fs, args)
+	if err != nil {
+		return 1, err
+	}
+	var ref string
+	if len(positionals) > 0 {
+		ref = positionals[0]
+	}
+
+	asJSON := cf.json
 	sess := a.reviewSession()
 
-	if hasFlag(args, "--stop") {
-		ref := firstPositional(args)
-		if ref == "" {
-			if prURL := flagValue(args, "--pr"); prURL != "" {
-				ref = review.PRHandle(prURL)
-			}
+	if *stop {
+		stopRef := ref
+		if stopRef == "" && *prURLFlag != "" {
+			stopRef = review.PRHandle(*prURLFlag)
 		}
 		stopped, err := sess.Stop(ctx)
 		if err != nil {
 			return 1, err
 		}
 		if asJSON {
-			return 0, emit("review", jsonReview{Ref: ref, Stopped: stopped})
+			return 0, emit("review", jsonReview{Ref: stopRef, Stopped: stopped})
 		}
 		if stopped {
 			fmt.Println("viewer stopped")
@@ -70,7 +79,7 @@ func (a *app) cmdReview(ctx context.Context, args []string) (int, error) {
 		return 0, nil
 	}
 
-	ref, prURL, err := reviewArgs(args)
+	ref, prURL, err := reviewArgs(ref, *prURLFlag)
 	if err != nil {
 		return 1, err
 	}
@@ -82,7 +91,7 @@ func (a *app) cmdReview(ctx context.Context, args []string) (int, error) {
 		// file keys its port map by ref, and the ref here is the PR's own
 		// handle (review.PRHandle), stable across repeat reviews of the
 		// same PR.
-		repo := flagValue(args, "--repo")
+		repo := *repoFlag
 		if repo == "" {
 			repo = a.cfg.Repo
 		}
@@ -119,11 +128,17 @@ func (a *app) cmdReview(ctx context.Context, args []string) (int, error) {
 	return 0, nil
 }
 
-func (a *app) cmdReviewComment(ctx context.Context, args, positional []string) (int, error) {
-	if len(positional) < 2 {
+func (a *app) cmdReviewComment(ctx context.Context, args []string) (int, error) {
+	fs, cf := newFlagSet("review comment")
+	formatFlag := fs.String("format", "", "stdin format: text (default) or difit")
+	positionals, err := parseFlags(fs, args)
+	if err != nil {
+		return 1, err
+	}
+	if len(positionals) < 1 {
 		return 1, errors.New("wf review comment <ref>")
 	}
-	ref := positional[1]
+	ref := positionals[0]
 
 	found, err := a.resolve(ctx, ref)
 	if err != nil {
@@ -145,7 +160,7 @@ func (a *app) cmdReviewComment(ctx context.Context, args, positional []string) (
 	// difit's "Copy All Prompt" button (the default, unchanged), or
 	// difit's own comment store harvested straight from the browser
 	// frame's localStorage.
-	format := flagValue(args, "--format")
+	format := *formatFlag
 	var body string
 	count := 0
 	switch format {
@@ -166,7 +181,7 @@ func (a *app) cmdReviewComment(ctx context.Context, args, positional []string) (
 		return 1, fmt.Errorf("comment on %s: %w", task.ShortID, err)
 	}
 
-	if hasFlag(args, "--json") {
+	if cf.json {
 		return 0, emit("review", jsonReview{Ref: task.ShortID, Commented: true, Count: count})
 	}
 	if count > 0 {

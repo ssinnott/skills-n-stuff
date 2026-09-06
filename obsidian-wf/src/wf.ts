@@ -248,7 +248,7 @@ export class WfClient {
 
     /** Dispatch one task, or the top of the queue when ref is omitted. */
     async runOnce(ref?: string): Promise<WfRunResult[]> {
-        const args = ref ? ["run", "--ref", ref] : ["run", "--once"];
+        const args = ref ? ["run", ref] : ["run", "--once"];
         const out = await this.json<{ results?: WfRunResult[] }>(args);
         return out.results ?? [];
     }

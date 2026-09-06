@@ -27,25 +27,17 @@ No dependencies beyond the standard library.
 ## Usage
 
 ```sh
-wf ready --limit 10          # actionable work, top of queue first
-wf show neck                 # one task: its runs and what each produced
-wf workflows                 # canned workflows that are loaded
-wf run --once                # dispatch the top claimable task
-wf run --ref abc4            # dispatch one specific task
-wf run neck --workflow plan-to-pr    # run a named recipe on a named task
-wf run --max 3               # drain the queue, three agents at a time
-wf escalations               # what needs a human
-wf attach abc4               # reopen the pi session that ran this task
-wf bind abc4 notes/plan.md   # bind a task to a note by hand
-wf ui abc4                   # deep link into kata's web UI
-wf ui                        # the daemon's origin, for a framed UI
-wf review abc4               # resolve the task's diff and open it in difit
-wf review --pr <url>         # review any PR directly, no task required
-wf review abc4 --stop        # stop the running viewer
-wf review comment abc4       # read a pasted review prompt from stdin
-wf review comment abc4 --format difit   # ingest difit's own comment store
-wf gc                        # report ledger bindings whose referent is gone
-wf gc --delete                # mark them missing, drop records with nothing local left
+wf ready [--limit N]                                         # actionable work, top of queue first
+wf show <ref>                                                # one task: its runs and what each produced
+wf escalations                                               # tasks flagged needs-human
+wf workflows                                                 # canned workflows loaded from the workflow dir
+wf run [<ref>] [--once] [--max N] [--repo P] [--workflow W]  # dispatch work to agents
+wf attach <ref>                                              # open the task's pi session
+wf bind <ref> <note.md>                                      # bind a task to an Obsidian note, both ways
+wf ui [<ref>]                                                # print the web UI deep link for a task
+wf review <ref> | --pr <url> [--repo P] | <ref> --stop       # resolve the task's diff and open it in difit, or stop the viewer
+wf review comment <ref> [--format difit]                     # read a pasted review prompt from stdin
+wf gc [--delete]                                             # report ledger bindings whose referent is gone; --delete drops dead records
 ```
 
 A `<ref>` is anything `kata show` accepts: the issue's ULID or its short id.

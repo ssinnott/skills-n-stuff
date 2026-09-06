@@ -18,8 +18,19 @@ import (
 	"github.com/ssinnott/skills-n-stuff/wf/internal/wf"
 )
 
+// now is a variable so output formatting stays testable.
+var now = time.Now
+
 func (a *app) cmdShow(ctx context.Context, args []string) (int, error) {
-	ref := firstPositional(args)
+	fs, cf := newFlagSet("show")
+	positionals, err := parseFlags(fs, args)
+	if err != nil {
+		return 1, err
+	}
+	var ref string
+	if len(positionals) > 0 {
+		ref = positionals[0]
+	}
 	if ref == "" {
 		return 1, errors.New("wf show <ref>")
 	}
@@ -29,7 +40,7 @@ func (a *app) cmdShow(ctx context.Context, args []string) (int, error) {
 		return 1, err
 	}
 
-	if hasFlag(args, "--json") {
+	if cf.json {
 		return 0, emitValue(a.showToJSON(found))
 	}
 
