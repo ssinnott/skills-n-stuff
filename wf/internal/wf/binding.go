@@ -102,6 +102,12 @@ const (
 	MetaPID = "pid"
 	// MetaRelation is how a task binding relates: "parent" or "next".
 	MetaRelation = "relation"
+	// MetaShortID is a tracker's own human-facing ref for a queue binding,
+	// recorded because it cannot be derived. kata builds its short id from
+	// the *last* four characters of the ULID, so no prefix rule finds it;
+	// a resolver that guessed at that would be encoding one backend's
+	// convention in the one place that is supposed to be backend-neutral.
+	MetaShortID = "short_id"
 )
 
 // Binding is one typed, stateful reference hanging off a task.

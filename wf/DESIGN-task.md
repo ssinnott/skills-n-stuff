@@ -427,11 +427,30 @@ Staged so that each stage is shippable and the risky one is last.
 ## Risks
 
 - **A local store is a store.** It can be stale, corrupt, half-written or
-  deleted. Mitigation is the shape `review.json` already has: a missing or
-  malformed file reads as empty rather than failing, and every binding is a
-  *reference* to something independently verifiable — so a lost ledger costs
-  history and convenience, never work. Nothing in the run loop may take a
-  lifecycle decision from the ledger alone.
+  deleted. Mitigation is that every binding is a *reference* to something
+  independently verifiable, so a lost ledger costs history and convenience,
+  never work, and nothing in the run loop may take a lifecycle decision from
+  the ledger alone.
+
+  An earlier draft of this section cited `review.json` as the precedent for
+  "a missing or malformed file reads as empty rather than failing." That was
+  wrong about the existing code: `review.LoadState` tolerates a *missing*
+  file and returns an error on a *malformed* one. The intent was right and
+  the citation was not, so the ledger implements the intent and splits it by
+  what the caller can do about it — `List` skips an unreadable file and names
+  it, because one corrupt record must not cost its siblings, while `Load`
+  reports the parse error, because there is no sibling to salvage and
+  "no such task" would be a lie.
+- **The ledger has no read-modify-write primitive, and stage 3 needs one.**
+  "Apply writes bindings tagged `via: <run-id>`" is inherently
+  load-then-mutate-then-save, and the five-verb `Store` interface makes that
+  a lost-update race across the gap. The per-id lock inside `FileStore` does
+  not close it — it serializes each `Save`, not a `Load`/`Save` pair. Either
+  stage 3 leans entirely on the existing lease in `internal/wf/lease.go` for
+  serialization, or `Store` grows `Update(id string, fn func(*wf.Record)
+  error) error`. Leaning on the lease alone is not enough: `wf bind` and a
+  running dispatch both write bindings, and only one of them takes a lease.
+
 - **Two writers, again.** Publication to the tracker plus a local write is
   two writes per fact and they can diverge on a crash between them. The
   ledger is authoritative and republishing is idempotent, so the recovery is

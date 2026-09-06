@@ -613,3 +613,66 @@ func TestRecordOnDiskIsPlainIndentedJSON(t *testing.T) {
 		t.Errorf("mode = %v, want 0644 like the rest of what wf writes", perm)
 	}
 }
+
+// A tracker's short ref resolves when the queue binding recorded it. kata
+// derives its short id from the ULID's last four characters, so this is the
+// case no prefix rule can reach and the reason MetaShortID exists.
+func TestResolveByRecordedShortID(t *testing.T) {
+	s := New(t.TempDir())
+
+	rec := wf.Record{
+		ID:     "01JQZK9T7WPX3RMBVCN8YD4EFG",
+		Handle: "parser",
+		Bindings: wf.Bindings{{
+			Kind: wf.KindQueue,
+			Ref:  "01M1SZXQ9V4KBHT2NPRDWCF7EG",
+			Meta: map[string]string{
+				wf.MetaBackend: "kata",
+				wf.MetaShortID: "f7eg",
+			},
+		}},
+	}
+	if err := s.Save(rec); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	got, err := s.Resolve("f7eg")
+	if err != nil {
+		t.Fatalf("Resolve(f7eg): %v", err)
+	}
+	if got.ID != rec.ID {
+		t.Errorf("Resolve(f7eg).ID = %q, want %q", got.ID, rec.ID)
+	}
+}
+
+// The recorded short id must not out-rank a record whose own id is what was
+// typed: an exact id is never ambiguous with someone else's short ref.
+func TestResolveShortIDDoesNotShadowAnExactID(t *testing.T) {
+	s := New(t.TempDir())
+
+	if err := s.Save(wf.Record{ID: "abcd", Handle: "direct"}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	other := wf.Record{
+		ID: "01JQZK9T7WPX3RMBVCN8YD4EFG",
+		Bindings: wf.Bindings{{
+			Kind: wf.KindQueue,
+			Ref:  "01M1SZXQ9V4KBHT2NPRDWCABCD",
+			Meta: map[string]string{wf.MetaShortID: "abcd"},
+		}},
+	}
+	if err := s.Save(other); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	// Both match in the strict pass, so this is a genuine collision and
+	// must be reported rather than silently picked.
+	_, err := s.Resolve("abcd")
+	var amb *AmbiguousError
+	if !errors.As(err, &amb) {
+		t.Fatalf("Resolve(abcd) err = %v, want AmbiguousError naming both", err)
+	}
+	if len(amb.Candidates) != 2 {
+		t.Errorf("candidates = %v, want both records named", amb.Candidates)
+	}
+}

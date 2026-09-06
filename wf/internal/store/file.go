@@ -347,6 +347,13 @@ func matchExact(rec wf.Record, ref string) bool {
 		if b.Ref == ref {
 			return true
 		}
+		// The tracker's own short ref, when the binding recorded it. This
+		// is the exact match the suffix rule in matchPartial only
+		// approximates, and it is why that rule stays a fallback for
+		// records written before the key existed.
+		if b.Get(wf.MetaShortID) == ref {
+			return true
+		}
 	}
 	return false
 }
