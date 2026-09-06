@@ -104,7 +104,7 @@ func TestProviderCreateAndDispose(t *testing.T) {
 	}
 }
 
-func TestProviderRefusesExistingDirectory(t *testing.T) {
+func TestProviderNeverReusesAnExistingDirectory(t *testing.T) {
 	repo := initRepo(t)
 	root := t.TempDir()
 	ctx := context.Background()
@@ -112,13 +112,98 @@ func TestProviderRefusesExistingDirectory(t *testing.T) {
 	p := &Provider{Repo: repo, Root: root}
 	task := wf.Task{ShortID: "abc4", Title: "Add the parser"}
 
-	if err := os.MkdirAll(filepath.Join(root, WorktreeName(task)), 0o755); err != nil {
+	taken := filepath.Join(root, WorktreeName(task))
+	if err := os.MkdirAll(taken, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(taken, "someone-elses-work")
+	if err := os.WriteFile(marker, []byte("do not touch\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	// Handing an agent someone else's checkout is worse than refusing.
-	if _, err := p.Create(ctx, task); err == nil {
-		t.Error("Create() reused an existing directory")
+	// Handing an agent someone else's checkout is the failure this package
+	// exists to prevent. Taking the next free name is how that is avoided
+	// without also refusing to run.
+	space, err := p.Create(ctx, task)
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if space.Path() == taken {
+		t.Fatal("Create() reused an existing directory")
+	}
+	if body, err := os.ReadFile(marker); err != nil || string(body) != "do not touch\n" {
+		t.Errorf("Create() disturbed the existing checkout: %q, %v", body, err)
+	}
+	if _, err := os.Stat(filepath.Join(space.Path(), "README.md")); err != nil {
+		t.Errorf("the new worktree is not a real checkout: %v", err)
+	}
+}
+
+func TestProviderGivesARerunItsOwnCheckoutAndBranch(t *testing.T) {
+	// A task whose escalated run left its checkout on disk still has to be
+	// re-runnable: the name is derived from the task, so a re-run collides
+	// with its own predecessor, and refusing would make the evidence a
+	// deliberate keep produced into a reason the task can never run again.
+	repo := initRepo(t)
+	ctx := context.Background()
+
+	p := &Provider{Repo: repo, Root: t.TempDir()}
+	task := wf.Task{ShortID: "abc4", Title: "Ambiguous work"}
+
+	first, err := p.Create(ctx, task)
+	if err != nil {
+		t.Fatalf("first Create() error = %v", err)
+	}
+	second, err := p.Create(ctx, task)
+	if err != nil {
+		t.Fatalf("second Create() error = %v", err)
+	}
+
+	if first.Path() == second.Path() {
+		t.Fatal("a re-run got the same checkout as its predecessor")
+	}
+	if first.Branch() == second.Branch() {
+		t.Fatal("a re-run got the same branch as its predecessor")
+	}
+	// The first checkout is untouched and still on its own branch.
+	if _, err := os.Stat(first.Path()); err != nil {
+		t.Errorf("the first checkout was destroyed: %v", err)
+	}
+	if !BranchExists(ctx, "", repo, first.Branch()) {
+		t.Errorf("the first run's branch %q is gone", first.Branch())
+	}
+	if !BranchExists(ctx, "", repo, second.Branch()) {
+		t.Errorf("the re-run's branch %q was never created", second.Branch())
+	}
+}
+
+func TestProviderSkipsANameWhoseBranchOutlivedItsCheckout(t *testing.T) {
+	// Dispose removes the branch best effort, so a branch can outlive the
+	// directory. `git worktree add -b` refuses a name that is already a ref,
+	// so a free directory is not on its own a free name.
+	repo := initRepo(t)
+	ctx := context.Background()
+
+	p := &Provider{Repo: repo, Root: t.TempDir()}
+	task := wf.Task{ShortID: "abc4", Title: "Work"}
+
+	first, err := p.Create(ctx, task)
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	branch := first.Branch()
+	// Remove the checkout but leave the branch, which is what a failed
+	// `branch -D` during Dispose leaves behind.
+	if _, err := runGit(ctx, "git", repo, "worktree", "remove", "--force", first.Path()); err != nil {
+		t.Fatal(err)
+	}
+
+	second, err := p.Create(ctx, task)
+	if err != nil {
+		t.Fatalf("second Create() error = %v", err)
+	}
+	if second.Branch() == branch {
+		t.Errorf("Create() reused branch %q, which still exists", branch)
 	}
 }
 

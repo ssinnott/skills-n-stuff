@@ -18,6 +18,7 @@ import (
 	"github.com/ssinnott/skills-n-stuff/wf/internal/kata"
 	"github.com/ssinnott/skills-n-stuff/wf/internal/note"
 	"github.com/ssinnott/skills-n-stuff/wf/internal/runner"
+	"github.com/ssinnott/skills-n-stuff/wf/internal/store"
 	"github.com/ssinnott/skills-n-stuff/wf/internal/supervisor"
 	"github.com/ssinnott/skills-n-stuff/wf/internal/wf"
 	"github.com/ssinnott/skills-n-stuff/wf/internal/workflow"
@@ -253,7 +254,10 @@ func (a *app) cmdRun(ctx context.Context, args []string) (int, error) {
 		Runner:    &runner.Pi{Bin: a.cfg.PiBin, SessionRoot: a.cfg.SessionRoot},
 		Workflows: a.workflows,
 		Config:    a.cfg,
-		Log:       func(format string, v ...any) { fmt.Printf(format+"\n", v...) },
+		// The ledger lives beside the config, so --config moves it exactly
+		// as it moves review.json.
+		Store: store.New(store.Root(a.cfg.Path)),
+		Log:   func(format string, v ...any) { fmt.Printf(format+"\n", v...) },
 		Workspaces: func(w workflow.Workflow) wf.WorkspaceProvider {
 			r := repo
 			if w.Repo != "" {

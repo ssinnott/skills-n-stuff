@@ -39,6 +39,25 @@ type Store interface {
 	// Save writes a record whole, stamping Updated. The id is the
 	// caller's; this package never mints one.
 	Save(rec wf.Record) error
+	// Update is read-modify-write on one record, which Load plus Save
+	// cannot be: the gap between them is a lost update, and recording a
+	// run's bindings is inherently load-mutate-save. fn receives the
+	// record to mutate in place; returning an error from it abandons the
+	// write and hands that error back unwrapped, so a caller can signal
+	// "nothing to do" with a sentinel of its own.
+	//
+	// It is an upsert. A record that is not there yet arrives as a zero
+	// Record with its ID and Created filled in, because the alternative —
+	// load, notice the absence, save — is the same race in a different
+	// shape. A caller that means "only if it exists" tests the record it
+	// was handed and returns an error.
+	//
+	// What it guarantees: within this process, no two Updates and no
+	// Update and Save interleave on the same id. What it does not: any
+	// ordering against another process. See the lock comment in file.go —
+	// two `wf` invocations share no mutex, and the honest failure there is
+	// a lost update, never a corrupt record.
+	Update(id string, fn func(*wf.Record) error) error
 	// List returns every readable record. One that cannot be read is
 	// skipped and named in a *SkipError, so losing a single record never
 	// costs the others — see that type for why the error rides along with

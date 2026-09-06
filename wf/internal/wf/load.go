@@ -2,13 +2,23 @@ package wf
 
 // Reading a task's bindings out of tracker metadata.
 //
-// Every binding still lives as a flat key on the queue row, and until this
-// file existed every consumer re-derived the join: `wf show`, `--json`, the
-// review ladder and the escalation comment each read the keys they cared
-// about with their own tolerance for a malformed value. This is the one
-// reader — metadata in, typed bindings out — so which key holds what is an
-// implementation detail of this file rather than shared knowledge. When the
-// local ledger arrives it is the only thing that has to learn a new source.
+// This is the one reader of the flat keys — metadata in, typed bindings out
+// — so which key holds what is an implementation detail of this file rather
+// than shared knowledge. Before it existed every consumer re-derived the
+// join: `wf show`, `--json`, the review ladder and the escalation comment
+// each read the keys they cared about with their own tolerance for a
+// malformed value.
+//
+// It is no longer the authoritative source, and being clear about that
+// matters more than the code here. The ledger in internal/store is
+// authoritative for *bindings*; the tracker is authoritative for *work
+// state* — title, priority, labels, open or closed, queue order — and those
+// two sets are disjoint. What a run writes to the tracker is publication:
+// one direction, derived output, never read back to overrule a binding. So
+// this reader is what answers for a task the ledger has never seen — one
+// bound by an earlier release, or filed on a host whose ledger is not this
+// one — and its answers carry no run and no host, because flat keys have
+// nowhere to put either.
 //
 // Nothing here returns an error. A garbled history, a note key holding a
 // number, a PR array that is not an array: each reads as no binding at all.
@@ -20,9 +30,11 @@ import "time"
 
 // The only runner and the only store that ship. They are values on a
 // binding rather than halves of a key name, which is the whole content of
-// "standalone" — but while bindings live in flat metadata there is nowhere
-// per-binding to record them, so a session's runner is asserted here. When
-// a run records its own runner these stop being constants.
+// "standalone" — but flat metadata has nowhere per-binding to record them,
+// so reading a session out of it has to assert the runner. A binding written
+// through the ledger carries what actually ran (see the supervisor's
+// recordSession); these constants are what is left for tasks the ledger
+// never saw.
 const (
 	runnerPi   = "pi"
 	storeVault = "vault"
@@ -43,10 +55,12 @@ func LoadBindings(task Task) Bindings {
 		bs = bs.Upsert(Binding{Kind: KindRepo, Ref: repo})
 	}
 
-	// One workspace key, so one workspace binding: today a re-run
-	// overwrites it, which is exactly the clobber the ledger fixes. Each
-	// session carries the directory it ran in, so nothing is lost here
-	// that the metadata still holds.
+	// One workspace key, so one workspace binding: a re-run overwrites it,
+	// which is exactly the clobber the ledger fixes by keeping a binding
+	// per run and superseding rather than replacing. Each session carries
+	// the directory it ran in, so nothing is lost here that the metadata
+	// still holds. There is no branch to recover: the flat keys never had
+	// one, which is why it had to be re-derived from the task's title.
 	if dir := metaString(meta, SessionWorkspaceKey, LegacySessionWorkspaceKey); dir != "" {
 		b := Binding{Kind: KindWorkspace, Ref: dir}
 		if repo != "" {

@@ -209,12 +209,16 @@ func (r *fakeRunner) finish() {
 
 type fakeWorkspace struct {
 	path     string
+	repo     string
+	branch   string
 	disposed bool
 	kept     bool
 }
 
-func (w *fakeWorkspace) Path() string { return w.path }
-func (w *fakeWorkspace) Keep()        { w.kept = true }
+func (w *fakeWorkspace) Path() string   { return w.path }
+func (w *fakeWorkspace) Repo() string   { return w.repo }
+func (w *fakeWorkspace) Branch() string { return w.branch }
+func (w *fakeWorkspace) Keep()          { w.kept = true }
 func (w *fakeWorkspace) Dispose(context.Context) error {
 	if w.kept {
 		return nil
@@ -225,15 +229,28 @@ func (w *fakeWorkspace) Dispose(context.Context) error {
 
 type fakeProvider struct {
 	mu     sync.Mutex
+	runs   int
 	spaces []*fakeWorkspace
 }
 
 func (p *fakeProvider) Name() string { return "fake" }
 
+// Create hands out a distinct checkout per call, the way a real provider
+// does: a second run against one task gets its own directory and its own
+// branch, which is what makes superseding observable.
 func (p *fakeProvider) Create(_ context.Context, task wf.Task) (wf.Workspace, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	space := &fakeWorkspace{path: "/work/" + task.ShortID}
+	p.runs++
+	suffix := ""
+	if p.runs > 1 {
+		suffix = fmt.Sprintf("-%d", p.runs)
+	}
+	space := &fakeWorkspace{
+		path:   "/work/" + task.ShortID + suffix,
+		repo:   "/repo",
+		branch: "wf/" + task.ShortID + suffix,
+	}
 	p.spaces = append(p.spaces, space)
 	return space, nil
 }
