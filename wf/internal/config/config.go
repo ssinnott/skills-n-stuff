@@ -35,10 +35,14 @@ type Config struct {
 	DefaultProfile string `json:"defaultProfile"`
 	// DefaultModel is used when a workflow names none.
 	DefaultModel string `json:"defaultModel"`
-	// KataBin and PiBin override binaries that are often off PATH under a
-	// launchd or systemd unit.
+	// KataBin, PiBin and GhBin override binaries that are often off PATH
+	// under a launchd or systemd unit. GhBin is the GitHub CLI wf asks
+	// about pull request state; like the others its absence is a runtime
+	// failure, and one that degrades to "state unknown" rather than to a
+	// wrong answer.
 	KataBin string `json:"kataBin"`
 	PiBin   string `json:"piBin"`
+	GhBin   string `json:"ghBin"`
 	// DifitCommand is the review viewer, as a shell-style command line
 	// rather than a bare binary: the default is the two-word "npx difit"
 	// so a checkout with no global install still works. DIFIT_BIN
