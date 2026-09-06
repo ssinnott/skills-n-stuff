@@ -11,7 +11,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/ssinnott/skills-n-stuff/wf/internal/config"
 	"github.com/ssinnott/skills-n-stuff/wf/internal/review"
@@ -41,6 +43,62 @@ func reviewArgs(args []string) (ref, prURL string, err error) {
 	return ref, prURL, nil
 }
 
+// recordReviewPane writes the live viewer onto the task's ledger record.
+//
+// It lives here rather than in internal/review for the same reason Apply
+// returns bindings instead of writing them: that package would otherwise
+// have to import the store, and the caller already holds it. Until this
+// existed nothing produced a KindReview binding at all — taskblock rendered
+// one and gc swept for one, but review.json was the only real record of a
+// running viewer, which is the file the ledger is supposed to supersede.
+//
+// A failure here never fails the review. The viewer is already up and a
+// human is already looking at it; losing the record costs gc a hint, not
+// the work.
+func (a *app) recordReviewPane(recordID string, result review.Result) {
+	if recordID == "" || result.Viewer.URL == "" {
+		return
+	}
+	b := wf.Binding{
+		Kind:  wf.KindReview,
+		Ref:   result.Viewer.URL,
+		State: wf.BindingLive,
+		At:    time.Now().UTC(),
+		Host:  a.cfg.Actor,
+		Meta: map[string]string{
+			wf.MetaPort: strconv.Itoa(result.Viewer.Port),
+			wf.MetaPID:  strconv.Itoa(result.Viewer.PID),
+		},
+	}
+	_ = a.ledger.Update(recordID, func(rec *wf.Record) error {
+		// One pane at a time is wf's rule, so an older pane on this task is
+		// retired rather than left looking live to gc.
+		rec.Bindings = rec.Bindings.Supersede(wf.KindReview, "").Upsert(b)
+		return nil
+	})
+}
+
+// retireReviewPanes marks every recorded pane disposed once the viewer is
+// stopped. There is one difit at a time across all tasks, so a stop settles
+// whichever task was holding it.
+func (a *app) retireReviewPanes() {
+	recs, _ := a.ledger.List()
+	for _, rec := range recs {
+		if len(rec.Bindings.Live(wf.KindReview)) == 0 {
+			continue
+		}
+		id := rec.ID
+		_ = a.ledger.Update(id, func(r *wf.Record) error {
+			for i := range r.Bindings {
+				if r.Bindings[i].Kind == wf.KindReview && r.Bindings[i].IsLive() {
+					r.Bindings[i].State = wf.BindingDisposed
+				}
+			}
+			return nil
+		})
+	}
+}
+
 func (a *app) cmdReview(ctx context.Context, args []string) (int, error) {
 	positional := positionals(args)
 	if len(positional) > 0 && positional[0] == "comment" {
@@ -60,6 +118,9 @@ func (a *app) cmdReview(ctx context.Context, args []string) (int, error) {
 		stopped, err := sess.Stop(ctx)
 		if err != nil {
 			return 1, err
+		}
+		if stopped {
+			a.retireReviewPanes()
 		}
 		if asJSON {
 			return 0, emit("review", jsonReview{Ref: ref, Stopped: stopped})
@@ -98,6 +159,7 @@ func (a *app) cmdReview(ctx context.Context, args []string) (int, error) {
 		if err != nil {
 			return 1, err
 		}
+		a.recordReviewPane(rec.ID, result)
 		if asJSON {
 			return 0, emit("review", reviewToJSON(result))
 		}
@@ -126,6 +188,7 @@ func (a *app) cmdReview(ctx context.Context, args []string) (int, error) {
 	if err != nil {
 		return 1, err
 	}
+	a.recordReviewPane(found.Record.ID, result)
 
 	if asJSON {
 		return 0, emit("review", reviewToJSON(result))

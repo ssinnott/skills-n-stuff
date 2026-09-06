@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: implemented
 supersedes: —
 ---
 
@@ -506,12 +506,14 @@ Each of these is currently either impossible or a special case:
 
 ## Known gaps
 
-- **Nothing writes a `KindReview` binding.** `taskblock` renders one and
-  `gc` sweeps for one, but no producer exists: the only real record of a
-  running viewer is still `review.json`. So the claim that lifecycle turns
-  "dead review panes" into a query over bindings is, today, true only of the
-  file the ledger is supposed to supersede. `review.Open` is where the
-  producer belongs.
+- ~~Nothing writes a `KindReview` binding.~~ **Closed.** `wf review` now
+  records the live pane — url, port, pid, host — onto the task's record, and
+  `--stop` retires it. The producer sits in `cmd/wf`, not `internal/review`:
+  that package would otherwise have to import the store, and the caller
+  already holds it, which is the same reason `Apply` returns bindings rather
+  than writing them. A failed write never fails a review — the viewer is up
+  and a human is already looking at it, so losing the record costs `gc` a
+  hint, not the work.
 
 - **Refreshed PR state is never republished to the tracker.** Dispatch
   dual-writes, but a merge discovered later by `wf pr refresh` lands only in
@@ -570,7 +572,7 @@ Staged so that each stage is shippable and the risky one is last.
       the type earns its place or does not.
 - [x] **2 — Role names.** New key names carrying no product in them; read
       both, write new. Migration is one release of tolerant reads.
-- [ ] **3 — The local ledger, and runs.** `~/.wf/tasks/<id>.json` behind a
+- [x] **3 — The local ledger, and runs.** `~/.wf/tasks/<id>.json` behind a
       narrow `Store` interface, dual-written with tracker publication, read
       local-first. `review.json` folds into it. Runs become the middle layer
       and `Apply` writes bindings tagged `via: <run-id>` instead of flat
@@ -598,10 +600,10 @@ Staged so that each stage is shippable and the risky one is last.
       state on the record, which the disjointness rule forbids. Stage 4 mints
       the identity, files it, dispatches explicitly against a filed task, and
       says so plainly when a task is unfiled; the adapter is the open piece.
-- [ ] **5 — The note projection.** `wf note sync <ref>` writing the managed
+- [x] **5 — The note projection.** `wf note sync <ref>` writing the managed
       block; the plugin calling it on open and after dispatch; wikilinks for
       produced docs; host annotation on machine-local bindings.
-- [ ] **6 — Lifecycle.** `wf gc`, PR state refresh, completion when every PR
+- [x] **6 — Lifecycle.** `wf gc`, PR state refresh, completion when every PR
       on a task has merged.
 
 ## Risks

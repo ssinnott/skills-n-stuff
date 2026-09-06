@@ -106,3 +106,58 @@ func TestReviewPRBecomesAnOrdinaryOneBindingTask(t *testing.T) {
 		t.Errorf("second review filed a new task %q, want %q", again.ID, rec.ID)
 	}
 }
+
+// Nothing used to produce a KindReview binding: taskblock rendered one and
+// gc swept for one, but review.json was the only real record of a viewer.
+// Opening a review now writes the pane onto the task and stopping retires
+// it, so gc's pane sweep is a query over bindings rather than over the file
+// the ledger is supposed to supersede.
+func TestReviewRecordsAndRetiresThePane(t *testing.T) {
+	h := newHome(t, filepath.Join(t.TempDir(), "no-such-kata"))
+	h.setDifit(t, stubDifit(t, 4971))
+
+	const url = "https://github.com/acme/widgets/pull/17"
+	if _, err := h.cli(t, "review", "--pr", url, "--repo", t.TempDir()); err != nil {
+		t.Fatalf("wf review --pr: %v", err)
+	}
+
+	pane, ok := onlyPane(t, h)
+	if !ok {
+		t.Fatal("opening a review recorded no KindReview binding")
+	}
+	if pane.Host == "" {
+		t.Error("a review pane is machine-local and must carry a host")
+	}
+	if pane.Get(wf.MetaPort) != "4971" {
+		t.Errorf("port = %q, want 4971 — the port is what makes difit's comments findable again",
+			pane.Get(wf.MetaPort))
+	}
+
+	if _, err := h.cli(t, "review", "--stop"); err != nil {
+		t.Fatalf("wf review --stop: %v", err)
+	}
+	if _, ok := onlyPane(t, h); ok {
+		t.Error("a stopped viewer must not still read as live to gc")
+	}
+}
+
+// onlyPane returns the one live review binding across the ledger, if any —
+// there is one viewer at a time, so more than one live pane is itself a bug.
+func onlyPane(t *testing.T, h home) (wf.Binding, bool) {
+	t.Helper()
+	recs, err := h.ledger().List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	var found []wf.Binding
+	for _, rec := range recs {
+		found = append(found, rec.Bindings.Live(wf.KindReview)...)
+	}
+	if len(found) > 1 {
+		t.Fatalf("%d live review panes, want at most one", len(found))
+	}
+	if len(found) == 0 {
+		return wf.Binding{}, false
+	}
+	return found[0], true
+}

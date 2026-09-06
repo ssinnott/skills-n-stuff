@@ -161,9 +161,14 @@ supervision, no model selection, no profile resolution, no `gh`.
 - [x] Harvest: this document.
 - [x] Delete `obsidian-pi-tasks/` and `skills/pi-tasks-setup/`; clear the
       references in the root README, obsidian-wf, and wf's README.
-- [ ] Land the wf side: [wf/DESIGN-task.md](../wf/DESIGN-task.md) stages
-      1–5 — the binding type, runs, the local ledger, `wf task new` /
-      `wf run <ref> --workflow`, and `wf note sync`.
+- [x] Land the wf side: [wf/DESIGN-task.md](../wf/DESIGN-task.md) — all six
+      stages are built. The binding type, role-named keys, the local ledger,
+      runs as the middle layer, standalone identity (`wf task new`,
+      `wf task adopt`, `wf run <ref> --workflow`), `wf note sync`, `wf gc`
+      and `gh`-backed PR refresh. Everything below is now unblocked.
+      One caveat the plugin will meet: `wf run` refuses a task with no
+      tracker row, so "capture, promote, dispatch" is only end-to-end for a
+      task that has been adopted into the queue.
 - [ ] Board over `wf --json`, with columns and card actions.
 - [ ] Document capture: checkbox lines, promotion, `wf:task` markers,
       inline status write-back.

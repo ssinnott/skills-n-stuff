@@ -17,11 +17,14 @@ kata is the first queue backend, pi the first runner, git worktrees the
 first workspace. The seams exist so the second of each is an adapter
 rather than a rewrite.
 
-[DESIGN-task.md](DESIGN-task.md) is an open proposal against this document:
-the task here is a normalized queue row with bindings stuck to it as ad-hoc
-metadata keys, and that proposal makes it wf's own object — an identity plus
-typed, plural, stateful bindings — held in a local ledger. Nothing below is
-superseded until it is accepted.
+[DESIGN-task.md](DESIGN-task.md) is **built**, and supersedes this document
+wherever the two disagree about what a task is. The task here is a normalized
+queue row with bindings stuck to it as ad-hoc metadata keys; there it is wf's
+own object — an identity, a history of runs, and typed, plural, stateful
+bindings — held in a local ledger beside this config. The seams, the outcome
+protocol and the no-workflow-engine rule below all still stand, and the
+metadata key names in this document are the pre-rename ones (`pi.session` and
+friends), which are read for one release and never written.
 
 ## Non-goals
 
