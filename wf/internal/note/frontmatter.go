@@ -1,10 +1,6 @@
-// Package note handles the Obsidian side of the task binding.
-//
-// The join is one id each way: the note's frontmatter carries the task's
-// durable ref, and the task's metadata carries the note path. Nothing is
-// mirrored — titles and status live in the tracker, prose lives in the note,
-// and the only shared state is the pair. That is what keeps the binding
-// cheap and free of write races.
+// Package note reads and writes the frontmatter fields that bind an
+// Obsidian note to a wf task. See DESIGN.md for why the binding is a pair
+// of ids rather than mirrored content.
 package note
 
 import (
@@ -13,28 +9,16 @@ import (
 	"strings"
 )
 
-// IssueKey is the frontmatter field naming the bound task. The durable ref
-// (a ULID on kata) is stored rather than the short id: kata documents it as
-// the ref that survives renames and moves between projects, which is what a
-// persisted binding needs.
+// IssueKey is the frontmatter field naming the bound task's durable ref (kata's ULID).
 const IssueKey = "kata-issue"
 
-// TaskKey is the frontmatter field naming the bound wf task, and the
-// durable half of the join: it survives rename, it is visible to the human
-// reading the note, and it is what the managed block is rendered from.
-// Deliberately a second field beside IssueKey rather than a replacement —
-// the tracker row is one binding among a task's many, so "which task is
-// this note" and "which row is that task filed under" stopped being the
-// same question.
+// TaskKey is the frontmatter field naming the bound wf task.
 const TaskKey = "wf-task"
 
-// Deliberately not a YAML parser: wf reads and writes exactly one scalar
-// key per call, and anything richer belongs to the note's author.
+// Not a YAML parser: reads and writes exactly one scalar key per call.
 var frontmatterRe = regexp.MustCompile(`(?s)\A---\r?\n(.*?)\r?\n---\r?\n?`)
 
-// GetField reads one scalar frontmatter field. The em-dash placeholder is
-// treated as unset, matching the convention pi-tasks documents already use
-// for an unbound session.
+// GetField reads one scalar frontmatter field. An em-dash value counts as unset.
 func GetField(text, key string) string {
 	m := frontmatterRe.FindStringSubmatch(text)
 	if m == nil {
@@ -54,8 +38,7 @@ func GetField(text, key string) string {
 	return value
 }
 
-// SetField writes one scalar frontmatter field, creating the frontmatter
-// block if the note has none and replacing the key if it already exists.
+// SetField writes one scalar frontmatter field, creating the block if the note has none.
 func SetField(text, key, value string) string {
 	m := frontmatterRe.FindStringSubmatchIndex(text)
 	if m == nil {

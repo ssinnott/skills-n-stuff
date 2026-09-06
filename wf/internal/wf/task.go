@@ -1,10 +1,8 @@
 // Package wf holds the core domain: the task model, the outcome protocol,
 // leases, session binding, and the three seams (queue, runner, workspace).
-//
-// Two things deliberately do NOT appear on the Queue interface, because no
-// tracker in scope implements them and pushing them down means writing them
-// once per adapter: leases (see lease.go) and the work-state vocabulary
-// below. Both live here and are stored through a backend as opaque metadata.
+// Leases and the work-state vocabulary below live here rather than on the
+// Queue interface, since no tracker in scope implements them. See
+// DESIGN.md.
 package wf
 
 import "context"

@@ -6,19 +6,11 @@ import (
 	"time"
 )
 
-// Binding a pi session to a task.
-//
-// The session is the agent's working memory; the task is the durable
-// artifact. Binding them means any run — finished, crashed, or still
-// going — can be reopened, which is the whole point: the runs you most
-// need to inspect are the ones that went wrong.
-//
-// So the binding is written at SPAWN, before the agent has produced
-// anything. Recording it on completion would lose exactly those runs. The
-// write itself lives in the supervisor (recordSession, in
-// internal/supervisor/ledger.go): a session is machine-local, so it goes to
-// the local ledger and nowhere else. This file only carries the shape and
-// what a caller does with one once it has it.
+// Binding a pi session to a task: written at spawn, before the agent has
+// produced anything, so a crashed or hung run is still attachable. The
+// write lives in the supervisor (recordSession, in
+// internal/supervisor/ledger.go) since a session is machine-local. This
+// file only carries the shape and what a caller does with one.
 
 // SessionOutcome is how a run settled.
 type SessionOutcome string

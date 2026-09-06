@@ -1,22 +1,12 @@
 package wf
 
 // The task object: an identity, a history of runs, and the typed bindings
-// those runs produced.
+// those runs produced. See DESIGN-task.md.
 //
-// This file is the contract. Everything that binds work to the world — a
-// checkout, an agent session, a pull request, a produced document, the
-// tracker row itself — is a Binding, and every binding a run produced
-// carries that run's id in Via. See DESIGN-task.md for why this replaces
-// the loose metadata keys it grew out of.
-//
-// Two rules shape the vocabulary:
-//
-//   - Names describe roles, never products. A session's runner is "pi" as a
-//     *value*; a queue's backend is "kata" as a *value*. A second runner is
-//     then a new value, not a parallel set of keys with parallel readers.
-//   - Every kind is plural. "The current one" is a query over a list, not a
-//     separate field, because a re-run that overwrites its predecessor's
-//     checkout destroys the evidence an escalation was kept for.
+// Two rules shape the vocabulary: names describe roles, never products (a
+// session's runner is "pi" as a *value*, not a key); and every kind is
+// plural, since a re-run that overwrote its predecessor's checkout would
+// destroy the evidence an escalation was kept for.
 
 import "time"
 
@@ -43,15 +33,9 @@ const (
 )
 
 // MachineLocal reports whether a kind's Ref only resolves on the host that
-// recorded it. A worktree path, a session file and a browser origin are
-// facts about one machine; a pull request URL, a vault-relative document
-// and a tracker id are facts anywhere.
-//
-// The distinction has one job: bindings of these kinds carry Host, so a
-// laptop and a desktop against one queue stop silently overwriting each
-// other's answer to "where is the checkout." Everything downstream — the
-// task block's *(wf-laptop)* annotation, a future `wf gc` — reads that
-// field rather than re-deciding which kinds deserve one.
+// recorded it: a worktree path or session file, not a PR URL or tracker id.
+// Bindings of these kinds carry Host, so two hosts against one queue do not
+// overwrite each other's answer to "where is the checkout."
 func (k Kind) MachineLocal() bool {
 	switch k {
 	case KindWorkspace, KindSession:
@@ -61,21 +45,13 @@ func (k Kind) MachineLocal() bool {
 }
 
 // MachineLocal reports whether this particular binding's Ref only resolves
-// on the host that recorded it. It is the per-binding answer, and it exists
-// because Kind alone gets documents wrong.
-//
-// A document is portable when it landed in the vault, which is what
-// MetaStore records — a vault-relative path resolves on any device holding
-// the vault. A DOC: outcome a workflow did *not* bind stays wherever the
-// agent wrote it, usually inside a worktree that is disposed moments later.
-// Those two are the same Kind and are not the same fact, so asking the kind
-// would host-stamp neither and leave the unbound one reading as a live path
-// on a machine that never had it.
-//
-// Prefer this over Kind.MachineLocal when you hold a whole binding.
+// on the host that recorded it. Kind alone gets documents wrong: a bound
+// document (MetaStore set) is vault-relative and portable, while one a
+// workflow did not bind stays wherever the agent wrote it, usually a
+// worktree disposed moments later. Prefer this over Kind.MachineLocal when
+// you hold a whole binding.
 func (b Binding) MachineLocal() bool {
 	if b.Kind == KindDoc {
-		// Anything with a store behind it is that store's to resolve.
 		return b.Get(MetaStore) == ""
 	}
 	return b.Kind.MachineLocal()
@@ -183,17 +159,14 @@ func (b Binding) Get(key string) string {
 	return b.Meta[key]
 }
 
-// StateLabel is the word a human should see for this binding's state.
+// StateLabel is the word a human should see for this binding's state: the
+// vocabulary is shared across kinds but the natural word is not (a live PR
+// reads as "open", not "live"). Centralized here so `wf show`, the Obsidian
+// task block and `--json` consumers don't each pick their own word and
+// drift.
 //
-// It exists because the vocabulary is shared across kinds but the natural
-// word is not: a pull request that is live is "open", never "live", and a
-// reader who sees the raw state on a PR reads it as jargon. Translating in
-// the renderer would be worse than translating here — `wf show`, the
-// Obsidian task block and `--json` consumers would each pick their own
-// word for the same fact, and they would drift.
-//
-// An empty result means nothing is known and callers should render no
-// state at all, rather than inventing one.
+// An empty result means nothing is known; callers should render no state
+// rather than inventing one.
 func (b Binding) StateLabel() string {
 	if b.State == BindingUnknown {
 		return ""
@@ -239,17 +212,14 @@ func (bs Bindings) Live(k Kind) Bindings {
 }
 
 // Current returns the newest live binding of a kind — the one a caller
-// asking for "the worktree" or "the session" means. This is the query that
-// replaces the single-valued metadata keys: plural storage, singular read.
+// asking for "the worktree" or "the session" means.
 //
-// Ties go to the last recorded, which matters more than it looks: bindings
-// recovered from flat metadata share a zero timestamp, so every one of them
-// ties and Current returns whichever was read last. That is right for a
-// worktree (a re-run's checkout is the one you want) and wrong for pull
-// requests, where a flat array is in *report* order and the first is the
-// one the run led with. So a caller that means "in the order the run
-// reported them" wants Live, not Current — `internal/review` takes exactly
-// that route, and says why at the call site.
+// Ties go to the last recorded: bindings recovered from flat metadata share
+// a zero timestamp, so every one of them ties and Current returns whichever
+// was read last. That is right for a worktree (a re-run's checkout is the
+// one you want) and wrong for pull requests, where a flat array is in
+// *report* order and the first is the one the run led with — a caller that
+// wants report order should use Live, not Current.
 func (bs Bindings) Current(k Kind) (Binding, bool) {
 	live := bs.Live(k)
 	if len(live) == 0 {
@@ -338,13 +308,9 @@ type Run struct {
 func (r Run) Done() bool { return r.Ended != nil }
 
 // Record is wf's own ledger record: runs and machine-local bindings, keyed
-// by the tracker's own id. kata's ULID is the task's only identity — wf
-// mints nothing — so a Record's ID is always a real tracker row's id, and
-// Load(id) and kata's own row are two views of the same task rather than
-// two id spaces meeting at a binding. The tracker still owns work state —
-// title, priority, open/closed — and a Record never mirrors those; it holds
-// what a tracker cannot, which is everything machine-local and everything
-// with provenance.
+// by the tracker's own id (kata mints the identity; wf mints nothing — see
+// DESIGN-slim.md). The tracker still owns work state; a Record never
+// mirrors it.
 type Record struct {
 	// ID is the tracker's own id (a ULID on kata). The file this record
 	// lives in is named after it.

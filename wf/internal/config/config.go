@@ -1,7 +1,5 @@
-// Package config loads wf's settings.
-//
-// JSON rather than TOML because the standard library reads JSON and wf has
-// no dependencies. Every path field accepts a leading ~.
+// Package config loads wf's JSON settings file, applying defaults for
+// anything unset. See DESIGN.md for why wf has no third-party dependencies.
 package config
 
 import (
@@ -14,14 +12,11 @@ import (
 
 // Config is the whole of wf's configuration.
 type Config struct {
-	// Actor identifies this wf instance in leases. Defaults to
-	// wf@<hostname>, which is enough to tell two machines apart.
+	// Actor identifies this wf instance in leases. Defaults to wf@<hostname>.
 	Actor string `json:"actor"`
 	// Repo is the default repository worktrees are cut from.
-	Repo string `json:"repo"`
-	// Base is the default branch worktrees branch from.
-	Base string `json:"base"`
-	// WorktreeRoot is where worktrees are created.
+	Repo         string `json:"repo"`
+	Base         string `json:"base"`
 	WorktreeRoot string `json:"worktreeRoot"`
 	// SessionRoot is where wf-owned pi session files are written.
 	SessionRoot string `json:"sessionRoot"`
@@ -35,20 +30,13 @@ type Config struct {
 	DefaultProfile string `json:"defaultProfile"`
 	// DefaultModel is used when a workflow names none.
 	DefaultModel string `json:"defaultModel"`
-	// KataBin and PiBin override binaries that are often off PATH under a
-	// launchd or systemd unit.
+	// KataBin and PiBin override binaries often off PATH under a launchd/systemd unit.
 	KataBin string `json:"kataBin"`
 	PiBin   string `json:"piBin"`
-	// DifitCommand is the review viewer, as a shell-style command line
-	// rather than a bare binary: the default is the two-word "npx difit"
-	// so a checkout with no global install still works. DIFIT_BIN
-	// overrides it the same way KATA_BIN and PI_BIN override their own
-	// binaries.
-	DifitCommand string `json:"difitCommand"`
-	// MaxConcurrent caps simultaneous runs.
-	MaxConcurrent int `json:"maxConcurrent"`
-	// LeaseTTLSeconds overrides the default lease window.
-	LeaseTTLSeconds int `json:"leaseTTLSeconds"`
+	// DifitCommand is the review viewer's shell command line, defaulting to "npx difit".
+	DifitCommand    string `json:"difitCommand"`
+	MaxConcurrent   int    `json:"maxConcurrent"`
+	LeaseTTLSeconds int    `json:"leaseTTLSeconds"`
 
 	// Path records where this config was loaded from, or "" for defaults.
 	Path string `json:"-"`
@@ -64,7 +52,6 @@ func DefaultPath() string {
 }
 
 // Load reads config from path, falling back to defaults when it is absent.
-// A missing config is not an error: wf runs on defaults plus flags.
 func Load(path string) (*Config, error) {
 	if path == "" {
 		path = DefaultPath()
@@ -79,7 +66,6 @@ func Load(path string) (*Config, error) {
 		}
 		cfg.Path = path
 	case os.IsNotExist(err):
-		// Defaults only.
 	default:
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
@@ -125,9 +111,7 @@ func (c *Config) applyDefaults() {
 	}
 }
 
-// ProfileDir resolves a workflow's profile name to a directory. An unknown
-// name resolves to empty rather than failing: running under the default
-// profile is better than refusing to run at all.
+// ProfileDir resolves a workflow's profile name to a directory, or "" if unknown.
 func (c *Config) ProfileDir(name string) string {
 	if name == "" {
 		name = c.DefaultProfile
@@ -138,10 +122,7 @@ func (c *Config) ProfileDir(name string) string {
 	return c.Profiles[name]
 }
 
-// ResolveModel picks the model a run should use: the workflow's own choice
-// first, falling back to the configured default. Unlike ProfileDir this
-// needs no lookup table — a workflow's model is already the value pi wants,
-// not a name to resolve further.
+// ResolveModel picks the workflow's own model, falling back to the configured default.
 func (c *Config) ResolveModel(workflowModel string) string {
 	if workflowModel != "" {
 		return workflowModel

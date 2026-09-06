@@ -2,25 +2,17 @@ package wf
 
 // Reading a task's shareable bindings out of tracker metadata.
 //
-// This is the one reader of the flat keys — metadata in, typed bindings out
-// — so which key holds what is an implementation detail of this file rather
-// than shared knowledge. Before it existed every consumer re-derived the
-// join: `wf show`, `--json`, the review ladder and the escalation comment
-// each read the keys they cared about with their own tolerance for a
-// malformed value.
+// This is the one reader of these flat keys — metadata in, typed bindings
+// out — so which key holds what is an implementation detail of this file
+// rather than shared knowledge. Nothing else writes these keys (see
+// recordRunFacts and BindArtifacts), so reading them back here is not the
+// sync-back the design refuses. Sessions and workspaces are machine-local
+// and live only in the local ledger; this file has nothing to say about
+// either.
 //
-// kata is the only home for what this file reads: the repo a run named, the
-// PRs and issues it reported, and the note a task is bound to. Publishing
-// them here is one direction and reading them back is not the sync-back the
-// design refuses, because nothing else writes these keys — see
-// recordRunFacts and BindArtifacts in apply.go and artifact.go. A session
-// and its workspace are a different kind of fact — machine-local — and live
-// only in the local ledger; this file has nothing to say about either.
-//
-// Nothing here returns an error. A garbled PR array, a doc key holding a
-// number: each reads as no binding at all. That is deliberate — a binding
-// is how work is found again, never a lifecycle input, so bad metadata must
-// cost you a link, never a run.
+// Nothing here returns an error: a garbled PR array or a doc key holding a
+// number reads as no binding at all, since a binding is how work is found
+// again, never a lifecycle input.
 
 // LoadBindings reads every shareable binding recorded on a task's tracker
 // row.

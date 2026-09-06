@@ -10,18 +10,12 @@ import (
 	"github.com/ssinnott/skills-n-stuff/wf/internal/note"
 )
 
-// Binding produced documents back into an Obsidian vault.
-//
-// A workflow that produces prose declares where it lands; wf moves the file
-// into the vault if it was written somewhere disposable, then writes both
-// halves of the id pair — `kata-issue` in the note's frontmatter and
-// `wf.doc` in the task's metadata. Nothing else is mirrored, so a bound
-// note and its task can diverge in content without ever conflicting.
+// Binding produced documents back into an Obsidian vault. Moves DOC-outcome
+// files into the vault if needed, then writes both halves of the id pair —
+// `kata-issue` in the note's frontmatter and `wf.doc` in the task's
+// metadata. See DESIGN.md.
 
-// DocKey is the task-side half of the note binding. The key names the
-// role — a produced document — while *which* store holds it is a value on
-// the binding (MetaStore), so a second prose layer is a new value rather
-// than a second key with its own reader.
+// DocKey is the task-side half of the note binding.
 const DocKey = "wf.doc"
 
 // BindOptions configures artifact binding for one run.
@@ -111,7 +105,6 @@ func placeInVault(source string, opts BindOptions) (string, bool, error) {
 		return "", false, fmt.Errorf("resolve document %s: %w", source, err)
 	}
 
-	// Already in the vault: bind it where it lies.
 	if rel, err := filepath.Rel(vault, abs); err == nil && !strings.HasPrefix(rel, "..") {
 		return rel, false, nil
 	}

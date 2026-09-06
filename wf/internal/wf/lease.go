@@ -7,17 +7,10 @@ import (
 	"time"
 )
 
-// Leases are owned by the core, not by any backend.
-//
-// No tracker in scope has lease semantics. kata documents `claim` but no
-// expiry and no release verb at all; GitHub Projects and Linear have
-// neither. `claim` records ownership, which is not liveness: a killed
-// worker holds its issue forever and the queue quietly drains to nothing.
-//
-// So wf keeps its own record and asks a backend only to store a string for
-// it. Reclaiming is explicit — a lease is stale when it has not been
-// renewed within its TTL, and taking one is a decision the caller makes,
-// never a side effect of reading.
+// Leases are owned by the core, not by any backend; see DESIGN.md for why.
+// A backend stores only a string for the record. Reclaiming is explicit — a
+// lease is stale once it has gone unrenewed past its TTL, and taking one is
+// a decision the caller makes, never a side effect of reading.
 
 // LeaseKey is the metadata key the lease record is stored under.
 const LeaseKey = "wf.lease"

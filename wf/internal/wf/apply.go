@@ -9,11 +9,9 @@ import (
 
 // Applying a run's outcomes to the tracker.
 //
-// This is the only place a run's result becomes tracker state, and the rule
-// it enforces is that silence is never success: a run that did not report
-// DONE escalates to a human rather than closing. An agent that crashed, hit
-// its context limit, or simply stopped talking must not look the same as one
-// that finished.
+// This is the only place a run's result becomes tracker state: silence is
+// never success, so a run that did not report DONE escalates rather than
+// closing.
 
 const (
 	// StateKey carries wf's state vocabulary, which no tracker in scope
@@ -24,23 +22,16 @@ const (
 	// escalation queue is a plain list query in every tracker surface
 	// rather than something only wf can see.
 	AttentionKey = "work.attention"
-	// RepoKey records the repo a REPO: outcome named. Without it a closed
-	// task carries which PR shipped but not which checkout it shipped
-	// from, which is what `wf review` needs once the worktree that ran
-	// the agent has been disposed.
+	// RepoKey records the repo a REPO: outcome named, for `wf review` once
+	// the worktree that ran the agent is gone.
 	RepoKey = "wf.repo"
-	// PRsKey records PR: outcomes as a JSON array of URLs. kata's own
-	// evidence trail is write-only from wf's side — Close turns these into
-	// repeated `--evidence pr:<url>` flags, but NormalizeIssue never reads
-	// an evidence field back, and kata's wire format here is undocumented
-	// (see DESIGN.md's standing risk). Recording the URLs as wf's own
-	// metadata, the same way RepoKey does, is what lets a task be resolved
-	// straight to its PR later without guessing at that format.
+	// PRsKey records PR: outcomes as a JSON array of URLs. See DESIGN.md
+	// for why this is wf's own metadata rather than a read of kata's
+	// evidence trail.
 	PRsKey = "wf.pr"
-	// IssuesKey records ISSUE: outcomes as JSON, so a `wf review` running
-	// long after the agent's process has exited can still turn anchored
-	// findings into review comments — the transcript they came from does
-	// not survive past that process.
+	// IssuesKey records ISSUE: outcomes as JSON, so `wf review` can still
+	// turn anchored findings into comments after the run's transcript is
+	// gone.
 	IssuesKey = "wf.issue"
 )
 
@@ -55,10 +46,6 @@ type IssueRecord struct {
 // reads as empty rather than failing — a binding is how work is found
 // again, never a lifecycle input, so bad metadata must cost a link, never a
 // run.
-//
-// A decoder for LoadBindings rather than a call site's entry point — see
-// the package comment on load.go for why consumers go through the one
-// reader.
 func PRsFromMeta(meta map[string]any) []string {
 	data, ok := metaJSONBytes(meta[PRsKey])
 	if !ok {
@@ -242,16 +229,8 @@ func Apply(
 	}
 	result.Bound = bound
 
-	// A completion with nothing to show for it is not a completion. Every
-	// legitimate outcome leaves a trace the protocol already carries — a PR,
-	// a commit, a document, a test — so an agent that reported DONE and
-	// produced none either did nothing or forgot to say what it did. Either
-	// way a human should look before the ledger records it as finished.
-	//
-	// This is wf's rule, and kata enforces the same one: it refuses
-	// `close --done` without typed evidence, and tells you to leave the
-	// issue open instead. Manufacturing evidence to satisfy that check would
-	// defeat the only thing making a closed task trustworthy.
+	// A completion with no evidence escalates instead of closing; see
+	// DESIGN.md.
 	closing := closeResult(task, outcomes, bound)
 	if !closing.HasEvidence() {
 		return Escalate(ctx, q, task,
@@ -285,8 +264,7 @@ func Apply(
 		result.Created = append(result.Created, created.ShortID)
 	}
 
-	// Filed issues are recorded, never gating: creating the issue was the
-	// work. They arrive in the summary comment above.
+	// Filed issues never gate completion; see DESIGN.md.
 	_ = issues
 
 	if err := q.Close(ctx, task.ID, closing, opts.IdempotencyKey); err != nil {
@@ -331,11 +309,8 @@ func runSummary(outcomes []Outcome, bound []BoundDoc) string {
 	return "Run produced:\n\n" + strings.Join(lines, "\n")
 }
 
-// MinCloseMessage is the shortest close message a tracker is assumed to
-// accept. kata enforces exactly this — it refuses `close --done` with a
-// message under 40 characters, on the grounds that closing is an assertion
-// about completed work and deserves a sentence. An agent that signs off with
-// a terse "Done" would otherwise fail every close.
+// MinCloseMessage is the shortest close message kata's `close --done`
+// accepts.
 const MinCloseMessage = 40
 
 // closeResult records evidence at final locations, so a closed task does not
