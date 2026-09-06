@@ -54,6 +54,9 @@ type IssueRecord struct {
 // PRsFromMeta reads recorded PR urls, if any. Garbage or absent metadata
 // reads as empty rather than failing: like HistoryFromMeta, this is a
 // convenience read, not a lifecycle input.
+//
+// A decoder for LoadBindings rather than a call site's entry point — see
+// BindingFromMeta on why consumers go through the one reader.
 func PRsFromMeta(meta map[string]any) []string {
 	data, ok := metaJSONBytes(meta[PRsKey])
 	if !ok {
@@ -404,7 +407,7 @@ func followOnBody(task Task, outcomes []Outcome, bound []BoundDoc) string {
 }
 
 func sessionHint(task Task) string {
-	if binding, ok := BindingFromMeta(task.Meta); ok && binding.Path != "" {
+	if _, ok := LoadBindings(task).Current(KindSession); ok {
 		ref := task.ShortID
 		if ref == "" {
 			ref = task.ID

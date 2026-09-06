@@ -15,10 +15,20 @@ import (
 // A workflow that produces prose declares where it lands; wf moves the file
 // into the vault if it was written somewhere disposable, then writes both
 // halves of the id pair — `kata-issue` in the note's frontmatter and
-// `obsidian.note` in the task's metadata. Nothing else is mirrored, so a
-// bound note and its task can diverge in content without ever conflicting.
+// `wf.doc` in the task's metadata. Nothing else is mirrored, so a bound
+// note and its task can diverge in content without ever conflicting.
 
-// ObsidianNoteKey is the task-side half of the note binding.
+// DocKey is the task-side half of the note binding. The key names the
+// role — a produced document — while *which* store holds it is a value on
+// the binding (MetaStore), so a second prose layer is a new value rather
+// than a second key with its own reader.
+const DocKey = "wf.doc"
+
+// ObsidianNoteKey is the key DocKey replaced. Still read, so a task bound
+// by an earlier release keeps resolving; never written.
+//
+// Deprecated: delete one release after the rename ships, on the same terms
+// as the Legacy session keys.
 const ObsidianNoteKey = "obsidian.note"
 
 // BindOptions configures artifact binding for one run.
@@ -88,9 +98,9 @@ func BindArtifacts(
 	}
 
 	// The task points at one note — the first produced — while the rest are
-	// recorded in the run summary. A task with a single obsidian.note stays
+	// recorded in the run summary. A task with a single wf.doc stays
 	// queryable; a list would not.
-	if err := q.SetMeta(ctx, task.ID, ObsidianNoteKey, bound[0].VaultPath, SetMetaOptions{}); err != nil {
+	if err := q.SetMeta(ctx, task.ID, DocKey, bound[0].VaultPath, SetMetaOptions{}); err != nil {
 		return bound, fmt.Errorf("bind note path on %s: %w", task.ShortID, err)
 	}
 	return bound, nil

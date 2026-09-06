@@ -24,7 +24,7 @@ func TestSessionOpenSpawnsAndRecordsState(t *testing.T) {
 	}
 
 	s := &Session{Spawner: spawner, StatePath: statePath}
-	result, err := s.Open(context.Background(), task, &config.Config{}, nil)
+	result, err := s.Open(context.Background(), task, &config.Config{})
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
@@ -61,7 +61,7 @@ func TestSessionOpenReplacesThePreviousViewer(t *testing.T) {
 	}
 
 	s := &Session{Spawner: spawner, StatePath: statePath}
-	result, err := s.Open(context.Background(), task, &config.Config{}, nil)
+	result, err := s.Open(context.Background(), task, &config.Config{})
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
@@ -85,7 +85,7 @@ func TestSessionOpenDocTargetSpawnsNothing(t *testing.T) {
 	}
 
 	s := &Session{Spawner: spawner, StatePath: statePath}
-	result, err := s.Open(context.Background(), task, &config.Config{}, nil)
+	result, err := s.Open(context.Background(), task, &config.Config{})
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
@@ -108,17 +108,20 @@ func TestSessionOpenSeedsFindingsAndReportsCount(t *testing.T) {
 	statePath := filepath.Join(t.TempDir(), "review.json")
 	spawner := &fakeSpawner{stdout: `{"port":4966,"url":"http://localhost:4966","pid":3983}`}
 
+	// The findings come off the task's own issue bindings, so the run that
+	// filed them is the only thing that has to have happened.
 	task := wf.Task{
 		ID: "01HZ", ShortID: "neck", Title: "Add the parser",
-		Meta: map[string]any{wf.SessionWorkspaceKey: dir, wf.SessionPathKey: "/s/1.jsonl"},
-	}
-	issues := []wf.IssueRecord{
-		{URL: "https://a/i1", Title: "internal/foo.go:42 nil check"},
-		{URL: "https://a/i2", Title: "no anchor here"},
+		Meta: map[string]any{
+			wf.SessionWorkspaceKey: dir,
+			wf.SessionPathKey:      "/s/1.jsonl",
+			wf.IssuesKey: `[{"url":"https://a/i1","title":"internal/foo.go:42 nil check"},` +
+				`{"url":"https://a/i2","title":"no anchor here"}]`,
+		},
 	}
 
 	s := &Session{Spawner: spawner, StatePath: statePath}
-	result, err := s.Open(context.Background(), task, &config.Config{}, issues)
+	result, err := s.Open(context.Background(), task, &config.Config{})
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
@@ -141,7 +144,7 @@ func TestSessionOpenNoTargetReturnsError(t *testing.T) {
 	task := wf.Task{ID: "01HZ", ShortID: "neck", Title: "Nothing to show"}
 
 	s := &Session{Spawner: &fakeSpawner{}, StatePath: statePath}
-	if _, err := s.Open(context.Background(), task, &config.Config{}, nil); err == nil {
+	if _, err := s.Open(context.Background(), task, &config.Config{}); err == nil {
 		t.Error("Open() = nil error, want ErrNoTarget for a task with nothing recorded")
 	}
 }
@@ -249,7 +252,7 @@ func TestSessionOpenRequestsRefsRememberedPort(t *testing.T) {
 	}
 
 	s := &Session{Spawner: spawner, StatePath: statePath}
-	if _, err := s.Open(context.Background(), task, &config.Config{}, nil); err != nil {
+	if _, err := s.Open(context.Background(), task, &config.Config{}); err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
 
@@ -276,7 +279,7 @@ func TestSessionOpenWithNoRememberedPortAsksForNone(t *testing.T) {
 	}
 
 	s := &Session{Spawner: spawner, StatePath: statePath}
-	if _, err := s.Open(context.Background(), task, &config.Config{}, nil); err != nil {
+	if _, err := s.Open(context.Background(), task, &config.Config{}); err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
 	for _, a := range spawner.gotArgs {
@@ -303,7 +306,7 @@ func TestSessionOpenRecordsTheBoundPortNotTheRequestedOne(t *testing.T) {
 	}
 
 	s := &Session{Spawner: spawner, StatePath: statePath}
-	if _, err := s.Open(context.Background(), task, &config.Config{}, nil); err != nil {
+	if _, err := s.Open(context.Background(), task, &config.Config{}); err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
 

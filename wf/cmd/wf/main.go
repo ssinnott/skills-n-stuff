@@ -226,16 +226,17 @@ func (a *app) cmdShow(ctx context.Context, args []string) (int, error) {
 		fmt.Println("lease    unheld")
 	}
 
-	if binding, ok := wf.BindingFromMeta(task.Meta); ok {
-		fmt.Printf("session  %s\n", binding.Path)
+	bindings := wf.LoadBindings(task)
+	if session, ok := bindings.Current(wf.KindSession); ok {
+		fmt.Printf("session  %s\n", session.Ref)
 	} else {
 		fmt.Println("session  none")
 	}
-	if history := wf.HistoryFromMeta(task.Meta); len(history) > 1 {
-		fmt.Printf("runs     %d\n", len(history))
+	if runs := len(bindings.ByKind(wf.KindSession)); runs > 1 {
+		fmt.Printf("runs     %d\n", runs)
 	}
-	if path, ok := task.Meta[wf.ObsidianNoteKey].(string); ok && path != "" {
-		fmt.Printf("note     %s\n", path)
+	if doc, ok := bindings.Current(wf.KindDoc); ok {
+		fmt.Printf("note     %s\n", doc.Ref)
 	}
 	return 0, nil
 }
@@ -347,12 +348,14 @@ func (a *app) cmdAttach(ctx context.Context, args []string) (int, error) {
 	if err != nil {
 		return 1, err
 	}
-	binding, ok := wf.BindingFromMeta(meta)
+	// Only the metadata is in hand here, so the task is assembled around
+	// it — LoadBindings reads nothing else.
+	session, ok := wf.LoadBindings(wf.Task{ID: ref, Meta: meta}).Current(wf.KindSession)
 	if !ok {
 		return 1, fmt.Errorf("%s has no bound session yet", ref)
 	}
 
-	dir := binding.Cwd
+	dir := session.Get(wf.MetaCwd)
 	if dir == "" {
 		dir, _ = os.Getwd()
 	}
@@ -362,7 +365,7 @@ func (a *app) cmdAttach(ctx context.Context, args []string) (int, error) {
 	}
 
 	// Hand the terminal to pi; wf has nothing further to do.
-	pi := exec.CommandContext(ctx, bin, binding.AttachArgs()...)
+	pi := exec.CommandContext(ctx, bin, wf.AttachArgs(session)...)
 	pi.Dir = dir
 	pi.Stdin, pi.Stdout, pi.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := pi.Run(); err != nil {
@@ -404,7 +407,7 @@ func (a *app) cmdBind(ctx context.Context, args []string) (int, error) {
 	if err := os.WriteFile(abs, []byte(note.SetField(text, note.IssueKey, task.ID)), 0o644); err != nil {
 		return 1, fmt.Errorf("write %s: %w", notePath, err)
 	}
-	if err := a.queue.SetMeta(ctx, task.ID, wf.ObsidianNoteKey, notePath, wf.SetMetaOptions{}); err != nil {
+	if err := a.queue.SetMeta(ctx, task.ID, wf.DocKey, notePath, wf.SetMetaOptions{}); err != nil {
 		return 1, fmt.Errorf("bind note path on %s: %w", task.ShortID, err)
 	}
 

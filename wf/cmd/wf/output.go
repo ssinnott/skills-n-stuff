@@ -140,15 +140,16 @@ func (a *app) toJSON(t wf.Task) jsonTask {
 			Stale:   lease.IsStale(now()),
 		}
 	}
-	if binding, ok := wf.BindingFromMeta(t.Meta); ok {
-		out.Session = binding.Path
-		out.Cwd = binding.Cwd
+	bindings := wf.LoadBindings(t)
+	if session, ok := bindings.Current(wf.KindSession); ok {
+		out.Session = session.Ref
+		out.Cwd = session.Get(wf.MetaCwd)
 	}
-	if runs := wf.HistoryFromMeta(t.Meta); len(runs) > 0 {
-		out.Runs = len(runs)
+	if runs := len(bindings.ByKind(wf.KindSession)); runs > 0 {
+		out.Runs = runs
 	}
-	if note, ok := t.Meta[wf.ObsidianNoteKey].(string); ok {
-		out.Note = note
+	if doc, ok := bindings.Current(wf.KindDoc); ok {
+		out.Note = doc.Ref
 	}
 	return out
 }

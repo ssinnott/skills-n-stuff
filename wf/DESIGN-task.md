@@ -400,13 +400,13 @@ Named rather than quietly decided, because each could go the other way:
 
 Staged so that each stage is shippable and the risky one is last.
 
-- [ ] **1 — The type, over today's storage.** `Bindings` with the envelope
+- [x] **1 — The type, over today's storage.** `Bindings` with the envelope
       and kinds; `LoadBindings(task)` reading the current metadata keys;
       every ad-hoc `Meta[...]` read in `main.go`, `output.go`, `review.go`,
       `session.go` and `apply.go` moved behind it. `review.Inputs` becomes
       `Bindings`. Pure refactor, no format change, and the point at which
       the type earns its place or does not.
-- [ ] **2 — Role names.** New key names carrying no product in them; read
+- [x] **2 — Role names.** New key names carrying no product in them; read
       both, write new. Migration is one release of tolerant reads.
 - [ ] **3 — The local ledger, and runs.** `~/.wf/tasks/<id>.json` behind a
       narrow `Store` interface, dual-written with tracker publication, read

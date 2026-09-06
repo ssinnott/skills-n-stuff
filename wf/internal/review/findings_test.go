@@ -7,12 +7,22 @@ import (
 	"github.com/ssinnott/skills-n-stuff/wf/internal/wf"
 )
 
-func TestFindingsFromIssuesKeepsOnlyAnchoredOnes(t *testing.T) {
-	issues := []wf.IssueRecord{
-		{URL: "https://a/i1", Title: "internal/foo.go:42 nil check on the error path"},
-		{URL: "https://a/i2", Title: "Flaky test in CI"}, // no file:line — must be skipped
-		{URL: "https://a/i3", Title: "cmd/wf/main.go:7 — unused import"},
+// issueBindings builds the issue bindings a task would carry after the
+// runs that filed them.
+func issueBindings(issues ...wf.IssueRecord) wf.Bindings {
+	var bs wf.Bindings
+	for _, iss := range issues {
+		bs = append(bs, wf.Binding{Kind: wf.KindIssue, Ref: iss.URL, Label: iss.Title})
 	}
+	return bs
+}
+
+func TestFindingsFromIssuesKeepsOnlyAnchoredOnes(t *testing.T) {
+	issues := issueBindings(
+		wf.IssueRecord{URL: "https://a/i1", Title: "internal/foo.go:42 nil check on the error path"},
+		wf.IssueRecord{URL: "https://a/i2", Title: "Flaky test in CI"}, // no file:line — must be skipped
+		wf.IssueRecord{URL: "https://a/i3", Title: "cmd/wf/main.go:7 — unused import"},
+	)
 
 	got := FindingsFromIssues(issues)
 	if len(got) != 2 {
@@ -32,7 +42,7 @@ func TestFindingsFromIssuesKeepsOnlyAnchoredOnes(t *testing.T) {
 }
 
 func TestFindingsFromIssuesEmptyWhenNoneAnchored(t *testing.T) {
-	got := FindingsFromIssues([]wf.IssueRecord{{URL: "https://a/i1", Title: "Just a title"}})
+	got := FindingsFromIssues(issueBindings(wf.IssueRecord{URL: "https://a/i1", Title: "Just a title"}))
 	if len(got) != 0 {
 		t.Errorf("FindingsFromIssues() = %v, want none", got)
 	}

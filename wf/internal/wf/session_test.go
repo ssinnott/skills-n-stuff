@@ -167,8 +167,8 @@ func TestHistoryFromMetaTolerance(t *testing.T) {
 }
 
 func TestAttachArgsUsesPath(t *testing.T) {
-	b := SessionBinding{ID: "sess-1", Path: "/s/1.jsonl"}
-	got := b.AttachArgs()
+	b := Binding{Kind: KindSession, Ref: "/s/1.jsonl", Meta: map[string]string{MetaSessionID: "sess-1"}}
+	got := AttachArgs(b)
 	if len(got) != 2 || got[0] != "--session" || got[1] != "/s/1.jsonl" {
 		t.Errorf("AttachArgs() = %v, want the session file path", got)
 	}
