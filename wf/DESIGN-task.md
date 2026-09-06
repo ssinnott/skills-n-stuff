@@ -188,6 +188,32 @@ Five concrete failures follow from that shape, and none of them is stylistic:
   zero timestamp and nothing else can break the tie; ledger bindings carry
   real times and need no such crutch.)
 
+- **PR state is refreshed by shelling out to `gh`.** Completing a task when
+  every PR on it has merged needs someone to ask GitHub whether they did,
+  and wf has no such caller today.
+
+  `gh` wins on the things that are expensive to get right and easy to get
+  wrong: authentication (including SSO, tokens and enterprise hosts),
+  pagination, rate-limit backoff, and the URL-to-API mapping for a PR link a
+  human pasted. Reimplementing those against the REST API means owning an
+  auth story wf has no business owning, and the standard-library-only rule
+  would make even the HTTP client hand-rolled.
+
+  The cost is real and is the same cost `difit`, `kata` and `pi` already
+  impose: a binary that must be on `PATH` and authenticated, whose absence
+  is a runtime failure rather than a build one. That is precedent, not an
+  excuse, so it follows the same pattern — a `GH_BIN` override for the
+  launchd/systemd case where `PATH` is not what a shell would give you, and
+  a missing or unauthenticated `gh` degrades to "state unknown", never to a
+  wrong answer. A binding whose state cannot be refreshed keeps the state it
+  had; nothing is marked merged on a failed lookup, because closing a task
+  on a guess is exactly the evidence-free close the whole design refuses.
+
+  Rejected: **the GitHub API directly** (an auth story and an HTTP stack for
+  one question), and **recording the binding and leaving refresh manual**
+  (it makes PR completion — the one capability pi-tasks had that wf lost —
+  permanently a manual sweep, which is what made it rot there).
+
 ### Where it lives
 
 - **The ledger is local; the tracker keeps work state. Split by durability,
