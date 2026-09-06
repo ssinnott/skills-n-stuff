@@ -520,7 +520,7 @@ Each of these is currently either impossible or a special case:
   the ledger, so kata's `wf.pr` keeps saying whatever the run said. This is
   consistent with "publication is derived output, never read back" — and it
   still means the tracker's copy silently ages, and nothing here says who
-  republishes it.
+  republishes it. (`wf pr refresh` removed in DESIGN-slim.md stage 1.)
 
 - **Pruning a record drops the doc→task join** for every document it bound.
   Acceptable under "not an artifact store", but the retention question above

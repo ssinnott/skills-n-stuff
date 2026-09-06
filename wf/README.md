@@ -49,8 +49,6 @@ wf review --pr <url>         # review any PR directly, no task required
 wf review abc4 --stop        # stop the running viewer
 wf review comment abc4       # read a pasted review prompt from stdin
 wf review comment abc4 --format difit   # ingest difit's own comment store
-wf pr refresh                # ask GitHub what every recorded PR did
-wf pr refresh abc4           # just this task's
 wf gc                        # report ledger bindings whose referent is gone
 wf gc --fix                  # correct their recorded state
 wf gc --delete --before 30d  # drop records that point at nothing, and are old
@@ -99,24 +97,13 @@ with what that run produced.
 }
 ```
 
-`KATA_BIN`, `PI_BIN`, `DIFIT_BIN` and `GH_BIN` override binaries that are
+`KATA_BIN`, `PI_BIN` and `DIFIT_BIN` override binaries that are
 off `PATH` —
 they usually are under a launchd or systemd unit. `difitCommand` (default
 `npx difit`) is a shell-style command line rather than a bare binary, since
 the default itself is two words; `DIFIT_BIN` replaces the whole thing.
 
 ## Pull request state, and collecting the dead
-
-`wf pr refresh [<ref>]` asks `gh` what happened to the pull requests a task
-opened and records the answer on the binding. A task whose PRs have all
-merged is reported as **completable**; it is not closed here. Closing lives
-in one place, gated on the typed evidence a run produced, and a refresh holds
-none of that — see `internal/wf/completion.go`.
-
-A lookup that fails degrades to *state unknown*, never to a wrong answer. A
-missing `gh`, an unauthenticated one, a network failure, a 404: the binding
-keeps the state it had, the report says it was not refreshed, and the exit
-code is 2. Nothing is marked merged on a guess.
 
 `wf gc` reports bindings whose referent is gone: checkouts recorded live that
 are no longer on disk, sessions that would fail to reattach, dead review
