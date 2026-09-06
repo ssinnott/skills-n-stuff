@@ -238,7 +238,7 @@ func (a *app) cmdShow(ctx context.Context, args []string) (int, error) {
 	if runs := len(bindings.ByKind(wf.KindSession)); runs > 1 {
 		fmt.Printf("runs     %d\n", runs)
 	}
-	if doc, ok := bindings.Current(wf.KindDoc); ok {
+	if doc, ok := bindings.Note(); ok {
 		fmt.Printf("note     %s\n", doc.Ref)
 	}
 	return 0, nil

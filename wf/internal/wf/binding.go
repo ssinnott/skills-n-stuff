@@ -135,6 +135,10 @@ const (
 	MetaCwd = "cwd"
 	// MetaStore is where a document lives — "vault" is a value here.
 	MetaStore = "store"
+	// StoreVault is MetaStore's value for a document in the Obsidian vault.
+	// A constant because three packages now compare against it, and a typo
+	// in any of them would silently mean "not in the vault".
+	StoreVault = "vault"
 	// MetaPort is the port a review pane bound.
 	MetaPort = "port"
 	// MetaPID is the process id of a review pane.
@@ -272,6 +276,31 @@ func (bs Bindings) Current(k Kind) (Binding, bool) {
 		}
 	}
 	return newest, true
+}
+
+// Note returns the task's own note — the document that faces this task,
+// as opposed to a document some run produced.
+//
+// Both are KindDoc bindings in a vault, which is why asking for the newest
+// doc gets this wrong: a research note a run wrote is newer than the task
+// note almost immediately, and reporting it as "the note" sends a reader —
+// or `wf note sync` — to the wrong file. The task's note is the one no run
+// produced, so an empty Via is what separates them.
+func (bs Bindings) Note() (Binding, bool) {
+	var best Binding
+	found := false
+	for _, b := range bs {
+		if b.Kind != KindDoc || b.Via != "" || !b.IsLive() {
+			continue
+		}
+		if b.Get(MetaStore) != StoreVault {
+			continue
+		}
+		if !found || !b.At.Before(best.At) {
+			best, found = b, true
+		}
+	}
+	return best, found
 }
 
 // Refs returns the referents of a kind, live or not, in recorded order.

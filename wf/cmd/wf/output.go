@@ -148,7 +148,7 @@ func (a *app) toJSON(t wf.Task) jsonTask {
 	if runs := len(bindings.ByKind(wf.KindSession)); runs > 0 {
 		out.Runs = runs
 	}
-	if doc, ok := bindings.Current(wf.KindDoc); ok {
+	if doc, ok := bindings.Note(); ok {
 		out.Note = doc.Ref
 	}
 	return out

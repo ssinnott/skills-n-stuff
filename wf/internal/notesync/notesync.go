@@ -496,13 +496,10 @@ func (s *Syncer) abs(rel string) string {
 // document is something the note *links to*; writing a task's whole history
 // into the middle of a research document it happened to produce would be
 // the wrong file every time.
-func noteBinding(bs wf.Bindings) (wf.Binding, bool) {
-	i, ok := noteIndex(bs)
-	if !ok {
-		return wf.Binding{}, false
-	}
-	return bs[i], true
-}
+// noteBinding defers to the type, so this package and the two CLI readers
+// cannot drift about which document is the task's note. noteIndex stays
+// because binding it in place needs the position, not the value.
+func noteBinding(bs wf.Bindings) (wf.Binding, bool) { return bs.Note() }
 
 // noteIndex is noteBinding by position, so Bind can update the binding in
 // place instead of appending a rival to it.

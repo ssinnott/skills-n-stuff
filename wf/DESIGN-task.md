@@ -214,6 +214,27 @@ Five concrete failures follow from that shape, and none of them is stylistic:
   (it makes PR completion — the one capability pi-tasks had that wf lost —
   permanently a manual sweep, which is what made it rot there).
 
+- **A task's note is not just its newest document.** `KindDoc` covers two
+  things the design never separated: the note that *faces* a task, and a
+  document some run *produced*. Both live in the vault, so "the newest doc"
+  picks the research note the moment a run writes one — which sends both
+  `wf show` and `wf note sync` to the wrong file. Provenance is the
+  separator: the task's note is the vault doc that no run produced
+  (`Via == ""`), and `Bindings.Note()` is the single query all three readers
+  use. The renderer also drops the note's own binding before rendering, so a
+  note does not carry a wikilink to itself and put a self-edge in the graph
+  the doc→task backlinks exist to serve.
+
+- **Age churn is real and bounded, not solved.** `FileStore` stamps
+  `Updated` on every write, and a note's ages are anchored to it, so any
+  ledger update — including one that changes nothing the note shows — can
+  move "12m ago" to "13m ago" and cause a write into a synced vault. Coarse
+  ages absorb most of it, and `wf note sync` reloads after binding so a sync
+  never fights its own write. The general case is still latent, and PR-state
+  refresh is what will hit it hardest: a sweep that touches every task's
+  ledger record would re-render every note. If that bites, the fix is to
+  stamp `Updated` only when the record's content actually changed.
+
 ### Where it lives
 
 - **The ledger is local; the tracker keeps work state. Split by durability,

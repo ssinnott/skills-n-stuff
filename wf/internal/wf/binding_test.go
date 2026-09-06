@@ -279,3 +279,43 @@ func TestMachineLocalDependsOnTheDocsStore(t *testing.T) {
 		}
 	}
 }
+
+// The task's note and a document a run produced are both vault docs, so
+// asking for the newest picks the research note the moment a run writes
+// one. Provenance is what separates them.
+func TestNoteIsTheTasksOwnNotTheNewestDoc(t *testing.T) {
+	vault := map[string]string{MetaStore: StoreVault}
+	bs := Bindings{
+		{Kind: KindDoc, Ref: "Tasks/parser.md", At: at(10), Meta: vault},
+		{Kind: KindDoc, Ref: "Research/plan.md", At: at(30), Via: "run-1", Meta: vault},
+	}
+
+	got, ok := bs.Note()
+	if !ok || got.Ref != "Tasks/parser.md" {
+		t.Fatalf("Note = %q, want Tasks/parser.md — a run's doc is not the note", got.Ref)
+	}
+	// The naive query is what this exists to replace.
+	if newest, _ := bs.Current(KindDoc); newest.Ref != "Research/plan.md" {
+		t.Fatal("precondition: Current should pick the newer research doc")
+	}
+}
+
+func TestNoteRequiresAVaultStore(t *testing.T) {
+	// An unbound DOC: path is inside a worktree, not a note.
+	bs := Bindings{{Kind: KindDoc, Ref: "/w/neck/scratch.md", At: at(10)}}
+	if _, ok := bs.Note(); ok {
+		t.Error("a doc with no store is not the task's note")
+	}
+}
+
+func TestNoteIgnoresRetiredNotes(t *testing.T) {
+	vault := map[string]string{MetaStore: StoreVault}
+	bs := Bindings{
+		{Kind: KindDoc, Ref: "Tasks/old.md", At: at(10), State: BindingSuperseded, Meta: vault},
+		{Kind: KindDoc, Ref: "Tasks/current.md", At: at(20), State: BindingLive, Meta: vault},
+	}
+	got, _ := bs.Note()
+	if got.Ref != "Tasks/current.md" {
+		t.Errorf("Note = %q, want Tasks/current.md", got.Ref)
+	}
+}
