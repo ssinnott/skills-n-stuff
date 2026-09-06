@@ -10,3 +10,6 @@ obsidian-wf/styles.css
 
 # wf build output (module is github.com/ssinnott/skills-n-stuff/wf)
 wf/wf
+
+# Agent worktrees created by the harness — scratch, never committed
+.claude/worktrees/
