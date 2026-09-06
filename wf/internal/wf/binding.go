@@ -65,6 +65,27 @@ func (k Kind) MachineLocal() bool {
 	return false
 }
 
+// MachineLocal reports whether this particular binding's Ref only resolves
+// on the host that recorded it. It is the per-binding answer, and it exists
+// because Kind alone gets documents wrong.
+//
+// A document is portable when it landed in the vault, which is what
+// MetaStore records — a vault-relative path resolves on any device holding
+// the vault. A DOC: outcome a workflow did *not* bind stays wherever the
+// agent wrote it, usually inside a worktree that is disposed moments later.
+// Those two are the same Kind and are not the same fact, so asking the kind
+// would host-stamp neither and leave the unbound one reading as a live path
+// on a machine that never had it.
+//
+// Prefer this over Kind.MachineLocal when you hold a whole binding.
+func (b Binding) MachineLocal() bool {
+	if b.Kind == KindDoc {
+		// Anything with a store behind it is that store's to resolve.
+		return b.Get(MetaStore) == ""
+	}
+	return b.Kind.MachineLocal()
+}
+
 // BindingState is one binding's own lifecycle — never the task's. A task's
 // progress is WorkState (see task.go); these say whether the thing a
 // binding points at is still there and still current.

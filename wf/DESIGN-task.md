@@ -59,9 +59,21 @@ Five concrete failures follow from that shape, and none of them is stylistic:
   on the machine you are sitting at.
 - **Bindings are single-valued where the work is plural.** One
   `obsidian.note`: the first produced document wins and the rest survive
-  only as prose in a comment. One `pi.workspace`: a re-run overwrites the
-  checkout of the escalated run a human was on their way to inspect — the
-  checkout wf deliberately *kept* for exactly that purpose.
+  only as prose in a comment. One `pi.workspace`: a re-run cannot coexist
+  with the checkout of the escalated run a human was on their way to
+  inspect — the checkout wf deliberately *kept* for exactly that purpose.
+
+  Implementing this found the failure to be worse than described, and in the
+  opposite direction. Earlier drafts of this document said a re-run
+  *overwrote* that checkout. It did not: `WorktreeName` is deterministic per
+  task, so a re-run computed the same directory, and `Provider.Create`
+  refused an existing one outright — "release the previous run first". So a
+  task could never be re-run at all while the evidence from its last run was
+  still on disk, which is precisely the case a re-run exists for. Nothing
+  was destroyed; nothing could start. The fix is the same shape either way
+  (plural workspace bindings, the older superseded rather than dropped) plus
+  a `Create` that takes the next free `-N` name, checking both directory and
+  branch since `Dispose` deletes branches best-effort.
 - **Bindings carry no lifecycle and no provenance.** Nothing records that a
   worktree was disposed; `wf review` finds out by `os.Stat`. Nothing records
   that a PR merged, so wf cannot do what pi-tasks could — complete a task
@@ -107,8 +119,9 @@ Five concrete failures follow from that shape, and none of them is stylistic:
   This is the piece the flat model cannot express, and it buys four things at
   once. **Provenance**: which run opened this PR, which run built this
   checkout. **Re-run safety**: a second run gets its *own* worktree binding
-  and the first is marked superseded rather than clobbered, which is the
-  direct fix for a re-run destroying an escalated run's evidence.
+  and the first is marked superseded rather than dropped, which is the
+  direct fix for a re-run and an escalated run's evidence being unable to
+  coexist.
   **Comparison**: two runs of the same workflow under different models are
   two rows with two sets of artifacts, which is exactly the question
   "was opus worth it here" needs. And **the view**: a task rendered as
@@ -157,6 +170,23 @@ Five concrete failures follow from that shape, and none of them is stylistic:
   is what lets a chain render as a chain in `wf show` and in a task note. It
   does not by itself reach Obsidian's graph — see the note-projection section
   for why that needs a note path the binding does not carry.
+
+- **`Apply` returns bindings; the supervisor persists them.** Stage 3's
+  plan said `Apply` writes bindings tagged `via: <run-id>`. It cannot:
+  `internal/store` imports `internal/wf` for `wf.Record`, so `wf` importing
+  `store` is a cycle. `Apply` returns them on its result and the supervisor
+  — which already owns both — does the write. The plan also said "instead of
+  flat keys", which contradicts the publication decision below; it is *in
+  addition to*, and tracker publication is unchanged.
+
+- **Workspaces supersede; sessions do not.** A second checkout genuinely
+  retires the first as *the* place to look. A second session does not — the
+  old session file still exists and `wf attach` still opens it, which is the
+  whole reason session bindings are written at spawn. Treating the kinds
+  uniformly would hide exactly the crashed run you need. (`load.go` still
+  supersedes sessions recovered from flat metadata, because those share a
+  zero timestamp and nothing else can break the tie; ledger bindings carry
+  real times and need no such crutch.)
 
 ### Where it lives
 
@@ -369,8 +399,9 @@ Each of these is currently either impossible or a special case:
 - `wf show <ref>` renders one object instead of a hand-assembled subset, and
   an Obsidian note renders the same object without a second implementation.
 - **Provenance**: which run produced which artifact, answerable at all.
-- **Re-runs stop destroying evidence**, because a second run gets its own
-  workspace binding instead of overwriting the first.
+- **Re-runs become possible at all**, and keep their predecessor's
+  evidence: a second run gets its own workspace binding and its own `-N`
+  checkout, while the first is superseded rather than dropped.
 - `wf gc`: bindings with lifecycle make "disposed worktrees still recorded",
   "branches with no task", and "dead review panes" queries rather than
   guesses.
@@ -421,8 +452,8 @@ Staged so that each stage is shippable and the risky one is last.
       narrow `Store` interface, dual-written with tracker publication, read
       local-first. `review.json` folds into it. Runs become the middle layer
       and `Apply` writes bindings tagged `via: <run-id>` instead of flat
-      keys. Record the branch. Fixes the multi-host clobber and the re-run
-      overwriting a kept checkout.
+      keys. Record the branch. Fixes the multi-host clobber, and makes a
+      re-run possible while a kept checkout is still on disk.
 - [ ] **4 — Standalone identity and explicit dispatch.** wf-minted ids,
       `wf task new`, adopt into a tracker, ref resolution across both id
       spaces, `wf run <ref> --workflow <name>`. `wf review --pr` becomes a

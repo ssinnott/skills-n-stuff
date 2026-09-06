@@ -115,7 +115,7 @@ func (s *Supervisor) identify(rec *wf.Record, task wf.Task) {
 // be the answer everywhere.
 func (s *Supervisor) localBinding(kind wf.Kind, ref, runID string, at time.Time) wf.Binding {
 	b := wf.Binding{Kind: kind, Ref: ref, State: wf.BindingLive, At: at, Via: runID}
-	if kind.MachineLocal() {
+	if b.MachineLocal() {
 		b.Host = s.actor()
 	}
 	return b
@@ -149,10 +149,13 @@ func (s *Supervisor) beginRun(task wf.Task, flow workflow.Workflow, runID string
 // the previous run left.
 //
 // Superseding rather than overwriting is the concrete bug this whole shape
-// exists to fix. A re-run used to clobber the single workspace key, taking
-// with it the checkout an escalated run had been deliberately *kept* on disk
-// for a human to open. Now the old binding stays recorded and findable; it
-// simply stops being current.
+// exists to fix, though not in the direction the design first claimed. A
+// re-run did not clobber the previous checkout: WorktreeName is derived from
+// the task, so it computed the same directory, and Create refused an
+// existing one — meaning a task could not be re-run *at all* while the
+// checkout an escalated run had deliberately been kept was still on disk.
+// Now the run gets its own -N checkout and the old binding stays recorded
+// and findable; it simply stops being current.
 //
 // The branch comes off the workspace itself rather than being re-derived
 // from the task's title, which is what made a renamed task orphan its own
@@ -218,6 +221,15 @@ func (s *Supervisor) endRun(task wf.Task, runID string, outcome wf.SessionOutcom
 			rec.Runs[i].Outcome = outcome
 		}
 		for _, b := range produced {
+			// Apply builds these without knowing which machine it is on,
+			// so the host is stamped here rather than there. It matters
+			// for a DOC: path no workflow bound into the vault: that file
+			// is still sitting in a worktree about to be disposed, and
+			// without a host it reads on another device as a path that
+			// should be there.
+			if b.Host == "" && b.MachineLocal() {
+				b.Host = s.actor()
+			}
 			rec.Bindings = rec.Bindings.Upsert(b)
 		}
 	})

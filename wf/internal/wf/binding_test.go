@@ -245,3 +245,37 @@ func TestCurrentTieBreaksToLastRecorded(t *testing.T) {
 		t.Errorf("Live[0] = %q, want pr/first — report order must survive", live[0].Ref)
 	}
 }
+
+// A document is portable only once it has landed in a store. An unbound
+// DOC: path is still inside a worktree that is usually disposed moments
+// later, so it is as machine-local as the checkout holding it.
+func TestMachineLocalDependsOnTheDocsStore(t *testing.T) {
+	bound := Binding{Kind: KindDoc, Ref: "Research/plan.md",
+		Meta: map[string]string{MetaStore: "vault"}}
+	if bound.MachineLocal() {
+		t.Error("a vault-relative doc resolves on any device holding the vault")
+	}
+
+	unbound := Binding{Kind: KindDoc, Ref: "/w/neck-add-parser/notes.md"}
+	if !unbound.MachineLocal() {
+		t.Error("an unbound doc path lives in a worktree and must carry a host")
+	}
+
+	// Asking the Kind alone cannot tell these apart, which is why the
+	// per-binding method exists.
+	if KindDoc.MachineLocal() {
+		t.Error("Kind.MachineLocal is the coarse answer and stays false for docs")
+	}
+
+	// The kinds that are machine-local regardless still are.
+	for _, k := range []Kind{KindWorkspace, KindSession, KindReview} {
+		if !(Binding{Kind: k}).MachineLocal() {
+			t.Errorf("%s must be machine-local", k)
+		}
+	}
+	for _, k := range []Kind{KindPR, KindIssue, KindQueue, KindRepo} {
+		if (Binding{Kind: k}).MachineLocal() {
+			t.Errorf("%s resolves anywhere and must not carry a host", k)
+		}
+	}
+}
