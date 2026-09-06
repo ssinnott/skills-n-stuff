@@ -17,6 +17,12 @@ kata is the first queue backend, pi the first runner, git worktrees the
 first workspace. The seams exist so the second of each is an adapter
 rather than a rewrite.
 
+[DESIGN-task.md](DESIGN-task.md) is an open proposal against this document:
+the task here is a normalized queue row with bindings stuck to it as ad-hoc
+metadata keys, and that proposal makes it wf's own object — an identity plus
+typed, plural, stateful bindings — held in a local ledger. Nothing below is
+superseded until it is accepted.
+
 ## Non-goals
 
 - No workflow engine. The graph is `ready → lease → run → apply → release`,
