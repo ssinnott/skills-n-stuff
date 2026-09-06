@@ -219,36 +219,3 @@ kills its pi process, reopening resumes from the file. Agents declare
 their outcome via the protocol above; the plugin only routes and records.
 Diff review is only for PRs. Design decisions and their rejected
 alternatives are in [DESIGN.md](DESIGN.md).
-
-## Agent queue (wf)
-
-Two panes front the [`wf`](../wf/README.md) work queue, for agent runs that
-live in a tracker rather than in a task document.
-
-- **Agent queue** (ribbon, or "Open agent queue") lists what needs you and
-  what is ready. Rows carry the workflow, state, and lease; buttons open the
-  bound note, dispatch the task, or copy its `wf attach` command.
-- **kata pane** ("Open kata UI pane") frames kata's own web UI. With *Follow
-  note* on, it tracks whichever bound note you are reading — note on the
-  left, its issue on the right.
-
-Selection lives on the Obsidian side. An embedded page is a foreign browsing
-context and cannot tell the host what you clicked, so the queue pane and the
-active note drive the frame, never the reverse.
-
-**Commands**
-
-| Command | What it does |
-| :-- | :-- |
-| Open agent queue | The queue pane |
-| Open kata UI pane | The framed kata UI |
-| Show this note's task in the kata pane | Deep-links the frame from `kata-issue` frontmatter |
-| Bind this note to a task | Picks a ready task and writes both halves of the binding |
-
-Renaming or moving a bound note rewrites the task's `obsidian.note` through
-`wf bind`. Without that, every binding decays silently as the vault is
-reorganized.
-
-**Settings**: `wf binary` (path to the CLI) and `wf workspace` (the directory
-holding `.kata.toml` — often the repo rather than the vault; empty uses the
-vault root).

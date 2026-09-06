@@ -14,18 +14,18 @@
 
 import { ItemView, Notice, WorkspaceLeaf } from "obsidian";
 
-import type PiTasksPlugin from "./main";
+import type WfPlugin from "./main";
 import type { WfTask } from "./wf";
 import { WfError } from "./wf";
 
-export const VIEW_TYPE_WF_QUEUE = "pi-tasks-wf-queue";
+export const VIEW_TYPE_WF_QUEUE = "wf-queue";
 
 export class WfQueueView extends ItemView {
-    private plugin: PiTasksPlugin;
+    private plugin: WfPlugin;
     private body: HTMLElement | null = null;
     private refreshing = false;
 
-    constructor(leaf: WorkspaceLeaf, plugin: PiTasksPlugin) {
+    constructor(leaf: WorkspaceLeaf, plugin: WfPlugin) {
         super(leaf);
         this.plugin = plugin;
     }

@@ -160,32 +160,11 @@ document is the durable artifact — sessions are its working memory.
       docbind.scanTasks over pi-wired documents; cards open the doc at
       the line and dispatch launch/session/review via shared file+line
       entry points.
-- [x] wf integration: an agent queue pane and a framed kata UI, both
-      driven through the `wf --json` protocol rather than kata directly.
-      Selection lives in Obsidian because an embedded page cannot tell the
-      host what was clicked; renaming a bound note rewrites the task's
-      `obsidian.note` through `wf bind`, so bindings survive a vault
-      reorganization.
 - [ ] Drawer skills: task-doc + review-doc templates, comment-resolution
       skill, evals with mechanical checks (markers resolved and removed,
       checkbox structure, honest status).
 - [ ] Live validation on a real vault (not possible in the build
       environment — no Obsidian, no pi).
-
-- The wf queue is a second projection, not a second store. The task board
-  projects the vault's task lines; the queue pane projects the tracker.
-  Neither persists anything, and the two are joined only by the id pair a
-  bound note carries (`kata-issue` in frontmatter, `obsidian.note` on the
-  task). Rejected: teaching the existing board to render tracker issues —
-  the board's cards dispatch pi sessions from document lines, and merging
-  two different lifecycles into one surface would blur which store owns
-  what.
-- The framed kata UI renders through Electron's `<webview>` where the tag
-  exists, falling back to `<iframe>`. A webview is a separate top-level
-  browsing context, so `X-Frame-Options` and `frame-ancestors` do not apply
-  to it — and whether kata's daemon sends either is undocumented. Rejected:
-  iframe only (one undocumented header away from a blank pane) and shipping
-  a bespoke issue UI (kata already has two).
 
 ## Risks
 

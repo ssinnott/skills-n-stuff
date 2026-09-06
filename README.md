@@ -16,6 +16,8 @@ agents/               # Claude Code subagents (markdown + YAML frontmatter)
 commands/             # Claude Code slash commands / pi prompt templates
 extensions/           # pi extensions (TypeScript, pi-only)
 wf/                   # the agent work queue CLI (Go); see wf/README.md
+obsidian-wf/          # Obsidian plugin fronting wf's queue; see obsidian-wf/README.md
+obsidian-pi-tasks/    # Obsidian plugin binding pi sessions to documents; see its README.md
 plugins/              # standalone plugins that deserve their own install unit
 package.json          # "pi" key maps skills/, commands/, and extensions/ for pi
 ```

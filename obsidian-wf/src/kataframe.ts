@@ -16,22 +16,22 @@
 
 import { ItemView, TFile, WorkspaceLeaf } from "obsidian";
 
-import type PiTasksPlugin from "./main";
+import type WfPlugin from "./main";
 
-export const VIEW_TYPE_KATA_FRAME = "pi-tasks-kata-frame";
+export const VIEW_TYPE_KATA_FRAME = "wf-kata-frame";
 
 /** Frontmatter field naming the bound task; written by `wf bind`. */
 export const KATA_ISSUE_KEY = "kata-issue";
 
 export class KataFrameView extends ItemView {
-    private plugin: PiTasksPlugin;
+    private plugin: WfPlugin;
     private frame: HTMLElement | null = null;
     private status: HTMLElement | null = null;
     /** When true, the frame follows whichever bound note you are reading. */
     private follow = true;
     private currentUrl = "";
 
-    constructor(leaf: WorkspaceLeaf, plugin: PiTasksPlugin) {
+    constructor(leaf: WorkspaceLeaf, plugin: WfPlugin) {
         super(leaf);
         this.plugin = plugin;
     }
