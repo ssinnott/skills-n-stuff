@@ -107,11 +107,11 @@ func TestReviewPRBecomesAnOrdinaryOneBindingTask(t *testing.T) {
 	}
 }
 
-// Nothing used to produce a KindReview binding: taskblock rendered one and
-// gc swept for one, but review.json was the only real record of a viewer.
-// Opening a review now writes the pane onto the task and stopping retires
-// it, so gc's pane sweep is a query over bindings rather than over the file
-// the ledger is supposed to supersede.
+// Nothing used to produce a KindReview binding: gc swept for one, but
+// review.json was the only real record of a viewer. Opening a review now
+// writes the pane onto the task and stopping retires it, so gc's pane sweep
+// is a query over bindings rather than over the file the ledger is supposed
+// to supersede.
 func TestReviewRecordsAndRetiresThePane(t *testing.T) {
 	h := newHome(t, filepath.Join(t.TempDir(), "no-such-kata"))
 	h.setDifit(t, stubDifit(t, 4971))

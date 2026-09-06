@@ -48,9 +48,9 @@ func reviewArgs(args []string) (ref, prURL string, err error) {
 // It lives here rather than in internal/review for the same reason Apply
 // returns bindings instead of writing them: that package would otherwise
 // have to import the store, and the caller already holds it. Until this
-// existed nothing produced a KindReview binding at all — taskblock rendered
-// one and gc swept for one, but review.json was the only real record of a
-// running viewer, which is the file the ledger is supposed to supersede.
+// existed nothing produced a KindReview binding at all — gc swept for one,
+// but review.json was the only real record of a running viewer, which is
+// the file the ledger is supposed to supersede.
 //
 // A failure here never fails the review. The viewer is already up and a
 // human is already looking at it; losing the record costs gc a hint, not

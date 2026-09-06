@@ -38,8 +38,6 @@ const usage = `wf — workflow CLI over pluggable queues
          [--workflow W]
   wf attach <ref>              open the task's pi session
   wf bind <ref> <note.md>      bind a task to an Obsidian note, both ways
-  wf note sync <ref>           write the task's managed block into its note
-  wf note sync --all           refresh every note the ledger knows about
   wf ui <ref>                  print the web UI deep link for a task
   wf review <ref>              resolve the task's diff and open it in difit
   wf review <ref> --stop       stop the running viewer
@@ -50,9 +48,9 @@ const usage = `wf — workflow CLI over pluggable queues
 A <ref> is any of four: wf's own task id, its short handle, the tracker's id
 or the tracker's short id. Ambiguity names the candidates rather than picking.
 
-Add --json to ready, show, escalations, workflows, task, run, review and
-note sync for machine-readable output; that is the protocol both the pi
-extension and the Obsidian plugin speak.
+Add --json to ready, show, escalations, workflows, task, run and review for
+machine-readable output; that is the protocol both the pi extension and the
+Obsidian plugin speak.
 
 Config: ~/.wf/config.json (override with --config). KATA_BIN, PI_BIN and
 DIFIT_BIN override binaries that are off PATH.`
@@ -139,8 +137,6 @@ func run(ctx context.Context, argv []string) (int, error) {
 		return a.cmdAttach(ctx, rest)
 	case "bind":
 		return a.cmdBind(ctx, rest)
-	case "note":
-		return a.cmdNote(rest)
 	case "ui":
 		return a.cmdUI(ctx, rest)
 	case "review":

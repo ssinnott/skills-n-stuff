@@ -76,7 +76,7 @@ func (a *app) cmdTaskNew(args, positional []string) (int, error) {
 	// Not `wf run`: dispatch writes through the tracker, so an unfiled task
 	// is refused. Point at the step that actually comes next.
 	fmt.Printf("   wf task adopt %s --queue <tracker-id>\n", rec.Handle)
-	fmt.Printf("   wf note sync %s\n", rec.Handle)
+	fmt.Printf("   wf bind %s <note.md>\n", rec.Handle)
 	return 0, nil
 }
 

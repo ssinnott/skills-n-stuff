@@ -547,6 +547,8 @@ Named rather than quietly decided, because each could go the other way:
   produce would otherwise be the wrong file every time. And the note must
   not link to itself — its own binding is dropped before rendering, or the
   block puts a self-edge in the graph the doc→task backlinks exist for.
+  (Moved to the Obsidian plugin in DESIGN-slim.md stage 2; wf no longer
+  creates or renders notes.)
 - **Reconciliation.** A tracker row closed by a human while the ledger holds
   a live worktree. The disjointness rule says the tracker wins on work state
   and the worktree is then garbage — but "closed remotely" is probably worth

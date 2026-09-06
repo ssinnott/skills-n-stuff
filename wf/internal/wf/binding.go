@@ -284,8 +284,8 @@ func (bs Bindings) Current(k Kind) (Binding, bool) {
 // Both are KindDoc bindings in a vault, which is why asking for the newest
 // doc gets this wrong: a research note a run wrote is newer than the task
 // note almost immediately, and reporting it as "the note" sends a reader —
-// or `wf note sync` — to the wrong file. The task's note is the one no run
-// produced, so an empty Via is what separates them.
+// or the Obsidian plugin's own rendering — to the wrong file. The task's
+// note is the one no run produced, so an empty Via is what separates them.
 func (bs Bindings) Note() (Binding, bool) {
 	var best Binding
 	found := false
