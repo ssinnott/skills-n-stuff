@@ -327,14 +327,13 @@ views of individual bindings: the queue pane lists tasks and opens their
 notes, the kata frame shows the `queue` binding's discussion, difit shows
 whatever `wf review` resolved.
 
-**The convergence this makes available (not mandatory).** obsidian-wf and
-obsidian-pi-tasks are deliberately separate today because they have
-different sources of truth — a document's checkbox lines versus kata's
-ledger — and different dependency lists. Task notes give them one source of
-truth, which means pi-tasks' kanban board could project over *task notes*
-instead of checkbox lines and become the board for wf work. Worth doing on
-its own merits; not required by anything above, and the plugins can stay
-split with their dependency lists intact.
+**The plugins converge.** obsidian-wf and obsidian-pi-tasks are separate
+today for two stated reasons — different sources of truth (a document's
+checkbox lines versus kata's ledger) and different dependency lists — and
+the task object removes both. Worked out in
+[obsidian-wf/DESIGN-tasks.md](../obsidian-wf/DESIGN-tasks.md): pi-tasks
+drops its vendored agent console, keeps its document layer and its board,
+and the board projects wf tasks. The task note above is what it renders.
 
 ## Non-goals
 

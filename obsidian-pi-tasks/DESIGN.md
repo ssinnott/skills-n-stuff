@@ -5,6 +5,11 @@ pi-session: —
 
 # pi-tasks: document-driven agent work in Obsidian
 
+> **Superseded in direction.** [obsidian-wf/DESIGN-tasks.md](../obsidian-wf/DESIGN-tasks.md)
+> proposes folding this plugin into obsidian-wf over the wf task object:
+> the vendored pi console and the doc-bound session model go, the document
+> layer and the board stay. Everything below describes what is built today.
+
 ## Goal
 
 An Obsidian plugin that binds pi sessions to documents. A task document
