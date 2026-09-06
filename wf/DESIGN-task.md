@@ -262,6 +262,8 @@ Five concrete failures follow from that shape, and none of them is stylistic:
   dead. Found in a smoke run rather than in review. Retention reads only
   timestamps the work itself carries — `Created`, binding `At`, run
   `Started`/`Ended` — and a record carrying none is never prunable.
+  (Collapsed to report / --delete in DESIGN-slim.md stage 3; no retention
+  window.)
 
 - **`gc` has three modes, not two.** Bare reports and writes nothing;
   `--fix` repairs recorded state (a workspace whose directory is gone
@@ -269,7 +271,8 @@ Five concrete failures follow from that shape, and none of them is stylistic:
   stale records. Marking a binding `missing` is a repair, not a deletion,
   and putting it behind a flag called `--delete` would make the two
   indistinguishable to whoever runs it. Deleting a record never deletes the
-  artifact it points at.
+  artifact it points at. (Collapsed to report / --delete in DESIGN-slim.md
+  stage 3; no retention window.)
 
 - **Half of `gc` is only valid on the host that recorded a binding.** An
   `os.Stat` here proves nothing about a checkout on another machine, which

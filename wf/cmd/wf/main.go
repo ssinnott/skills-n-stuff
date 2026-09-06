@@ -42,8 +42,7 @@ const usage = `wf — workflow CLI over pluggable queues
   wf review <ref>              resolve the task's diff and open it in difit
   wf review <ref> --stop       stop the running viewer
   wf review comment <ref>      read a pasted review prompt from stdin
-  wf gc [--before 30d]         report ledger bindings whose referent is gone
-        [--fix] [--delete]
+  wf gc [--delete]              report ledger bindings whose referent is gone; --delete drops dead records
 
 A <ref> is any of four: wf's own task id, its short handle, the tracker's id
 or the tracker's short id. Ambiguity names the candidates rather than picking.
@@ -409,7 +408,7 @@ func (a *app) summary(t wf.Task) string {
 // flag values without a full flag parser.
 var knownFlags = map[string]bool{
 	"--limit": true, "--max": true, "--repo": true, "--ref": true, "--config": true,
-	"--vault": true, "--pr": true, "--format": true, "--before": true,
+	"--vault": true, "--pr": true, "--format": true,
 	"--handle": true, "--queue": true, "--workflow": true,
 }
 

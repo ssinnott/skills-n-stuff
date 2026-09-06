@@ -48,8 +48,7 @@ wf review abc4 --stop        # stop the running viewer
 wf review comment abc4       # read a pasted review prompt from stdin
 wf review comment abc4 --format difit   # ingest difit's own comment store
 wf gc                        # report ledger bindings whose referent is gone
-wf gc --fix                  # correct their recorded state
-wf gc --delete --before 30d  # drop records that point at nothing, and are old
+wf gc --delete                # mark them missing, drop records with nothing local left
 ```
 
 A `<ref>` is any of four: wf's own task id, its short handle, the tracker's
@@ -100,17 +99,17 @@ they usually are under a launchd or systemd unit. `difitCommand` (default
 `npx difit`) is a shell-style command line rather than a bare binary, since
 the default itself is two words; `DIFIT_BIN` replaces the whole thing.
 
-## Pull request state, and collecting the dead
+## Collecting the dead
 
-`wf gc` reports bindings whose referent is gone: checkouts recorded live that
-are no longer on disk, sessions that would fail to reattach, dead review
-panes, `wf/` branches no task claims, and whole records that point at nothing
-and have not moved inside `--before` (default 30d). It writes nothing by
-default — `--fix` corrects recorded states, `--delete` drops stale records —
-and it never deletes the artifact a record points at: a leftover checkout may
-hold uncommitted work, and a branch is work. Bindings stamped with another
-host are reported by that host, not this one; a path from another machine is
-not a path this one can check.
+`wf gc` answers the one question only the ledger can answer: which recorded
+workspace and session bindings point at nothing on this host — a checkout
+removed by hand, a session file that would fail to reattach. `--delete` marks
+those bindings missing and drops any record whose local bindings are all
+missing or disposed, as long as no binding on it belongs to another host; a
+bare run only reports and writes nothing. It never deletes the artifact a
+record points at — a leftover checkout may hold uncommitted work. Worktrees
+and branches are git's own bookkeeping: `git worktree prune` and `git branch
+--list 'wf/*'` answer those questions directly.
 
 ## Canned workflows
 

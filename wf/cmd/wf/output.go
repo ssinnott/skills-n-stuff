@@ -86,6 +86,25 @@ type jsonReview struct {
 	Count int `json:"count,omitempty"`
 }
 
+// jsonFinding and jsonGC are the `wf gc` contract.
+type jsonFinding struct {
+	Kind   string `json:"kind"`
+	Task   string `json:"task,omitempty"`
+	Handle string `json:"handle,omitempty"`
+	Ref    string `json:"ref"`
+	Detail string `json:"detail,omitempty"`
+	Repair string `json:"repair,omitempty"`
+	Done   bool   `json:"done,omitempty"`
+	Error  string `json:"error,omitempty"`
+}
+
+type jsonGC struct {
+	Records  int           `json:"records"`
+	Deleted  bool          `json:"deleted"`
+	Repaired int           `json:"repaired"`
+	Findings []jsonFinding `json:"findings"`
+}
+
 func reviewToJSON(r review.Result) jsonReview {
 	out := jsonReview{Ref: r.Ref, Kind: string(r.Target.Kind)}
 	if r.Target.Kind == review.KindDoc {
