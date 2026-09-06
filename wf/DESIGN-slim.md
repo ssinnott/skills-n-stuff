@@ -97,6 +97,8 @@ Record the numbers so the plan can be checked against them.
 
 - `go test ./...` green, `go vet ./...` clean, and the per-package line
   counts above pasted into the PR description that opens the work.
+- Baseline: commit `66497df` on `claude/cli-bloat-analysis-0vpxcp` is the last
+  full-featured build; all 15 packages pass `go test ./...` there.
 - Tag the commit before stage 1 as the last full-featured build, so a note
   or a PR record can be recovered from it if the migration in stage 5 loses
   something.
