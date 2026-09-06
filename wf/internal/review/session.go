@@ -44,10 +44,12 @@ func (s *Session) now() time.Time {
 }
 
 // Open resolves ref's target and, unless it is a bare document, replaces
-// the live viewer with one seeded from the task's own findings.
-func (s *Session) Open(ctx context.Context, task wf.Task, cfg *config.Config, issues []wf.IssueRecord) (Result, error) {
-	in := BuildInputs(ctx, task, cfg, s.BranchExists)
-	target, err := Resolve(in)
+// the live viewer with one seeded from the task's own findings. It reads
+// the task once, through LoadBindings: the target and the findings are two
+// questions about the same set of bindings.
+func (s *Session) Open(ctx context.Context, task wf.Task, cfg *config.Config) (Result, error) {
+	bs, ex := BuildLadder(ctx, task, cfg, s.BranchExists)
+	target, err := Resolve(bs, ex)
 	if err != nil {
 		return Result{}, err
 	}
@@ -62,7 +64,7 @@ func (s *Session) Open(ctx context.Context, task wf.Task, cfg *config.Config, is
 		return Result{Ref: ref, Target: target}, nil
 	}
 
-	findings := FindingsFromIssues(issues)
+	findings := FindingsFromIssues(bs)
 	comments := CommentFlags(findings)
 
 	spawned, err := s.launch(ctx, ref, target, comments)

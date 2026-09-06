@@ -122,14 +122,20 @@ default.
 
 ## How the pieces bind
 
-**Task ↔ session.** Every run records `pi.session` (the session file path),
-`pi.session_id`, `pi.workspace`, and appends to a `pi.session_history` array.
+**Task ↔ session.** Every run records `wf.session` (the session file path),
+`wf.session_id`, `wf.workspace`, and appends to a `wf.session_history` array.
 These are written *at spawn*, before the agent produces anything, so a crashed
 or hung run is still attachable — those are the runs you most need to read.
 `wf attach` resolves them and execs `pi --session <path>`.
 
+The keys name roles, not products: *which* runner produced a session is a
+value on the binding, not half of a key name, so a second runner is a new
+value rather than a parallel set of keys. The `pi.*` names these replaced are
+still read for one release, and never written.
+
 **Task ↔ note.** The note's frontmatter carries `kata-issue: <ULID>`; the task
-carries `obsidian.note: <path>`. Workflows with `bind-docs` do this
+carries `wf.doc: <path>` (formerly `obsidian.note`, still read). Workflows
+with `bind-docs` do this
 automatically for every document produced. Nothing is mirrored: titles and
 status live in the tracker, prose lives in the note, and the only shared state
 is the id pair.
@@ -174,7 +180,7 @@ tries, in order, the first rung that matches:
 1. **A PR.** If the task recorded one (`wf.pr` metadata, written when a run
    reports `PR:`), difit opens `--pr <url>` — the shipped truth once one
    exists.
-2. **A live worktree.** If the run's checkout (`pi.workspace`) is still on
+2. **A live worktree.** If the run's checkout (`wf.workspace`) is still on
    disk, difit opens it directly with `--include-untracked` — this is the
    rung that matters most, because an escalated run that produced no PR is
    exactly what a human needs to look at, and its checkout is the only place
@@ -272,7 +278,7 @@ framed kata UI, and needs only the `wf` binary. Selection lives on the
 Obsidian side because
 an embedded page cannot tell the host what you clicked; clicking a queue row
 opens the bound note and points the frame at the task. Renaming a bound note
-rewrites `obsidian.note` through `wf bind`, so bindings survive a
+rewrites `wf.doc` through `wf bind`, so bindings survive a
 reorganization.
 
 ## Layout

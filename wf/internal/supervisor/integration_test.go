@@ -268,8 +268,8 @@ func TestE2EBindsArtifactIntoVault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if meta[wf.ObsidianNoteKey] != result.Applied.Bound[0].VaultPath {
-		t.Errorf("task metadata = %v, want the vault path", meta[wf.ObsidianNoteKey])
+	if meta[wf.DocKey] != result.Applied.Bound[0].VaultPath {
+		t.Errorf("task metadata = %v, want the vault path", meta[wf.DocKey])
 	}
 
 	// A workflow with no workspace still ran; nothing was left behind.

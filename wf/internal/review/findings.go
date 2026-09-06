@@ -36,12 +36,13 @@ type Finding struct {
 // records nothing more specific than a URL and a title.
 var anchorRe = regexp.MustCompile(`^(\S+):(\d+)\b\s*[-–—:]*\s*(.*)$`)
 
-// FindingsFromIssues turns recorded ISSUE outcomes into findings, keeping
-// only the ones anchored to a file and line.
-func FindingsFromIssues(issues []wf.IssueRecord) []Finding {
+// FindingsFromIssues turns a task's issue bindings into findings, keeping
+// only the ones anchored to a file and line. A binding's Label is the
+// issue's title and its Ref the URL.
+func FindingsFromIssues(bs wf.Bindings) []Finding {
 	var out []Finding
-	for _, iss := range issues {
-		m := anchorRe.FindStringSubmatch(strings.TrimSpace(iss.Title))
+	for _, iss := range bs.ByKind(wf.KindIssue) {
+		m := anchorRe.FindStringSubmatch(strings.TrimSpace(iss.Label))
 		if m == nil {
 			continue
 		}
@@ -51,10 +52,10 @@ func FindingsFromIssues(issues []wf.IssueRecord) []Finding {
 		}
 		body := strings.TrimSpace(m[3])
 		if body == "" {
-			body = iss.Title
+			body = iss.Label
 		}
-		if iss.URL != "" {
-			body = body + " (" + iss.URL + ")"
+		if iss.Ref != "" {
+			body = body + " (" + iss.Ref + ")"
 		}
 		out = append(out, Finding{FilePath: m[1], Side: "new", Line: line, Body: body})
 	}

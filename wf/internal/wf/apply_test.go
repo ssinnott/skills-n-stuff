@@ -294,8 +294,8 @@ func TestBindArtifactsMovesDocIntoVault(t *testing.T) {
 	}
 
 	// ...and the task points back at the note.
-	if q.meta[ObsidianNoteKey] != bound[0].VaultPath {
-		t.Errorf("task metadata = %v, want the vault path", q.meta[ObsidianNoteKey])
+	if q.meta[DocKey] != bound[0].VaultPath {
+		t.Errorf("task metadata = %v, want the vault path", q.meta[DocKey])
 	}
 	// The worktree copy is gone, so the binding cannot point at a disposed path.
 	if _, err := os.Stat(filepath.Join(work, "plan.md")); !os.IsNotExist(err) {

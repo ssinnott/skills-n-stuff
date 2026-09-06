@@ -10,7 +10,7 @@ import (
 	"github.com/ssinnott/skills-n-stuff/wf/internal/wf"
 )
 
-// taskWithMeta builds a minimal task for BuildInputs tests. ShortID and
+// taskWithMeta builds a minimal task for BuildLadder tests. ShortID and
 // Title are fixed so the derived worktree branch name is deterministic
 // across cases.
 func taskWithMeta(meta map[string]any) wf.Task {
@@ -20,47 +20,81 @@ func taskWithMeta(meta map[string]any) wf.Task {
 	return wf.Task{ID: "01HZ", ShortID: "abc4", Title: "Add the parser", Meta: meta}
 }
 
+func bind(kind wf.Kind, ref string) wf.Binding {
+	return wf.Binding{Kind: kind, Ref: ref}
+}
+
 func TestResolveLadder(t *testing.T) {
 	tests := []struct {
 		name string
-		in   Inputs
+		bs   wf.Bindings
+		ex   Externals
 		want Kind
 	}{
 		{
 			name: "PR evidence wins outright",
-			in:   Inputs{PR: "https://example.com/pr/12", WorktreeDir: mustExistingDir(t), Branch: "wf/x", BranchExists: true, Note: "n.md"},
+			bs: wf.Bindings{
+				bind(wf.KindPR, "https://example.com/pr/12"),
+				bind(wf.KindWorkspace, mustExistingDir(t)),
+				bind(wf.KindDoc, "n.md"),
+			},
+			ex:   Externals{Branch: "wf/x", BranchExists: true},
 			want: KindPR,
 		},
 		{
-			name: "worktree still on disk, no PR",
-			in:   Inputs{WorktreeDir: mustExistingDir(t), Branch: "wf/x", BranchExists: true, Note: "n.md"},
+			name: "workspace still on disk, no PR",
+			bs: wf.Bindings{
+				bind(wf.KindWorkspace, mustExistingDir(t)),
+				bind(wf.KindDoc, "n.md"),
+			},
+			ex:   Externals{Branch: "wf/x", BranchExists: true},
 			want: KindWorktree,
 		},
 		{
-			name: "disposed worktree falls through to a surviving branch",
-			in:   Inputs{WorktreeDir: mustMissingDir(t), Branch: "wf/x", BranchExists: true, Note: "n.md"},
+			name: "disposed workspace falls through to a surviving branch",
+			bs: wf.Bindings{
+				bind(wf.KindWorkspace, mustMissingDir(t)),
+				bind(wf.KindDoc, "n.md"),
+			},
+			ex:   Externals{Branch: "wf/x", BranchExists: true},
 			want: KindBranch,
 		},
 		{
-			name: "no worktree directory recorded at all falls through",
-			in:   Inputs{Branch: "wf/x", BranchExists: true, Note: "n.md"},
+			name: "no workspace binding at all falls through",
+			bs:   wf.Bindings{bind(wf.KindDoc, "n.md")},
+			ex:   Externals{Branch: "wf/x", BranchExists: true},
 			want: KindBranch,
 		},
 		{
-			name: "branch gone too, only a bound note remains",
-			in:   Inputs{WorktreeDir: mustMissingDir(t), Branch: "wf/x", BranchExists: false, Note: "n.md"},
+			// A binding a later run replaced is still recorded and its
+			// checkout may still be on disk — it is simply no longer the
+			// one to open.
+			name: "a superseded workspace is not the one to open",
+			bs: wf.Bindings{
+				wf.Binding{Kind: wf.KindWorkspace, Ref: mustExistingDir(t), State: wf.BindingSuperseded},
+				bind(wf.KindDoc, "n.md"),
+			},
+			ex:   Externals{Branch: "wf/x", BranchExists: true},
+			want: KindBranch,
+		},
+		{
+			name: "branch gone too, only a produced document remains",
+			bs: wf.Bindings{
+				bind(wf.KindWorkspace, mustMissingDir(t)),
+				bind(wf.KindDoc, "n.md"),
+			},
+			ex:   Externals{Branch: "wf/x"},
 			want: KindDoc,
 		},
 		{
 			name: "nothing at all",
-			in:   Inputs{},
 			want: "",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := Resolve(tt.in)
+			got, err := Resolve(tt.bs, tt.ex)
 			if tt.want == "" {
 				if err == nil {
 					t.Fatalf("Resolve() = %+v, want ErrNoTarget", got)
@@ -78,7 +112,9 @@ func TestResolveLadder(t *testing.T) {
 }
 
 func TestResolvePRTargetArgs(t *testing.T) {
-	got, err := Resolve(Inputs{PR: "https://example.com/pr/12", Repo: "/repo", Branch: "wf/x", Base: "main"})
+	bs := wf.Bindings{bind(wf.KindRepo, "/repo"), bind(wf.KindPR, "https://example.com/pr/12")}
+
+	got, err := Resolve(bs, Externals{Branch: "wf/x", Base: "main"})
 	if err != nil {
 		t.Fatalf("Resolve() error = %v", err)
 	}
@@ -94,9 +130,24 @@ func TestResolvePRTargetArgs(t *testing.T) {
 	}
 }
 
+// The PR array is recorded in report order and carries no timestamps, so
+// the first one reported is the one to open.
+func TestResolveTakesTheFirstRecordedPR(t *testing.T) {
+	bs := wf.Bindings{bind(wf.KindPR, "https://a/1"), bind(wf.KindPR, "https://a/2")}
+
+	got, err := Resolve(bs, Externals{})
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	if got.PR != "https://a/1" {
+		t.Errorf("PR = %q, want the first recorded one", got.PR)
+	}
+}
+
 func TestResolveWorktreeTargetArgs(t *testing.T) {
 	dir := mustExistingDir(t)
-	got, err := Resolve(Inputs{WorktreeDir: dir})
+
+	got, err := Resolve(wf.Bindings{bind(wf.KindWorkspace, dir)}, Externals{})
 	if err != nil {
 		t.Fatalf("Resolve() error = %v", err)
 	}
@@ -109,7 +160,7 @@ func TestResolveWorktreeTargetArgs(t *testing.T) {
 }
 
 func TestResolveBranchTargetArgs(t *testing.T) {
-	got, err := Resolve(Inputs{Repo: "/repo", Branch: "wf/task-1", BranchExists: true, Base: "main"})
+	got, err := Resolve(nil, Externals{Repo: "/repo", Branch: "wf/task-1", BranchExists: true, Base: "main"})
 	if err != nil {
 		t.Fatalf("Resolve() error = %v", err)
 	}
@@ -120,7 +171,7 @@ func TestResolveBranchTargetArgs(t *testing.T) {
 }
 
 func TestResolveDocTarget(t *testing.T) {
-	got, err := Resolve(Inputs{Note: "Research/plan.md"})
+	got, err := Resolve(wf.Bindings{bind(wf.KindDoc, "Research/plan.md")}, Externals{})
 	if err != nil {
 		t.Fatalf("Resolve() error = %v", err)
 	}
@@ -132,30 +183,41 @@ func TestResolveDocTarget(t *testing.T) {
 	}
 }
 
-func TestBuildInputsPrefersTaskRepoOverConfig(t *testing.T) {
+func TestBuildLadderPrefersTaskRepoOverConfig(t *testing.T) {
 	task := taskWithMeta(map[string]any{
 		"wf.repo": "/from/task",
 	})
 	cfg := &config.Config{Repo: "/from/config"}
 
-	in := BuildInputs(context.Background(), task, cfg, nil)
-	if in.Repo != "/from/task" {
-		t.Errorf("Repo = %q, want the task's own wf.repo to win", in.Repo)
+	bs, _ := BuildLadder(context.Background(), task, cfg, nil)
+	got, err := Resolve(bs, Externals{Repo: "/from/config", Branch: "wf/x", BranchExists: true})
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	if got.Repo != "/from/task" {
+		t.Errorf("Repo = %q, want the task's own repo binding to win", got.Repo)
 	}
 }
 
-func TestBuildInputsFallsBackToConfigRepo(t *testing.T) {
-	task := taskWithMeta(nil)
+func TestBuildLadderFallsBackToConfigRepo(t *testing.T) {
 	cfg := &config.Config{Repo: "/from/config"}
 
-	in := BuildInputs(context.Background(), task, cfg, nil)
-	if in.Repo != "/from/config" {
-		t.Errorf("Repo = %q, want config.Repo as the fallback", in.Repo)
+	bs, ex := BuildLadder(context.Background(), taskWithMeta(nil), cfg, nil)
+	if ex.Repo != "/from/config" {
+		t.Errorf("Externals.Repo = %q, want config.Repo as the fallback", ex.Repo)
+	}
+	ex.BranchExists = true
+
+	got, err := Resolve(bs, ex)
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	if got.Repo != "/from/config" {
+		t.Errorf("Repo = %q, want the config fallback when no repo binding exists", got.Repo)
 	}
 }
 
-func TestBuildInputsUsesBranchCheckerAgainstDerivedBranch(t *testing.T) {
-	task := taskWithMeta(nil)
+func TestBuildLadderUsesBranchCheckerAgainstDerivedBranch(t *testing.T) {
 	cfg := &config.Config{Repo: "/repo"}
 
 	var gotRepo, gotBranch string
@@ -164,15 +226,34 @@ func TestBuildInputsUsesBranchCheckerAgainstDerivedBranch(t *testing.T) {
 		return true
 	}
 
-	in := BuildInputs(context.Background(), task, cfg, checker)
-	if !in.BranchExists {
+	_, ex := BuildLadder(context.Background(), taskWithMeta(nil), cfg, checker)
+	if !ex.BranchExists {
 		t.Error("BranchExists = false, want the checker's true to carry through")
 	}
 	if gotRepo != "/repo" {
 		t.Errorf("checker got repo = %q, want config.Repo", gotRepo)
 	}
-	if gotBranch != in.Branch {
-		t.Errorf("checker got branch = %q, want the derived %q", gotBranch, in.Branch)
+	if gotBranch != ex.Branch {
+		t.Errorf("checker got branch = %q, want the derived %q", gotBranch, ex.Branch)
+	}
+}
+
+// The ladder reads the task's bindings, so the metadata a run wrote is
+// enough to resolve it end to end.
+func TestBuildLadderResolvesFromTaskMetadata(t *testing.T) {
+	dir := mustExistingDir(t)
+	task := taskWithMeta(map[string]any{
+		wf.SessionWorkspaceKey: dir,
+		wf.SessionPathKey:      "/s/1.jsonl",
+	})
+
+	bs, ex := BuildLadder(context.Background(), task, &config.Config{Repo: "/repo"}, nil)
+	got, err := Resolve(bs, ex)
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	if got.Kind != KindWorktree || got.Repo != dir {
+		t.Errorf("Resolve() = %+v, want the recorded workspace", got)
 	}
 }
 

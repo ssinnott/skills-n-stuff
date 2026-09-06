@@ -15,7 +15,6 @@ import (
 
 	"github.com/ssinnott/skills-n-stuff/wf/internal/config"
 	"github.com/ssinnott/skills-n-stuff/wf/internal/review"
-	"github.com/ssinnott/skills-n-stuff/wf/internal/wf"
 )
 
 func (a *app) reviewSession() *review.Session {
@@ -104,9 +103,7 @@ func (a *app) cmdReview(ctx context.Context, args []string) (int, error) {
 	if err != nil {
 		return 1, err
 	}
-	issues := wf.IssuesFromMeta(task.Meta)
-
-	result, err := sess.Open(ctx, task, a.cfg, issues)
+	result, err := sess.Open(ctx, task, a.cfg)
 	if err != nil {
 		return 1, err
 	}
