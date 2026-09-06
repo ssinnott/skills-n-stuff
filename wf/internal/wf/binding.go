@@ -143,6 +143,30 @@ func (b Binding) Get(key string) string {
 	return b.Meta[key]
 }
 
+// StateLabel is the word a human should see for this binding's state.
+//
+// It exists because the vocabulary is shared across kinds but the natural
+// word is not: a pull request that is live is "open", never "live", and a
+// reader who sees the raw state on a PR reads it as jargon. Translating in
+// the renderer would be worse than translating here — `wf show`, the
+// Obsidian task block and `--json` consumers would each pick their own
+// word for the same fact, and they would drift.
+//
+// An empty result means nothing is known and callers should render no
+// state at all, rather than inventing one.
+func (b Binding) StateLabel() string {
+	if b.State == BindingUnknown {
+		return ""
+	}
+	if b.State == BindingLive {
+		switch b.Kind {
+		case KindPR, KindIssue:
+			return "open"
+		}
+	}
+	return string(b.State)
+}
+
 // IsLive reports whether the referent is current. Unknown counts as live:
 // a binding nothing has checked yet should not be hidden, only unproven.
 func (b Binding) IsLive() bool {

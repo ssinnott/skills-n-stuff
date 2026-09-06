@@ -342,15 +342,9 @@ func bindingLine(b wf.Binding) string {
 // current, which for a pull request is exactly "open". Translating here
 // keeps that reading in the note without adding a state the type does not
 // have.
-func stateText(b wf.Binding) string {
-	if b.State == wf.BindingUnknown {
-		return ""
-	}
-	if b.State == wf.BindingLive && (b.Kind == wf.KindPR || b.Kind == wf.KindIssue) {
-		return "open"
-	}
-	return string(b.State)
-}
+// stateText defers to the type so this renderer cannot drift from what
+// `wf show` and --json say about the same binding.
+func stateText(b wf.Binding) string { return b.StateLabel() }
 
 func bindingSubject(b wf.Binding) string {
 	switch b.Kind {

@@ -198,3 +198,31 @@ func TestQueueRef(t *testing.T) {
 		t.Error("an unfiled task must report no queue ref, not an empty one")
 	}
 }
+
+// A live pull request is "open" to a human and "live" only to the type.
+// Every renderer must get that word from here rather than deciding it.
+func TestStateLabelSpeaksEachKindsLanguage(t *testing.T) {
+	cases := []struct {
+		name  string
+		kind  Kind
+		state BindingState
+		want  string
+	}{
+		{"live PR reads as open", KindPR, BindingLive, "open"},
+		{"live issue reads as open", KindIssue, BindingLive, "open"},
+		{"live worktree stays live", KindWorkspace, BindingLive, "live"},
+		{"live session stays live", KindSession, BindingLive, "live"},
+		{"merged PR is merged", KindPR, BindingMerged, "merged"},
+		{"closed issue is closed", KindIssue, BindingClosed, "closed"},
+		{"superseded worktree is superseded", KindWorkspace, BindingSuperseded, "superseded"},
+		{"unknown renders nothing at all", KindPR, BindingUnknown, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := Binding{Kind: c.kind, State: c.state}.StateLabel()
+			if got != c.want {
+				t.Errorf("StateLabel = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
