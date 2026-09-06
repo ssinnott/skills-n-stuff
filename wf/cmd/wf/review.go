@@ -13,6 +13,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/ssinnott/skills-n-stuff/wf/internal/config"
 	"github.com/ssinnott/skills-n-stuff/wf/internal/review"
 	"github.com/ssinnott/skills-n-stuff/wf/internal/wf"
 )
@@ -23,6 +24,20 @@ func (a *app) reviewSession() *review.Session {
 		StatePath:    review.StatePath(a.cfg.Path),
 		BranchExists: review.GitBranchChecker,
 	}
+}
+
+// reviewArgs decides between the two ways `wf review` can be invoked: a
+// task ref resolved through the target ladder, or an ad-hoc --pr url that
+// bypasses the ladder (and any task lookup) entirely. Passing both is a
+// usage error rather than one silently winning — kept as a pure function
+// so the mutual-exclusion rule is testable without an app or a queue.
+func reviewArgs(args []string) (ref, prURL string, err error) {
+	ref = firstPositional(args)
+	prURL = flagValue(args, "--pr")
+	if ref != "" && prURL != "" {
+		return "", "", errors.New("wf review: <ref> and --pr are mutually exclusive")
+	}
+	return ref, prURL, nil
 }
 
 func (a *app) cmdReview(ctx context.Context, args []string) (int, error) {
@@ -36,6 +51,11 @@ func (a *app) cmdReview(ctx context.Context, args []string) (int, error) {
 
 	if hasFlag(args, "--stop") {
 		ref := firstPositional(args)
+		if ref == "" {
+			if prURL := flagValue(args, "--pr"); prURL != "" {
+				ref = review.PRHandle(prURL)
+			}
+		}
 		stopped, err := sess.Stop(ctx)
 		if err != nil {
 			return 1, err
@@ -51,9 +71,33 @@ func (a *app) cmdReview(ctx context.Context, args []string) (int, error) {
 		return 0, nil
 	}
 
-	ref := firstPositional(args)
+	ref, prURL, err := reviewArgs(args)
+	if err != nil {
+		return 1, err
+	}
+
+	if prURL != "" {
+		// The ad-hoc PR path: no task, no queue call, so it works with no
+		// kata running at all.
+		repo := flagValue(args, "--repo")
+		if repo == "" {
+			repo = a.cfg.Repo
+		}
+		repo = config.Expand(repo)
+
+		result, err := sess.OpenPR(ctx, prURL, repo)
+		if err != nil {
+			return 1, err
+		}
+		if asJSON {
+			return 0, emit("review", reviewToJSON(result))
+		}
+		printReviewResult(result)
+		return 0, nil
+	}
+
 	if ref == "" {
-		return 1, errors.New("wf review <ref>")
+		return 1, errors.New("wf review <ref> | --pr <url>")
 	}
 
 	task, err := a.queue.Get(ctx, ref)
@@ -88,18 +132,43 @@ func (a *app) cmdReviewComment(ctx context.Context, args, positional []string) (
 		return 1, errors.New("wf review comment: stdin was empty — paste difit's review prompt")
 	}
 
+	// --format selects what stdin holds: a human's plain-text paste from
+	// difit's "Copy All Prompt" button (the default, unchanged), or
+	// difit's own comment store harvested straight from the browser
+	// frame's localStorage.
+	format := flagValue(args, "--format")
+	var body string
+	count := 0
+	switch format {
+	case "", "text":
+		body = review.FormatComment(string(raw))
+	case "difit":
+		threads, err := review.ParseDifitStore(string(raw))
+		if err != nil {
+			return 1, err
+		}
+		body = review.FormatComment(review.FormatDifitThreads(threads))
+		count = len(threads)
+	default:
+		return 1, fmt.Errorf("wf review comment: unknown --format %q, want text or difit", format)
+	}
+
 	task, err := a.queue.Get(ctx, ref)
 	if err != nil {
 		return 1, err
 	}
-	if err := a.queue.Comment(ctx, task.ID, review.FormatComment(string(raw))); err != nil {
+	if err := a.queue.Comment(ctx, task.ID, body); err != nil {
 		return 1, fmt.Errorf("comment on %s: %w", task.ShortID, err)
 	}
 
 	if hasFlag(args, "--json") {
-		return 0, emit("review", jsonReview{Ref: task.ShortID, Commented: true})
+		return 0, emit("review", jsonReview{Ref: task.ShortID, Commented: true, Count: count})
 	}
-	fmt.Printf("commented on %s\n", task.ShortID)
+	if count > 0 {
+		fmt.Printf("commented on %s (%d difit thread(s))\n", task.ShortID, count)
+	} else {
+		fmt.Printf("commented on %s\n", task.ShortID)
+	}
 	return 0, nil
 }
 

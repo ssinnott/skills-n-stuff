@@ -8,6 +8,7 @@ package review
 
 import (
 	"context"
+	"strconv"
 	"time"
 
 	"github.com/ssinnott/skills-n-stuff/wf/internal/config"
@@ -64,23 +65,65 @@ func (s *Session) Open(ctx context.Context, task wf.Task, cfg *config.Config, is
 	findings := FindingsFromIssues(issues)
 	comments := CommentFlags(findings)
 
-	// One review pane: a new run replaces whatever difit is already
-	// running rather than leaving it orphaned in the background.
-	if prev, err := LoadState(s.StatePath); err == nil && prev.PID != 0 {
-		_ = Kill(prev.PID)
-	}
-
-	spawned, err := Launch(ctx, s.Spawner, target.Repo, target.Args, comments)
+	spawned, err := s.launch(ctx, ref, target, comments)
 	if err != nil {
 		return Result{}, err
 	}
 
-	state := State{Ref: ref, PID: spawned.PID, Port: spawned.Port, URL: spawned.URL, Started: s.now().UTC()}
-	if err := SaveState(s.StatePath, state); err != nil {
+	return Result{Ref: ref, Target: target, Viewer: spawned, Seeded: len(findings)}, nil
+}
+
+// OpenPR reviews a PR directly, bypassing the target ladder entirely: no
+// task lookup, no queue call at all. It exists for a PR the ladder can
+// never reach — one a human opened, or one that predates any task
+// recording `wf.pr` metadata — so it must work with no kata running.
+// There is no task, so nothing is seeded.
+func (s *Session) OpenPR(ctx context.Context, url, repo string) (Result, error) {
+	ref := PRHandle(url)
+	target := Target{Kind: KindPR, Repo: repo, PR: url, Args: []string{"--pr", url}}
+
+	spawned, err := s.launch(ctx, ref, target, nil)
+	if err != nil {
 		return Result{}, err
 	}
+	return Result{Ref: ref, Target: target, Viewer: spawned}, nil
+}
 
-	return Result{Ref: ref, Target: target, Viewer: spawned, Seeded: len(findings)}, nil
+// launch is the one-viewer-at-a-time lifecycle shared by a task review and
+// an ad-hoc --pr review: replace whatever is recorded, ask difit for ref's
+// remembered port if one exists, and record the port difit actually
+// bound — never the one requested, since --port's fallback means those
+// can differ (see State.Ports).
+func (s *Session) launch(ctx context.Context, ref string, target Target, comments []string) (Spawned, error) {
+	// A corrupt or absent state record must not block a new review; it
+	// just means there is nothing to kill and no port to remember.
+	prev, _ := LoadState(s.StatePath)
+
+	// One review pane: a new run replaces whatever difit is already
+	// running rather than leaving it orphaned in the background.
+	if prev.PID != 0 {
+		_ = Kill(prev.PID)
+	}
+
+	args := target.Args
+	if port := portFor(prev.Ports, ref); port != 0 {
+		args = append(append([]string{}, args...), "--port", strconv.Itoa(port))
+	}
+
+	spawned, err := Launch(ctx, s.Spawner, target.Repo, args, comments)
+	if err != nil {
+		return Spawned{}, err
+	}
+
+	state := State{
+		Ref: ref, PID: spawned.PID, Port: spawned.Port, URL: spawned.URL,
+		Started: s.now().UTC(),
+		Ports:   rememberPort(prev.Ports, ref, spawned.Port),
+	}
+	if err := SaveState(s.StatePath, state); err != nil {
+		return Spawned{}, err
+	}
+	return spawned, nil
 }
 
 // Stop kills the recorded viewer, if one is running, and clears the record.

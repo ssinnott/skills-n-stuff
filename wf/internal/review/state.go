@@ -26,6 +26,71 @@ type State struct {
 	Port    int       `json:"port"`
 	URL     string    `json:"url"`
 	Started time.Time `json:"started"`
+	// Ports remembers the port difit last actually bound for each ref, so
+	// a reopened task is likely — not guaranteed — to land back on the
+	// same browser origin. See the package comment below for why this
+	// exists and why it can't do better than "likely". Additive: a
+	// review.json written before this field existed has no "ports" key at
+	// all, which decodes as a nil slice rather than an error, the same
+	// tolerance LoadState already gives a wholly missing file.
+	Ports []PortBinding `json:"ports,omitempty"`
+}
+
+// PortBinding is one ref's remembered port.
+type PortBinding struct {
+	Ref  string `json:"ref"`
+	Port int    `json:"port"`
+}
+
+// difit's comments live in the browser's own localStorage, which is
+// scoped per *origin* — and the origin is localhost:<port>. difit picks a
+// preferred port but silently falls back when it's occupied (verified:
+// two instances asking for 4980 got 4980 and 4981 back; it also steps
+// over ports held by unrelated, non-difit processes), so a task reopened
+// on a different port shows up as a blank comment store even though the
+// earlier comments are still sitting on the origin nothing returns to.
+//
+// Remembering the port a ref last bound, and asking difit for that same
+// port again next time, makes reuse *likely*. It cannot make it
+// guaranteed: a foreign process squatting the remembered port still costs
+// that task its previous comments, and nothing wf does can stop that.
+// See DESIGN.md for why a deterministic hash-of-ref port was rejected in
+// favor of this.
+
+// maxRememberedPorts caps how many refs' ports review.json retains, so
+// the file cannot grow without bound across a long-lived install. 50 is
+// comfortably more refs than anyone plausibly keeps reopening for review.
+const maxRememberedPorts = 50
+
+// portFor looks up the port last remembered for ref, or 0 if none is
+// recorded. 0 doubles as "not found" rather than a distinct sentinel
+// because a real difit server never actually binds port 0.
+func portFor(ports []PortBinding, ref string) int {
+	for _, p := range ports {
+		if p.Ref == ref {
+			return p.Port
+		}
+	}
+	return 0
+}
+
+// rememberPort records the port difit actually reported for ref —
+// deliberately the bound port, never the one requested, since --port's
+// silent fallback means those can differ — moving ref to the
+// most-recently-used end and evicting the oldest entry once the list
+// would grow past maxRememberedPorts.
+func rememberPort(ports []PortBinding, ref string, port int) []PortBinding {
+	out := make([]PortBinding, 0, len(ports)+1)
+	for _, p := range ports {
+		if p.Ref != ref {
+			out = append(out, p)
+		}
+	}
+	out = append(out, PortBinding{Ref: ref, Port: port})
+	if len(out) > maxRememberedPorts {
+		out = out[len(out)-maxRememberedPorts:]
+	}
+	return out
 }
 
 // StatePath resolves the review state file next to wf's config — the same

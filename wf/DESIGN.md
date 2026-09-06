@@ -196,22 +196,86 @@ rather than a rewrite.
   processes accumulate silently, and there is only one human looking at
   one diff at a time regardless of how many tasks are in flight.
 
-- **Findings seed the viewer; comments come back by a clipboard, not a
-  pipe.** Machine → human is automated: a task's `ISSUE:` outcomes that
-  name a file and line become difit's `--comment` threads at spawn time,
-  because that information already exists and rendering it costs nothing.
-  Human → machine cannot be automated the same way: difit keeps comments in
-  the browser's own `localStorage` and ships no endpoint to read them back
-  (verified against v5.0.12 — `/api/diff` exists, `/api/comments` 404s), so
-  `wf review comment <ref>` reads whatever a human pasted from difit's
-  "Copy All Prompt" button off stdin and appends it to the task, prefixed
-  so it reads as review feedback rather than an agent's own comment. The
-  asymmetry is real, not an oversight: one direction is wired through data
-  wf already has, the other is a hop through a UI action a script cannot
-  trigger. Rejected: **polling difit for comments** — there is no endpoint
-  to poll, verified rather than assumed, so this was never a timing problem
-  to solve. Rejected: **a native diff renderer** built into wf — difit
-  already does threaded, line-anchored review with a UI worth pasting text
+- **`wf review --pr <url>` is a second, ad-hoc entry point, not a fifth
+  ladder rung.** Rung 1 only fires when `wf.pr` metadata exists, which
+  `recordRunFacts` writes only when an agent reported `PR:` — a PR a human
+  opened by hand, or one that predates any of this, has no task and can
+  never reach the ladder no matter how the ladder itself is reordered. So
+  `--pr` skips task lookup and the queue entirely (it works with no kata
+  running), builds a `Target` directly, and shares only the lifecycle a
+  task review already has: kill-the-previous-viewer, remember-the-port,
+  record-in-review.json. Its `Result.Ref` is a short handle derived from
+  the URL (`owner/repo#123` for GitHub, the raw URL otherwise) since there
+  is no task ShortID to report and the JSON contract requires a non-empty
+  `ref`.
+
+- **Port memory: a remembered port beats a computed one.** difit's
+  comments live in the browser's own `localStorage`, scoped per *origin* —
+  `localhost:<port>` — and difit silently falls back to a different port
+  when its preferred one is occupied (verified: two instances asking for
+  4980 got 4980 and 4981 back; it also steps over ports held by unrelated,
+  non-difit processes). A task reopened on a different port therefore shows
+  an empty comment store even though the earlier comments are still
+  sitting on the origin nothing returns to. `review.json` now carries a
+  ref→port map alongside the single live-viewer record; on open, a ref
+  with a remembered port asks difit for that port again via `--port`, and
+  whatever difit *actually* reports back — never the port that was asked
+  for — is what gets remembered. The map is capped at the 50 most recently
+  used refs, oldest evicted first, so the file cannot grow without bound
+  on a long-lived install. Additive: a `review.json` from before this
+  existed has no `ports` key and loads as an empty map, not an error — the
+  same tolerance `LoadState` already gives a wholly missing file.
+  Rejected: **a deterministic port hashed from the ref** (so the same task
+  always asks for the same port without persisting anything). It sounds
+  like it should be strictly better, but it isn't: a hash can collide with
+  another task's hashed port, or with an unrelated process, exactly as
+  easily as the port-in-use case this whole feature exists to work around
+  — and it throws away the one fact that actually is reliable, which is
+  what difit itself reported binding last time. An observed port beats a
+  guessed one even when the guess is reproducible. The honest limit
+  either way: reuse is *likely*, never *guaranteed* — a foreign process
+  squatting the remembered port still costs that task its previous
+  comments, and nothing wf does can prevent that.
+
+- **Findings seed the viewer; comments come back by a clipboard, or a
+  harvest, not a pipe.** Machine → human is automated: a task's `ISSUE:`
+  outcomes that name a file and line become difit's `--comment` threads at
+  spawn time, because that information already exists and rendering it
+  costs nothing. Human → machine cannot be automated the same way: difit
+  keeps comments in the browser's own `localStorage` and ships no endpoint
+  to read them back (verified against v5.0.12 — `/api/diff` exists,
+  `/api/comments` 404s), so `wf review comment <ref>` reads whatever a
+  human pasted from difit's "Copy All Prompt" button off stdin and appends
+  it to the task, prefixed so it reads as review feedback rather than an
+  agent's own comment. `--format difit` is the same idea without the
+  human hop: the Obsidian plugin harvests difit's actual `localStorage`
+  entries out of the browser frame and pipes the JSON in directly.
+  **The storage key shape here is verified by observation (a live difit
+  v5.0.12 page under Playwright), not documented anywhere** — there is no
+  bare `difit-storage-v1` key at all; the real keys are namespaced per
+  repo-hash and commit-range (`difit-storage-v1/<hash>/<base>-<target>`,
+  `__default__` in place of a hash), one origin can hold several, and each
+  key's value is a JSON *string* holding a `{baseCommitish, targetCommitish,
+  threads: [...]}` object. `ParseDifitStore` accepts that shape plus three
+  more tolerant ones (pre-parsed values, a single bare store object, a bare
+  thread array) and merges every key rather than picking one, since a
+  harvest can span several reviewed commit ranges at once. A thread wf
+  itself seeded via `--comment` lands back in this same store as an
+  ordinary thread once difit has rendered it — harvesting after a review
+  round-trips wf's own findings back onto the task as if a human had
+  re-typed them. This is deliberately not deduplicated: the task comment a
+  harvest produces is a transcript of the review session, not a
+  deduplicated set of findings, and a finding a human explicitly kept
+  open by leaving a message under it is exactly the kind of signal a
+  transcript should preserve rather than silently drop. The asymmetry
+  between the two directions is real, not an oversight: one direction is
+  wired through data wf already has, the other is a hop through a UI
+  action (or, now, a harvest of browser storage) a script cannot trigger
+  through an API. Rejected: **polling difit for comments** — there is no
+  endpoint to poll, verified rather than assumed, so this was never a
+  timing problem to solve. Rejected: **a native diff renderer** built into
+  wf — difit already does threaded, line-anchored review with a UI worth
+  pasting text
   out of, and duplicating that (in Go, in a terminal) to save one clipboard
   step is a worse trade than the asymmetry it would remove.
 
@@ -300,6 +364,11 @@ rather than a rewrite.
       bound note), difit spawn/parse/kill behind a stubbed seam, one
       recorded viewer at a time, findings seeded as `--comment` threads,
       and `wf review comment` for the human side of feedback.
+- [x] `wf review --pr <url>`: an ad-hoc PR review bypassing the ladder and
+      the queue entirely; per-ref port memory in `review.json` so a
+      reopened task is likely to land on the same browser origin as its
+      earlier comments; `wf review comment --format difit` to harvest
+      difit's own comment store instead of a pasted prompt.
 
 ## What the live protocol turned out to be
 

@@ -79,6 +79,10 @@ type jsonReview struct {
 	// respectively; a resolve response never carries either.
 	Stopped   bool `json:"stopped,omitempty"`
 	Commented bool `json:"commented,omitempty"`
+	// Count accompanies Commented only for `review comment --format
+	// difit`: how many harvested threads were folded into the posted
+	// comment. Absent for the plain-text format.
+	Count int `json:"count,omitempty"`
 }
 
 func reviewToJSON(r review.Result) jsonReview {

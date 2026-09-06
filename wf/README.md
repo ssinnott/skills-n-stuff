@@ -39,8 +39,10 @@ wf bind abc4 notes/plan.md   # bind a task to a note by hand
 wf ui abc4                   # deep link into kata's web UI
 wf ui                        # the daemon's origin, for a framed UI
 wf review abc4               # resolve the task's diff and open it in difit
+wf review --pr <url>         # review any PR directly, no task required
 wf review abc4 --stop        # stop the running viewer
 wf review comment abc4       # read a pasted review prompt from stdin
+wf review comment abc4 --format difit   # ingest difit's own comment store
 ```
 
 Add `--json` to `ready`, `show`, `escalations`, `workflows`, `run` and
@@ -183,6 +185,15 @@ tries, in order, the first rung that matches:
 4. **A bound note.** A workflow that only produced a document has no diff at
    all; `wf review` reports the vault path and opens nothing.
 
+`wf review --pr <url> [--repo <path>]` reviews any PR directly, bypassing
+the ladder (and any task or queue lookup) entirely — it works with no kata
+running at all. Use it for a PR a human opened by hand, or one that
+predates `wf.pr` metadata ever being recorded. `--repo` defaults to
+`config.Repo`. It participates in the same one-viewer-at-a-time lifecycle
+as a task review, and the positional `<ref>` and `--pr` are mutually
+exclusive — passing both is a usage error. There is no task, so nothing is
+seeded.
+
 Findings the run filed as `ISSUE:` outcomes seed the viewer as difit review
 threads (`--comment`), when the issue's own title names a file and line
 (`internal/foo.go:42 — nil check`) — most filed issues carry only a tracker
@@ -194,11 +205,24 @@ at a time: a new `wf review` replaces whatever difit is already running, the
 same way one worktree per task keeps two agents from fighting over a
 checkout.
 
-Feedback flows back by hand: difit keeps its comments in the browser's own
-storage with no API to read them back, so open its "Copy All Prompt" button,
-copy what it renders, and run `wf review comment <ref>`, pasting into stdin.
-It lands on the task prefixed as human review feedback, distinct from an
-agent's own comments.
+difit's comments live in the browser's own `localStorage`, scoped per
+*origin* — `localhost:<port>` — and difit silently falls back to a
+different port when its preferred one is occupied. So `wf review` remembers,
+per ref, the port difit last actually bound (in `review.json`, alongside the
+live-viewer record) and asks for that same port again on reopen. This makes
+a task's earlier comments *likely* to still be there, not guaranteed: a
+foreign process squatting the remembered port still costs that task its
+comment history, and nothing can prevent that.
+
+Feedback flows back two ways. By hand: difit keeps its comments in the
+browser's own storage with no API to read them back, so open its "Copy All
+Prompt" button, copy what it renders, and run `wf review comment <ref>`,
+pasting into stdin. It lands on the task prefixed as human review feedback,
+distinct from an agent's own comments. Or harvested: `wf review comment
+<ref> --format difit` reads difit's own comment store as JSON on stdin
+(what the Obsidian plugin sends after pulling it straight out of the
+browser frame's `localStorage`) and renders it into the same kind of
+comment, grouped by file, without a human needing to click anything.
 
 ## Testing
 

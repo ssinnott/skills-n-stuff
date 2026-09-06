@@ -448,7 +448,7 @@ func (a *app) summary(t wf.Task) string {
 // flag values without a full flag parser.
 var knownFlags = map[string]bool{
 	"--limit": true, "--max": true, "--repo": true, "--ref": true, "--config": true,
-	"--vault": true,
+	"--vault": true, "--pr": true, "--format": true,
 }
 
 func flagValue(args []string, flag string) string {
