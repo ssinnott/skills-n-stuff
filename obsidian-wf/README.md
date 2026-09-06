@@ -79,9 +79,17 @@ place.)
    **Review this note's task**) runs `wf review`. For a PR, worktree, or
    branch this opens the difit pane pointed at wf's session; for a task
    whose review target is a document, the note opens instead — a document
-   isn't a diff. Read the comments off, then use difit's own **Copy All
-   Prompt** and paste it into the task's session tab; **Stop** in the difit
-   pane's toolbar ends wf's difit process when you're done.
+   isn't a diff. A PR that never went through the queue — one you opened
+   yourself, or one that predates it — has no task to review through:
+   **Review a pull request…** takes a URL directly (prefilled from a PR
+   link under your cursor or selection, if there is one) instead.
+6. Leave comments in difit as usual, then either **Save review comments to
+   the task** to bank them without ending the session, or **Stop** in the
+   difit pane's toolbar to pull them in and end wf's difit process in one
+   action — see "How comments get out of difit" below for what that
+   actually does and its one hard limitation. difit's own **Copy All
+   Prompt** still works as a manual fallback, and is the only route when
+   comment harvesting isn't available (see below).
 
 ## Commands
 
@@ -96,6 +104,12 @@ place.)
 - **Review this note's task** — run `wf review` for the active note's bound
   task: opens the difit pane on a diff, or the note itself when the review
   target is a document.
+- **Review a pull request…** — review a PR directly, with no task involved.
+  Prefills the URL from a PR link on the current line or selection if there
+  is one, otherwise prompts.
+- **Save review comments to the task** — harvest whatever comments are
+  sitting in the open difit pane and send them to the task, without
+  stopping the review. Only works on the webview frame path (see below).
 
 ## Settings
 
@@ -147,12 +161,50 @@ clicked" than kata is: kata at least has a queue this plugin can re-poll for
 task state, but difit's line comments live only in the embedded page's own
 browser localStorage, and difit exposes no API to read them back (`/api/diff`
 exists; there is no `/api/comments`). So this plugin does not poll for
-comments — there is nothing to poll — and never will. The loop is, and is
-meant to stay, a clipboard action: difit's own **Copy All Prompt** button,
-pasted into the task's session tab by hand. That is not a workaround; it is
-the actual handoff this feature exists to make convenient — wf pre-seeding
-agent findings as comments turns that same clipboard trip into a review of
-what an agent already flagged, rather than a blank diff.
+comments — there is nothing to poll — and never will.
+
+That used to mean the loop ended at a clipboard action: difit's own **Copy
+All Prompt** button, pasted into the task's session tab by hand. It still
+does for the pi extension and any other non-Obsidian difit client, and it
+still does here whenever the webview path isn't available (see below) — but
+where the plugin renders difit in an Electron `<webview>` (`createFrame` in
+`src/frame.ts`), it can *pull* the comment store back out on its own, even
+though difit still has no way to *push* anything to the host. A `<webview>`
+is a separate top-level browsing context that Electron's host process can
+still reach into via `executeJavaScript` — so `DifitFrameView` runs a small
+script inside the frame that enumerates difit's own `localStorage` (keys
+shaped like `difit-storage-v1/<repo hash>/<base>-<target>`, one per
+repo+commit-range difit has shown on that origin — observed by inspecting a
+running difit page, since this isn't documented anywhere) and hands the lot
+to `wf review comment <ref> --format difit --json` on stdin, which sorts out
+what belongs to this ref.
+
+A plain `<iframe>` — the fallback frame.ts uses when the `<webview>` tag
+isn't available — cannot do this: it is a same-process but cross-origin
+browsing context, and cross-origin `localStorage` is unreachable from the
+host no matter what, by design, not by an omission this plugin could patch.
+On that path, harvesting says so outright ("Can't harvest comments in this
+build…") rather than silently coming back with nothing, and Copy All Prompt
+remains the only route.
+
+**Stop harvests before it kills, and that ordering is deliberate.**
+localStorage is scoped per origin, and difit's origin is
+`localhost:<port>` — a port wf is free to reuse or not on the next review of
+the same ref — and, on top of that, difit's storage key itself embeds the
+commit range under review, so a new commit on the same PR opens a *different*
+key with no prior comments. Both are stranding vectors: comments left behind
+when a viewer is killed can end up on an origin, or a key, that nothing ever
+returns to. So **Stop** harvests the store, sends it to `wf review comment`,
+and only *then* calls `wf review --stop`; if either the harvest or the send
+fails, it does not stop anything — the viewer stays alive with the comments
+still in the page, and you fall back to Copy All Prompt. **Save review
+comments to the task** runs the same harvest-and-send without the stop, for
+banking comments mid-review.
+
+None of this changes what pre-seeding does: wf pre-seeding agent findings as
+difit comments still turns your first look at a diff into a review of what
+an agent already flagged rather than a blank one — harvesting is what gets
+your own comments back out afterward, on top of that.
 
 ## How it fits together
 

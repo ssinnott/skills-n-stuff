@@ -21,6 +21,15 @@ export abstract class FramedView extends ItemView {
     protected host: HTMLElement | null = null;
     protected status: HTMLElement | null = null;
     protected currentUrl = "";
+    /**
+     * Which branch createFrame actually took. A subclass that wants to do
+     * something only a webview can (read the guest page's localStorage via
+     * executeJavaScript, for instance) needs to know this for certain rather
+     * than assume — frame mechanics is this class's job, so the fact of
+     * which frame kind got built is exposed here rather than re-derived
+     * (e.g. re-testing HTMLUnknownElement) in every subclass that cares.
+     */
+    protected frameKind: "webview" | "iframe" = "iframe";
 
     constructor(leaf: WorkspaceLeaf) {
         super(leaf);
@@ -61,11 +70,13 @@ export abstract class FramedView extends ItemView {
             webview.setAttribute("allowpopups", "false");
             webview.addClass(`${this.cssPrefix}-view`);
             host.appendChild(webview);
+            this.frameKind = "webview";
             return webview;
         }
 
         const iframe = host.createEl("iframe", { cls: `${this.cssPrefix}-view` });
         iframe.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-popups");
+        this.frameKind = "iframe";
         return iframe;
     }
 
