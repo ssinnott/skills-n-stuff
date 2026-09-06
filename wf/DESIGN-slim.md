@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: in-progress
 supersedes: parts of DESIGN-task.md (named per stage)
 ---
 
@@ -316,6 +316,33 @@ shape, whichever comes first. On the first, replace the harvest with a fetch.
 On the second, do not chase it: remove `ParseDifitStore`, `FormatDifitThreads`,
 `--format difit`, and `difitframe.ts`'s harvest, about 250 lines of Go and
 100 of TypeScript, and keep the paste path.
+
+## Progress
+
+Non-test Go lines after each stage's commit landed:
+
+| Stage | Commit | Non-test lines |
+| :-- | :-- | --: |
+| 1 | `972d920` | 10,399 |
+| 2 | `839a46f` | 9,120 |
+| 3 | `51386a1` | 8,509 |
+| 4 | `2024ccc` | 8,391 |
+| 5, identity | `c1324d1` | 7,638 |
+| 5, no dual write | `4fcc86e` | 7,227 |
+| 6 | in progress | — |
+| 7 | in progress | — |
+
+Where the outcome differed from the plan text above:
+
+- **Stage 2's** Obsidian renderer port is ~460 lines, not the ~150
+  estimated, because it pins the Go fixtures exactly rather than
+  approximating the rendering rules.
+- **Stage 4** kept `review.json` and dropped the ledger binding, as
+  planned.
+- **Stage 5's** `migrate-ledger` command is hidden rather than deleted
+  the commit after; it stays until the next release.
+- **Stage 5** also dropped `session` and `cwd` from `ready`,
+  `escalations` and `run --json`; they are on `show` only.
 
 ## Projected size
 

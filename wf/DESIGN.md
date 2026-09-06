@@ -43,6 +43,9 @@ friends), which are read for one release and never written.
   the backend's job. wf reads `ready` and trusts it.
 - Not a chat client. Steering a running worker means attaching to its
   session with pi directly; wf tells you which session that is.
+- No second id space. The tracker's id is the task's id; wf mints nothing.
+  A ledger beside the config holds only what the tracker has no field for:
+  runs, checkouts and session files on this host.
 
 ## Decisions
 
@@ -387,6 +390,11 @@ friends), which are read for one release and never written.
       reopened task is likely to land on the same browser origin as its
       earlier comments; `wf review comment --format difit` to harvest
       difit's own comment store instead of a pasted prompt.
+- [x] DESIGN-task.md's ledger: wf-minted ids, dual-written bindings, a
+      note renderer, PR refresh and a wider `gc` — built, then cut back to
+      a local ledger of machine-local bindings per DESIGN-slim.md.
+- [x] DESIGN-slim.md stages 1 to 5: PR refresh, `wf note sync`, the wider
+      `gc`, the review-pane binding, and wf's own id space, all deleted.
 
 ## What the live protocol turned out to be
 

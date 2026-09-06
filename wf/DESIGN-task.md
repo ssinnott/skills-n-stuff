@@ -1,7 +1,32 @@
 ---
-status: implemented
+status: superseded
+superseded-by: DESIGN-slim.md
 supersedes: —
 ---
+
+## What was rolled back and why
+
+The multi-host clobber and the re-run-blocked-by-kept-checkout findings
+below were correct, and their fix — a local ledger of machine-local
+bindings, keyed to a run, holding what the tracker has no field for —
+stays. What did not survive:
+
+- **wf-minted identity and handles** (`wf task new`, `wf task adopt`, a
+  resolver across two id spaces): the tracker's id is the task's only
+  id now. (DESIGN-slim.md stage 5)
+- **The dual write of shareable facts** to both tracker and ledger: a
+  fact lives in exactly one place. (DESIGN-slim.md stage 5)
+- **The note renderer** (`wf note sync`, the vault index, filename
+  slugging): the Obsidian plugin renders the block itself, from `wf
+  show --json`. (DESIGN-slim.md stage 2)
+- **PR refresh** (`wf pr refresh`, the `gh` client): nothing consumed
+  the state it recorded. (DESIGN-slim.md stage 1)
+- **The review-pane binding** (`KindReview` on the ledger record): the
+  pane was already recorded in `review.json`; keeping both violated
+  rule 2, one fact one place. (DESIGN-slim.md stage 4)
+- **The wider `gc`** (worktree, branch and pane sweeps, `--fix`,
+  `--before`): git already answers what those swept; only ledger
+  bindings need a ledger-shaped gc. (DESIGN-slim.md stage 3)
 
 # The task object: bindings as a first-class concept
 
