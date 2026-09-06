@@ -194,8 +194,16 @@ Five concrete failures follow from that shape, and none of them is stylistic:
 
   `gh` wins on the things that are expensive to get right and easy to get
   wrong: authentication (including SSO, tokens and enterprise hosts),
-  pagination, rate-limit backoff, and the URL-to-API mapping for a PR link a
-  human pasted. Reimplementing those against the REST API means owning an
+  pagination, and rate-limit backoff.
+
+  An earlier draft also claimed "the URL-to-API mapping for a PR link a
+  human pasted", and the implementation showed that argument is
+  self-undermining: passing `--repo <host>/<owner>/<repo>` — which is what
+  keeps the answer independent of wf's working directory — means wf parses
+  that URL itself anyway. The mapping could be handed back to `gh` by
+  passing the bare URL, at the cost of a cwd dependency. Worth settling on
+  a live run; it is two lines in `viewArgs`. The auth and backoff arguments
+  are untouched by this and are the ones carrying the decision. Reimplementing those against the REST API means owning an
   auth story wf has no business owning, and the standard-library-only rule
   would make even the HTTP client hand-rolled.
 
@@ -234,6 +242,30 @@ Five concrete failures follow from that shape, and none of them is stylistic:
   refresh is what will hit it hardest: a sweep that touches every task's
   ledger record would re-render every note. If that bites, the fix is to
   stamp `Updated` only when the record's content actually changed.
+
+- **Retention measures the work, never the bookkeeping.** `wf gc --before`
+  needs a clock, and the obvious one — `Record.Updated` — is self-defeating:
+  `FileStore` stamps it on every write, gc's own repairs included, so a
+  `--fix` pass would push each record it touched a full retention window
+  into the future and the sweep could never collect what it had just marked
+  dead. Found in a smoke run rather than in review. Retention reads only
+  timestamps the work itself carries — `Created`, binding `At`, run
+  `Started`/`Ended` — and a record carrying none is never prunable.
+
+- **`gc` has three modes, not two.** Bare reports and writes nothing;
+  `--fix` repairs recorded state (a workspace whose directory is gone
+  becomes `missing`); `--delete` implies `--fix` and additionally drops
+  stale records. Marking a binding `missing` is a repair, not a deletion,
+  and putting it behind a flag called `--delete` would make the two
+  indistinguishable to whoever runs it. Deleting a record never deletes the
+  artifact it points at.
+
+- **Half of `gc` is only valid on the host that recorded a binding.** An
+  `os.Stat` here proves nothing about a checkout on another machine, which
+  is exactly why bindings carry `Host`. A foreign-host binding is never
+  marked and never permits pruning on its own — it blocks it, because this
+  host cannot know. The "what this unlocks" list above does not say this and
+  should be read with it.
 
 ### Where it lives
 
@@ -460,6 +492,26 @@ Each of these is currently either impossible or a special case:
 - **Multi-host correctness**, by construction rather than by convention.
 - Both clients read one JSON shape instead of decoding metadata keys, which
   is what `--json` was supposed to buy them already.
+
+## Known gaps
+
+- **Nothing writes a `KindReview` binding.** `taskblock` renders one and
+  `gc` sweeps for one, but no producer exists: the only real record of a
+  running viewer is still `review.json`. So the claim that lifecycle turns
+  "dead review panes" into a query over bindings is, today, true only of the
+  file the ledger is supposed to supersede. `review.Open` is where the
+  producer belongs.
+
+- **Refreshed PR state is never republished to the tracker.** Dispatch
+  dual-writes, but a merge discovered later by `wf pr refresh` lands only in
+  the ledger, so kata's `wf.pr` keeps saying whatever the run said. This is
+  consistent with "publication is derived output, never read back" — and it
+  still means the tracker's copy silently ages, and nothing here says who
+  republishes it.
+
+- **Pruning a record drops the doc→task join** for every document it bound.
+  Acceptable under "not an artifact store", but the retention question above
+  does not mention the cost, and `--delete` is the only place it is paid.
 
 ## Open questions
 
