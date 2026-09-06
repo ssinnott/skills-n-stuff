@@ -154,8 +154,9 @@ Five concrete failures follow from that shape, and none of them is stylistic:
   Follow-on work has its own lifecycle, so it stays its own task rather than
   a queued second run. What changes is that the parent/child edge is a
   `task` binding on both ends instead of a `wf.origin` metadata string, which
-  is what lets a chain render as a chain — in `wf show`, and natively in
-  Obsidian's graph once tasks have notes.
+  is what lets a chain render as a chain in `wf show` and in a task note. It
+  does not by itself reach Obsidian's graph — see the note-projection section
+  for why that needs a note path the binding does not carry.
 
 ### Where it lives
 
@@ -319,8 +320,16 @@ Three properties make this work rather than churn:
   failure turned into a feature, because the projection can say what the
   store could not.
 - **Produced documents render as wikilinks**, so Obsidian's backlinks give
-  you doc→task navigation for free and the graph shows the chain of `NEXT`
-  siblings natively.
+  you doc→task navigation for free.
+
+  An earlier draft added "and the graph shows the chain of `NEXT` siblings
+  natively." That does not follow, and building the renderer proved it: a
+  `task` binding carries a task *id*, not a note path, so it renders as a
+  bare reference and draws no edge for the graph. Getting a chain into the
+  graph needs the sibling's note path on the binding — knowable only once
+  that sibling has a note — so it belongs to whatever creates task notes,
+  not to the renderer. Until then a `NEXT` chain is visible in `wf show` and
+  in the block, and absent from the graph.
 
 The existing panes then stop competing to be the primary view and become
 views of individual bindings: the queue pane lists tasks and opens their
