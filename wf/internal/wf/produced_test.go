@@ -186,7 +186,7 @@ func TestBindingsWithNoRunReadAsTheTasksOwn(t *testing.T) {
 
 func TestMachineLocalKindsAreTheOnesThatNeedAHost(t *testing.T) {
 	local := map[Kind]bool{KindWorkspace: true, KindSession: true}
-	for _, k := range []Kind{KindQueue, KindRepo, KindWorkspace, KindSession, KindPR, KindDoc, KindIssue, KindTask} {
+	for _, k := range []Kind{KindRepo, KindWorkspace, KindSession, KindPR, KindDoc, KindIssue, KindTask} {
 		if got := k.MachineLocal(); got != local[k] {
 			t.Errorf("%s.MachineLocal() = %v, want %v", k, got, local[k])
 		}

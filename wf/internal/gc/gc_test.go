@@ -58,7 +58,7 @@ func TestALiveWorkspaceIsNotReported(t *testing.T) {
 
 func TestAMissingWorkspaceIsReportedNotWritten(t *testing.T) {
 	g, st := sweeper(t, nil)
-	save(t, st, wf.Record{ID: "t1", Handle: "neck", Created: time.Now(),
+	save(t, st, wf.Record{ID: "t1", Created: time.Now(),
 		Bindings: wf.Bindings{
 			{Kind: wf.KindWorkspace, Ref: "/wt/gone", State: wf.BindingLive, Host: actor, At: time.Now()},
 		}})
@@ -169,7 +169,7 @@ func TestForeignHostBindingIsNeverMarkedAndBlocksDeletion(t *testing.T) {
 
 func TestDeleteDropsARecordWithNothingLocalLeft(t *testing.T) {
 	g, st := sweeper(t, nil)
-	save(t, st, wf.Record{ID: "t1", Handle: "neck", Created: time.Now(),
+	save(t, st, wf.Record{ID: "t1", Created: time.Now(),
 		Bindings: wf.Bindings{
 			{Kind: wf.KindWorkspace, Ref: "/wt/neck", State: wf.BindingDisposed, Host: actor, At: time.Now()},
 			{Kind: wf.KindSession, Ref: "/sessions/neck.jsonl", State: wf.BindingDisposed, Host: actor, At: time.Now()},

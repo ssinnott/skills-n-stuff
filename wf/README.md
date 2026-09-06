@@ -30,9 +30,6 @@ No dependencies beyond the standard library.
 wf ready --limit 10          # actionable work, top of queue first
 wf show neck                 # one task: its runs and what each produced
 wf workflows                 # canned workflows that are loaded
-wf task new "Add the parser" # start a task with no tracker row at all
-wf task adopt neck --queue 01M1S…    # file it into the tracker later
-wf task list                 # every task wf has recorded
 wf run --once                # dispatch the top claimable task
 wf run --ref abc4            # dispatch one specific task
 wf run neck --workflow plan-to-pr    # run a named recipe on a named task
@@ -51,20 +48,19 @@ wf gc                        # report ledger bindings whose referent is gone
 wf gc --delete                # mark them missing, drop records with nothing local left
 ```
 
-A `<ref>` is any of four: wf's own task id, its short handle, the tracker's
-id, or the tracker's short id. wf mints the first two; the tracker row is a
-binding on the task rather than the task's identity, which is what lets work
-start before it is filed. An ambiguous ref names its candidates and picks
-nothing.
+A `<ref>` is anything `kata show` accepts: the issue's ULID or its short id.
+`wf task list` is `kata list`.
 
-Add `--json` to `ready`, `show`, `escalations`, `workflows`, `task`, `run`
-and `review` for machine-readable output. That is the protocol both clients
+Add `--json` to `ready`, `show`, `escalations`, `workflows`, `run` and
+`review` for machine-readable output. That is the protocol both clients
 speak — the pi extension and the Obsidian plugin talk to wf, never to kata
 directly, so the queue backend can change without touching either.
 
-`wf show --json` carries both: `task` is the tracker row as it always was,
-and `record` is wf's own object — the task's own bindings, then each run
-with what that run produced.
+`wf show --json` emits one object. The tracker row's own fields — id,
+title, priority, labels, state, lease, and so on — sit at the top level, the
+same shape `ready` and `run --json` emit. Alongside them, `bindings` is the
+task's own — everything no run produced — and `runs` is the ledger's history
+for the task, each entry carrying what that run produced.
 
 ```json
 { "tasks": [ { "id": "01M1S…", "shortId": "neck", "title": "Add the parser",
@@ -98,6 +94,10 @@ off `PATH` —
 they usually are under a launchd or systemd unit. `difitCommand` (default
 `npx difit`) is a shell-style command line rather than a bare binary, since
 the default itself is two words; `DIFIT_BIN` replaces the whole thing.
+
+**Upgrading.** The ledger is now keyed by the tracker's id. After upgrading
+run `wf migrate-ledger` once, or delete `~/.wf/tasks` if nothing in it
+matters; the pre-slim build is tagged in git history.
 
 ## Collecting the dead
 

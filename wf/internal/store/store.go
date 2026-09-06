@@ -1,4 +1,5 @@
-// Package store is wf's local task ledger.
+// Package store is wf's local task ledger: a per-host cache of runs and
+// machine-local bindings, keyed by the tracker's own id.
 //
 // A binding points at something that lives on one machine — a checkout, a
 // session file, a browser origin — and is exactly as durable as the thing it
@@ -6,7 +7,8 @@
 // worktree path is meaningless on another host, so co-locating the record
 // with the artifact is correctness rather than convenience. The tracker keeps
 // title, priority and open/closed; wf keeps provenance and everything
-// machine-local. See DESIGN-task.md.
+// machine-local. There is one id space — kata's ULID — and a record's ID is
+// always a real tracker row's id. See DESIGN-slim.md.
 //
 // This is review.json grown up. That file is already a local per-ref binding
 // ledger written beside wf's config, and it set the tolerance this package
@@ -28,13 +30,13 @@ import (
 	"github.com/ssinnott/skills-n-stuff/wf/internal/wf"
 )
 
-// Store is the whole of what a ledger has to do. Deliberately five verbs and
+// Store is the whole of what a ledger has to do. Deliberately four verbs and
 // no transaction: anything wider would leak the file layout into callers and
 // make the SQLite escape hatch a rewrite instead of a swap.
 type Store interface {
-	// Load returns one record by wf id. A record that is not there is a
-	// *NotFoundError — an answer, since work with no ledger entry is
-	// ordinary — rather than a failure.
+	// Load returns one record by the tracker's id. A record that is not
+	// there is a *NotFoundError — an answer, since work with no ledger
+	// entry is ordinary — rather than a failure.
 	Load(id string) (wf.Record, error)
 	// Save writes a record whole, stamping Updated. The id is the
 	// caller's; this package never mints one.
@@ -66,13 +68,6 @@ type Store interface {
 	// Delete removes a record. Removing one that is already gone is not an
 	// error: deleting twice must not fail the second time.
 	Delete(id string) error
-	// Resolve finds a record by any of the four refs a human types: wf's
-	// own id, its short handle, the ref of any queue binding, or that
-	// binding's recorded short id. Two id spaces meet here, which is the
-	// whole of what "wf mints the id and the tracker row is a binding"
-	// costs at the surface. Ambiguity is an error naming the candidates,
-	// never a pick.
-	Resolve(ref string) (wf.Record, error)
 }
 
 // ErrNotFound is what a missing record unwraps to, so callers test with
@@ -91,21 +86,6 @@ func (e *NotFoundError) Error() string { return fmt.Sprintf("task %q: %s", e.Ref
 
 // Unwrap makes errors.Is(err, ErrNotFound) work.
 func (e *NotFoundError) Unwrap() error { return ErrNotFound }
-
-// AmbiguousError reports a ref that names more than one task. It carries the
-// candidates rather than just a count because "which did you mean" is
-// unanswerable without them, and the alternative — picking one — silently
-// attaches a run to the wrong piece of work.
-type AmbiguousError struct {
-	Ref string
-	// Candidates identify the matches in listed order, each as an id with
-	// its handle when it has one.
-	Candidates []string
-}
-
-func (e *AmbiguousError) Error() string {
-	return fmt.Sprintf("task %q is ambiguous: matches %s", e.Ref, strings.Join(e.Candidates, ", "))
-}
 
 // SkippedFile is one ledger entry that could not be read, and why.
 type SkippedFile struct {

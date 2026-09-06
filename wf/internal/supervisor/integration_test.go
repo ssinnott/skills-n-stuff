@@ -157,14 +157,12 @@ func (h *harness) supervisor() *Supervisor {
 	}
 }
 
-// record reads the task's ledger entry. wf mints the id now, so the tracker
-// id is a ref that finds the record through its queue binding rather than
-// the key the record is filed under.
-func (h *harness) record(t *testing.T, ref string) wf.Record {
+// record reads the task's ledger entry, keyed by the tracker's own id.
+func (h *harness) record(t *testing.T, id string) wf.Record {
 	t.Helper()
-	rec, err := h.ledger.Resolve(ref)
+	rec, err := h.ledger.Load(id)
 	if err != nil {
-		t.Fatalf("no ledger record for %s: %v", ref, err)
+		t.Fatalf("no ledger record for %s: %v", id, err)
 	}
 	return rec
 }

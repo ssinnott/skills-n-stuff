@@ -27,12 +27,12 @@ const (
 
 // Finding is one thing the sweep noticed; Report is a whole sweep.
 type Finding struct {
-	Kind         Kind
-	Task, Handle string // the record this belongs to, if any
-	Ref, Detail  string
-	Repair       Repair
-	Done         bool  // whether this sweep carried the repair out
-	Err          error // a repair attempted and failed
+	Kind        Kind
+	Task        string // the record this belongs to, if any (the tracker's own id)
+	Ref, Detail string
+	Repair      Repair
+	Done        bool  // whether this sweep carried the repair out
+	Err         error // a repair attempted and failed
 }
 
 type Report struct {
@@ -114,7 +114,7 @@ func (g *GC) sweepRecord(rec wf.Record, opts Options) []Finding {
 			if b.Kind == wf.KindSession {
 				kind, detail = SessionMissing, "session file is gone; wf attach would fail"
 			}
-			findings = append(findings, Finding{Kind: kind, Task: rec.ID, Handle: rec.Handle,
+			findings = append(findings, Finding{Kind: kind, Task: rec.ID,
 				Ref: b.Ref, Detail: detail, Repair: RepairMark})
 			missing, state = append(missing, b), wf.BindingMissing
 		}
@@ -124,7 +124,7 @@ func (g *GC) sweepRecord(rec wf.Record, opts Options) []Finding {
 	}
 	drop := !foreign && settled
 	if drop {
-		findings = append(findings, Finding{Kind: RecordStale, Task: rec.ID, Handle: rec.Handle,
+		findings = append(findings, Finding{Kind: RecordStale, Task: rec.ID,
 			Ref: rec.ID, Detail: "nothing live left on this host", Repair: RepairDelete})
 	}
 	switch {

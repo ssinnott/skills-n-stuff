@@ -17,7 +17,7 @@ func (a *app) cmdGC(ctx context.Context, args []string) (int, error) {
 	if hasFlag(args, "--json") {
 		out := jsonGC{Records: report.Records, Deleted: opts.Delete, Repaired: report.Repaired()}
 		for _, f := range report.Findings {
-			row := jsonFinding{Kind: string(f.Kind), Task: f.Task, Handle: f.Handle,
+			row := jsonFinding{Kind: string(f.Kind), Task: f.Task,
 				Ref: f.Ref, Detail: f.Detail, Repair: string(f.Repair), Done: f.Done}
 			if f.Err != nil {
 				row.Error = f.Err.Error()
@@ -34,7 +34,7 @@ func (a *app) cmdGC(ctx context.Context, args []string) (int, error) {
 		} else if f.Done {
 			status = "done"
 		}
-		fmt.Printf("%-20s%s %s — %s (%s)\n", f.Kind, f.Handle, f.Ref, f.Detail, status)
+		fmt.Printf("%-20s%s %s — %s (%s)\n", f.Kind, f.Task, f.Ref, f.Detail, status)
 	}
 	fmt.Printf("%d record(s), %d finding(s)\n", report.Records, len(report.Findings))
 	if failed {

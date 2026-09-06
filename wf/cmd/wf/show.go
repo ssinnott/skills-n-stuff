@@ -1,18 +1,11 @@
 package main
 
-// wf show: the whole task object, grouped by run.
+// wf show: one task, grouped by run.
 //
-// The ledger is what this renders. Before stage 4 `wf show` printed a
-// hand-assembled subset of tracker metadata — a session, a note, a count of
-// runs — and had no way to say which run produced which artifact, because
-// flat keys have nowhere to record it. What it prints now is a record:
-// identity, the runs, and under each run the bindings it made.
-//
-// The tracker is still read, and still owns what it owns. Priority, labels,
-// the lease and open/closed are reads against it, never mirrored here. A
-// task the tracker cannot answer for right now — kata down, or a task that
-// was never filed — renders everything wf itself knows and simply omits
-// those lines, which is the split working rather than a degraded mode.
+// The tracker row and the ledger record describe one task now — kata's ULID
+// is its only id — so this joins them at read time: identity and the facts
+// only the tracker owns (priority, labels, the lease) come off the row,
+// runs and machine-local bindings come off the ledger record.
 
 import (
 	"context"
@@ -20,6 +13,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/ssinnott/skills-n-stuff/wf/internal/wf"
 )
@@ -36,14 +30,7 @@ func (a *app) cmdShow(ctx context.Context, args []string) (int, error) {
 	}
 
 	if hasFlag(args, "--json") {
-		// Both keys, because both are still true and clients read one or
-		// the other: `task` is the tracker row as it always was, `record`
-		// is wf's own object. A client that only knows the old shape keeps
-		// working; one that wants provenance reads the new one.
-		return 0, emitFields(map[string]any{
-			"task":   a.taskJSON(found),
-			"record": a.recordToJSON(found.Record, found.Task),
-		})
+		return 0, emitValue(a.showToJSON(found))
 	}
 
 	a.printRecord(found)
@@ -55,17 +42,14 @@ func (a *app) cmdShow(ctx context.Context, args []string) (int, error) {
 func (a *app) printRecord(found resolved) {
 	rec, task := found.Record, found.Task
 
-	fmt.Printf("%-9s %s", rec.Ref(), rec.Name())
+	fmt.Printf("%-9s %s", task.ShortID, task.Title)
 	if state, ok := task.Meta[wf.StateKey].(string); ok && state != "" {
 		fmt.Printf("   [%s]", state)
 	}
 	fmt.Println()
-	fmt.Printf("id        %s\n", rec.ID)
+	fmt.Printf("id        %s\n", task.ID)
 
 	own := taskOwnBindings(rec)
-	for _, b := range own.ByKind(wf.KindQueue) {
-		fmt.Println(a.bindingLine("", b, found))
-	}
 	for _, b := range own.ByKind(wf.KindRepo) {
 		fmt.Println(a.bindingLine("", b, found))
 	}
@@ -85,7 +69,7 @@ func (a *app) printRecord(found resolved) {
 	// state, not any run's output.
 	var rest wf.Bindings
 	for _, b := range own {
-		if b.Kind != wf.KindQueue && b.Kind != wf.KindRepo {
+		if b.Kind != wf.KindRepo {
 			rest = append(rest, b)
 		}
 	}
@@ -103,14 +87,6 @@ func (a *app) printRecord(found resolved) {
 // keeps the two records disjoint.
 func (a *app) printTrackerFacts(found resolved) {
 	task := found.Task
-	if task.ID == "" {
-		if found.Filed {
-			// Saying so beats printing nothing: the missing lines below are
-			// facts wf deliberately does not keep, not facts it lost.
-			fmt.Println("tracker   unreachable — showing what wf recorded")
-		}
-		return
-	}
 	fmt.Printf("priority  %d\n", task.Priority)
 	if len(task.Labels) > 0 {
 		fmt.Printf("labels    %s\n", strings.Join(task.Labels, ", "))
@@ -161,6 +137,28 @@ func runSummary(run wf.Run) string {
 	return strings.TrimRight(fmt.Sprintf("%-34s %-10s %s", summary, when, outcome), " ")
 }
 
+// age renders how long ago something happened, in the one unit that matters
+// at that distance. A run is scanned, not read, so "2h" carries the whole
+// answer and "2h13m47s" costs the column it takes.
+func age(t time.Time, ref time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	d := ref.Sub(t)
+	switch {
+	case d < 0:
+		return "just now"
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	case d < 48*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
+	}
+}
+
 // bindingLine is one binding as a row: what kind it is, what it points at,
 // and the one thing worth knowing about it.
 func (a *app) bindingLine(indent string, b wf.Binding, found resolved) string {
@@ -172,25 +170,11 @@ func (a *app) bindingLine(indent string, b wf.Binding, found resolved) string {
 // its kind actually uses, plus whichever single fact makes it actionable.
 func (a *app) bindingDetail(b wf.Binding, found resolved) string {
 	var parts []string
-	// A queue binding's state is only ever "the row was there when wf wrote
-	// this down" — nothing refreshes it — so rendering it would read as a
-	// claim about open or closed that wf does not have. The tracker lines
-	// answer that question or nobody does.
-	if label := b.StateLabel(); label != "" && b.Kind != wf.KindQueue {
+	if label := b.StateLabel(); label != "" {
 		parts = append(parts, label)
 	}
 
 	switch b.Kind {
-	case wf.KindQueue:
-		if backend := b.Get(wf.MetaBackend); backend != "" {
-			if short := b.Get(wf.MetaShortID); short != "" {
-				backend += " " + short
-			}
-			parts = append(parts, backend)
-		}
-		if found.Task.ID != "" {
-			parts = append(parts, fmt.Sprintf("p%d", found.Task.Priority))
-		}
 	case wf.KindWorkspace:
 		if branch := b.Get(wf.MetaBranch); branch != "" {
 			parts = append(parts, branch)
@@ -198,7 +182,7 @@ func (a *app) bindingDetail(b wf.Binding, found resolved) string {
 	case wf.KindSession:
 		// The command, not the path: the path is already in the left
 		// column and is not what anyone types.
-		parts = append(parts, "wf attach "+found.Record.Ref())
+		parts = append(parts, "wf attach "+taskRef(found.Task))
 	case wf.KindTask:
 		if rel := b.Get(wf.MetaRelation); rel != "" {
 			parts = append(parts, rel)
@@ -211,17 +195,26 @@ func (a *app) bindingDetail(b wf.Binding, found resolved) string {
 	if b.Host != "" && b.Host != a.cfg.Actor {
 		parts = append(parts, "on "+b.Host)
 	}
-	if b.Label != "" && b.Kind != wf.KindQueue {
+	if b.Label != "" {
 		parts = append(parts, b.Label)
 	}
 	return strings.Join(parts, " · ")
 }
 
+// taskRef is the shortest thing that resolves a task back to itself — what a
+// human should type, and what other commands print alongside it.
+func taskRef(task wf.Task) string {
+	if task.ShortID != "" {
+		return task.ShortID
+	}
+	return task.ID
+}
+
 // kindOrder is the order bindings read in, strongest evidence first, which
 // is the same order `wf review`'s ladder walks.
 var kindOrder = map[wf.Kind]int{
-	wf.KindQueue: 0, wf.KindRepo: 1, wf.KindWorkspace: 2, wf.KindSession: 3,
-	wf.KindPR: 4, wf.KindDoc: 5, wf.KindIssue: 6, wf.KindTask: 7,
+	wf.KindRepo: 0, wf.KindWorkspace: 1, wf.KindSession: 2,
+	wf.KindPR: 3, wf.KindDoc: 4, wf.KindIssue: 5, wf.KindTask: 6,
 }
 
 // sortBindings puts a run's output in a readable order without disturbing

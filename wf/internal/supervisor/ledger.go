@@ -21,11 +21,9 @@ package supervisor
 import (
 	"crypto/rand"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"time"
 
-	"github.com/ssinnott/skills-n-stuff/wf/internal/store"
 	"github.com/ssinnott/skills-n-stuff/wf/internal/wf"
 	"github.com/ssinnott/skills-n-stuff/wf/internal/workflow"
 )
@@ -48,111 +46,23 @@ func newRunID(now time.Time) string {
 	return fmt.Sprintf("r%s-%x", now.UTC().Format("20060102T150405"), suffix)
 }
 
-// taskRef pairs a queue task with the wf id its ledger record is filed
-// under.
-//
-// It exists because that id is no longer free to compute. Finding the record
-// a tracker row belongs to is a scan of the ledger, and a dispatch records
-// five or six times, so the answer is resolved once when the run starts and
-// carried through rather than asked again per write.
-type taskRef struct {
-	task wf.Task
-	// id is empty only when there is no ledger to file under.
-	id string
-}
-
-// ledgerRef finds the record this tracker row already belongs to, or mints
-// the identity it is about to get.
-//
-// This is the inversion stage 4 is for: the record is no longer *keyed* by
-// the tracker id, it is *found* by it — through the queue binding identify
-// writes below, which is the same binding `wf task adopt` adds by hand. A row
-// wf has never seen gets a fresh wf id, so the first dispatch of a queued
-// task and `wf task new` produce records of exactly the same shape.
-func (s *Supervisor) ledgerRef(task wf.Task) taskRef {
-	if s.Store == nil {
-		return taskRef{task: task}
-	}
-	if rec, err := s.Store.Resolve(task.ID); err == nil && namesRow(rec, task.ID) {
-		return taskRef{task: task, id: rec.ID}
-	} else if err != nil && !errors.Is(err, store.ErrNotFound) {
-		// Ambiguity or an unreadable ledger. Minting is still the right
-		// move — nothing in the loop may take a lifecycle decision from the
-		// ledger — but it is worth saying out loud, because the only way to
-		// get here is a ledger that already holds two records for one row.
-		s.logf("%s: resolve ledger record: %v", task.ShortID, err)
-	}
-	return taskRef{task: task, id: wf.NewTaskID(time.Now())}
-}
-
-// namesRow checks that a resolved record really is this tracker row's,
-// rather than something Resolve's abbreviation pass reached for. Resolve is
-// built for refs a human types and is deliberately tolerant; attaching a run
-// to the wrong task is not a tolerable outcome, so the loose passes are
-// filtered back out here.
-func namesRow(rec wf.Record, id string) bool {
-	if rec.ID == id {
-		return true
-	}
-	for _, b := range rec.Bindings.ByKind(wf.KindQueue) {
-		if b.Ref == id {
-			return true
-		}
-	}
-	return false
-}
-
 // record applies fn to the task's ledger record under the store's per-id
 // lock, so a concurrent writer's work is not lost across the read and the
 // write. A nil store means no ledger, which is a supported configuration:
-// the run loop runs the same either way.
-func (s *Supervisor) record(ref taskRef, what string, fn func(*wf.Record)) {
-	if s.Store == nil || ref.id == "" {
+// the run loop runs the same either way. The record is keyed by the task's
+// own id — kata's ULID — which is the only id space there is now: there is
+// no ledger scan to find it and nothing to mint.
+func (s *Supervisor) record(task wf.Task, what string, fn func(*wf.Record)) {
+	if s.Store == nil || task.ID == "" {
 		return
 	}
-	err := s.Store.Update(ref.id, func(rec *wf.Record) error {
-		s.identify(rec, ref.task)
+	err := s.Store.Update(task.ID, func(rec *wf.Record) error {
 		fn(rec)
 		return nil
 	})
 	if err != nil {
-		s.logf("%s: %s: %v", ref.task.ShortID, what, err)
+		s.logf("%s: %s: %v", task.ShortID, what, err)
 	}
-}
-
-// identify makes sure the record knows which task it is: a handle for
-// display and a queue binding naming the tracker row.
-//
-// The label is refreshed and the timestamp is not. A title moves when a
-// human renames the task; the row it names does not, and the note this
-// record renders into lives in a synced vault where an unchanged task has to
-// re-render to the same bytes.
-func (s *Supervisor) identify(rec *wf.Record, task wf.Task) {
-	if rec.Handle == "" {
-		rec.Handle = task.ShortID
-	}
-	for i := range rec.Bindings {
-		b := &rec.Bindings[i]
-		if b.Kind == wf.KindQueue && b.Ref == task.ID {
-			b.Label = task.Title
-			return
-		}
-	}
-
-	// The tracker row is a binding, not the identity. A task exists whether
-	// or not a row does, and Via is empty because no run produced this one:
-	// filing the work and doing it are different acts.
-	b := wf.Binding{
-		Kind: wf.KindQueue, Ref: task.ID, Label: task.Title,
-		State: wf.BindingLive, At: time.Now().UTC(),
-		Meta: map[string]string{wf.MetaBackend: s.Queue.Name()},
-	}
-	if task.ShortID != "" {
-		// Recorded because it cannot be derived: kata builds its short id
-		// from the ULID's last four characters, so no prefix rule finds it.
-		b.Meta[wf.MetaShortID] = task.ShortID
-	}
-	rec.Bindings = append(rec.Bindings, b)
 }
 
 // localBinding builds a binding whose referent lives on one machine,
@@ -177,8 +87,8 @@ func (s *Supervisor) localBinding(kind wf.Kind, ref, runID string, at time.Time)
 // because a task dispatched twice under two recipes has a history, not an
 // overwritten field — which is also what makes "was the bigger model worth
 // it here" a question with two rows to compare rather than one.
-func (s *Supervisor) beginRun(ref taskRef, flow workflow.Workflow, runID string, started time.Time) {
-	s.record(ref, "record run", func(rec *wf.Record) {
+func (s *Supervisor) beginRun(task wf.Task, flow workflow.Workflow, runID string, started time.Time) {
+	s.record(task, "record run", func(rec *wf.Record) {
 		rec.Runs = append(rec.Runs, wf.Run{
 			ID:       runID,
 			Workflow: flow.Name,
@@ -207,7 +117,7 @@ func (s *Supervisor) beginRun(ref taskRef, flow workflow.Workflow, runID string,
 // The branch comes off the workspace itself rather than being re-derived
 // from the task's title, which is what made a renamed task orphan its own
 // branch.
-func (s *Supervisor) recordWorkspace(ref taskRef, runID string, space wf.Workspace, at time.Time) {
+func (s *Supervisor) recordWorkspace(task wf.Task, runID string, space wf.Workspace, at time.Time) {
 	b := s.localBinding(wf.KindWorkspace, space.Path(), runID, at)
 	meta := map[string]string{}
 	if branch := space.Branch(); branch != "" {
@@ -220,7 +130,7 @@ func (s *Supervisor) recordWorkspace(ref taskRef, runID string, space wf.Workspa
 		b.Meta = meta
 	}
 
-	s.record(ref, "record workspace", func(rec *wf.Record) {
+	s.record(task, "record workspace", func(rec *wf.Record) {
 		rec.Bindings = rec.Bindings.Supersede(wf.KindWorkspace, runID).Upsert(b)
 	})
 }
@@ -235,7 +145,7 @@ func (s *Supervisor) recordWorkspace(ref taskRef, runID string, space wf.Workspa
 // so every one of them ties and only a recorded state can break it. Bindings
 // written here carry the time they happened, so Current answers correctly
 // without anyone asserting a lifecycle that did not occur.
-func (s *Supervisor) recordSession(ref taskRef, runID string, session wf.SessionBinding) {
+func (s *Supervisor) recordSession(task wf.Task, runID string, session wf.SessionBinding) {
 	b := s.localBinding(wf.KindSession, session.Path, runID, session.Started)
 	// The runner is a value on the binding, never half of a key name: a
 	// second runner is then a new value rather than a parallel set of keys
@@ -248,7 +158,7 @@ func (s *Supervisor) recordSession(ref taskRef, runID string, session wf.Session
 		b.Meta[wf.MetaCwd] = session.Cwd
 	}
 
-	s.record(ref, "record session", func(rec *wf.Record) {
+	s.record(task, "record session", func(rec *wf.Record) {
 		rec.Bindings = rec.Bindings.Upsert(b)
 	})
 }
@@ -257,8 +167,8 @@ func (s *Supervisor) recordSession(ref taskRef, runID string, session wf.Session
 // from Apply, which is what decides what a run made; they arrive already
 // tagged with the run in Via, because provenance is the edge the flat
 // metadata could not express.
-func (s *Supervisor) endRun(ref taskRef, runID string, outcome wf.SessionOutcome, produced wf.Bindings, at time.Time) {
-	s.record(ref, "settle run", func(rec *wf.Record) {
+func (s *Supervisor) endRun(task wf.Task, runID string, outcome wf.SessionOutcome, produced wf.Bindings, at time.Time) {
+	s.record(task, "settle run", func(rec *wf.Record) {
 		for i := range rec.Runs {
 			if rec.Runs[i].ID != runID {
 				continue
@@ -286,12 +196,12 @@ func (s *Supervisor) endRun(ref taskRef, runID string, outcome wf.SessionOutcome
 // purpose, which is different from a checkout that vanished behind wf's back
 // and different again from one that is still there. `wf review` learns this
 // by stat-ing the directory; the record is what lets it be a query instead.
-func (s *Supervisor) disposedWorkspace(ref taskRef, runID string, space wf.Workspace) {
+func (s *Supervisor) disposedWorkspace(task wf.Task, runID string, space wf.Workspace) {
 	if space == nil {
 		return
 	}
 	path := space.Path()
-	s.record(ref, "record disposal", func(rec *wf.Record) {
+	s.record(task, "record disposal", func(rec *wf.Record) {
 		for i := range rec.Bindings {
 			b := &rec.Bindings[i]
 			if b.Kind == wf.KindWorkspace && b.Ref == path && b.Via == runID {

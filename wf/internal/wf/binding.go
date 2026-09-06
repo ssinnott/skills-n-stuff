@@ -24,9 +24,6 @@ import "time"
 type Kind string
 
 const (
-	// KindQueue is a row in a tracker. A task may have none: work can
-	// start before it is filed.
-	KindQueue Kind = "queue"
 	// KindRepo is a repository the work happens in.
 	KindRepo Kind = "repo"
 	// KindWorkspace is an isolated checkout — a git worktree today.
@@ -123,9 +120,6 @@ const (
 	MetaRepo = "repo"
 	// MetaRunner is which agent ran a session — "pi" is a value here.
 	MetaRunner = "runner"
-	// MetaBackend is which tracker a queue binding lives in — "kata" is a
-	// value here.
-	MetaBackend = "backend"
 	// MetaSessionID is a session's own id, for display and the runner's
 	// session browser. Ref holds the path, which is what reattaching uses.
 	MetaSessionID = "session_id"
@@ -144,12 +138,6 @@ const (
 	// MetaRelation is how a task binding relates: RelationParent or
 	// RelationNext.
 	MetaRelation = "relation"
-	// MetaShortID is a tracker's own human-facing ref for a queue binding,
-	// recorded because it cannot be derived. kata builds its short id from
-	// the *last* four characters of the ULID, so no prefix rule finds it;
-	// a resolver that guessed at that would be encoding one backend's
-	// convention in the one place that is supposed to be backend-neutral.
-	MetaShortID = "short_id"
 )
 
 // The values MetaRelation takes on a KindTask binding. Named rather than
@@ -276,31 +264,6 @@ func (bs Bindings) Current(k Kind) (Binding, bool) {
 	return newest, true
 }
 
-// Note returns the task's own note — the document that faces this task,
-// as opposed to a document some run produced.
-//
-// Both are KindDoc bindings in a vault, which is why asking for the newest
-// doc gets this wrong: a research note a run wrote is newer than the task
-// note almost immediately, and reporting it as "the note" sends a reader —
-// or the Obsidian plugin's own rendering — to the wrong file. The task's
-// note is the one no run produced, so an empty Via is what separates them.
-func (bs Bindings) Note() (Binding, bool) {
-	var best Binding
-	found := false
-	for _, b := range bs {
-		if b.Kind != KindDoc || b.Via != "" || !b.IsLive() {
-			continue
-		}
-		if b.Get(MetaStore) != StoreVault {
-			continue
-		}
-		if !found || !b.At.Before(best.At) {
-			best, found = b, true
-		}
-	}
-	return best, found
-}
-
 // Refs returns the referents of a kind, live or not, in recorded order.
 func (bs Bindings) Refs(k Kind) []string {
 	var out []string
@@ -374,27 +337,18 @@ type Run struct {
 // Done reports whether the run has settled.
 func (r Run) Done() bool { return r.Ended != nil }
 
-// Record is wf's own task record: identity, runs, and bindings. The
-// tracker still owns work state — title, priority, open/closed — and a
-// Record never mirrors those; it holds what a tracker cannot, which is
-// everything machine-local and everything with provenance.
+// Record is wf's own ledger record: runs and machine-local bindings, keyed
+// by the tracker's own id. kata's ULID is the task's only identity — wf
+// mints nothing — so a Record's ID is always a real tracker row's id, and
+// Load(id) and kata's own row are two views of the same task rather than
+// two id spaces meeting at a binding. The tracker still owns work state —
+// title, priority, open/closed — and a Record never mirrors those; it holds
+// what a tracker cannot, which is everything machine-local and everything
+// with provenance.
 type Record struct {
-	// ID is wf's own durable id, minted by wf. A tracker row is a
-	// KindQueue binding, not this.
-	ID string `json:"id"`
-	// Handle is the short human-facing ref.
-	Handle string `json:"handle,omitempty"`
-	// Title is the name a task answers to before — or without — a tracker
-	// row.
-	//
-	// This is the one place the ledger holds something the tracker would
-	// otherwise own, and it is here because "a task exists whether or not a
-	// tracker row does" leaves the title with nowhere else to live: `wf
-	// task new "fix the parser"` has to record that string somewhere. It is
-	// a *fallback*, not a mirror — see Name. Nothing refreshes it from the
-	// tracker, so a renamed row does not make it stale; it simply stops
-	// being what anyone reads.
-	Title    string    `json:"title,omitempty"`
+	// ID is the tracker's own id (a ULID on kata). The file this record
+	// lives in is named after it.
+	ID       string    `json:"id"`
 	Created  time.Time `json:"created"`
 	Updated  time.Time `json:"updated,omitempty"`
 	Runs     []Run     `json:"runs,omitempty"`
@@ -427,38 +381,3 @@ func (r Record) LatestRun() (Run, bool) {
 
 // Produced returns the bindings a run created.
 func (r Record) Produced(runID string) Bindings { return r.Bindings.From(runID) }
-
-// Name is what a human should see for this task.
-//
-// The tracker wins when there is one: its row's Label is refreshed on every
-// dispatch, so it is the live answer, while Title is whatever the task was
-// called when wf minted it. That ordering is the disjointness rule applied
-// to one field — the tracker owns work state, the ledger owns everything
-// machine-local and everything with provenance, and a title recorded by
-// `wf task new` is only the ledger's answer until a row exists to overrule
-// it.
-func (r Record) Name() string {
-	if b, ok := r.Bindings.Current(KindQueue); ok && b.Label != "" {
-		return b.Label
-	}
-	return r.Title
-}
-
-// Ref is the shortest thing that resolves this task: the handle when it has
-// one, the id otherwise. What `wf task new` prints and what `wf show` leads
-// with.
-func (r Record) Ref() string {
-	if r.Handle != "" {
-		return r.Handle
-	}
-	return r.ID
-}
-
-// QueueRef returns the tracker id this task is filed under, if it is.
-func (r Record) QueueRef() (string, bool) {
-	b, ok := r.Bindings.Current(KindQueue)
-	if !ok {
-		return "", false
-	}
-	return b.Ref, true
-}

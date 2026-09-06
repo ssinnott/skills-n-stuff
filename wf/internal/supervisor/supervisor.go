@@ -68,9 +68,8 @@ func (s *Supervisor) actor() string {
 // Result reports one dispatched task.
 type Result struct {
 	Task wf.Task
-	// TaskID is the wf id of the ledger record this run was filed under —
-	// the id `wf show` resolves. Empty when there is no ledger: the run
-	// still happened, nothing wrote it down.
+	// TaskID is the tracker's own id — the same as Task.ID — repeated here
+	// because it is what `wf show` and the ledger key on.
 	TaskID  string
 	Applied wf.ApplyResult
 	Session string
@@ -277,18 +276,16 @@ func (s *Supervisor) dispatch(ctx context.Context, task wf.Task, opts Dispatch) 
 	// when it finishes is exactly the run that never gets written down.
 	startedAt := time.Now().UTC()
 	runID := newRunID(startedAt)
-	// One ledger lookup for the whole dispatch. The record is *found* by
-	// the tracker row rather than keyed on it, so asking again per write
-	// would be a directory scan per binding.
-	ref := s.ledgerRef(task)
-	s.beginRun(ref, flow, runID, startedAt)
+	// The record is keyed by the task's own id, which every dispatch
+	// already carries — there is nothing to look up or mint.
+	s.beginRun(task, flow, runID, startedAt)
 	// Every path out of here settles the run. A dispatch that died on a
 	// tracker write or a broken checkout is still a run that happened, and a
 	// row left open forever would read as one still going.
 	settled := false
 	defer func() {
 		if !settled {
-			s.endRun(ref, runID, wf.SessionFailed, nil, time.Now().UTC())
+			s.endRun(task, runID, wf.SessionFailed, nil, time.Now().UTC())
 		}
 	}()
 
@@ -303,7 +300,7 @@ func (s *Supervisor) dispatch(ctx context.Context, task wf.Task, opts Dispatch) 
 			return Result{}, err
 		}
 		workspaceDir = space.Path()
-		s.recordWorkspace(ref, runID, space, time.Now().UTC())
+		s.recordWorkspace(task, runID, space, time.Now().UTC())
 	}
 	if workspaceDir == "" {
 		workspaceDir = s.vaultOrCwd()
@@ -335,7 +332,7 @@ func (s *Supervisor) dispatch(ctx context.Context, task wf.Task, opts Dispatch) 
 	if err := wf.BindSession(ctx, s.Queue, task.ID, binding); err != nil {
 		return Result{}, err
 	}
-	s.recordSession(ref, runID, binding)
+	s.recordSession(task, runID, binding)
 
 	stopRenewal := s.renewLease(ctx, task)
 	runResult, runErr := handle.Wait(ctx)
@@ -350,9 +347,9 @@ func (s *Supervisor) dispatch(ctx context.Context, task wf.Task, opts Dispatch) 
 		s.keepWorkspace(space)
 		// The checkout stays live and stays bound: a crashed agent is the
 		// case the whole record exists to make inspectable.
-		s.endRun(ref, runID, wf.SessionFailed, applied.Bindings, time.Now().UTC())
+		s.endRun(task, runID, wf.SessionFailed, applied.Bindings, time.Now().UTC())
 		settled = true
-		return Result{Task: task, TaskID: ref.id, Applied: applied, Session: binding.Path, Run: runID}, nil
+		return Result{Task: task, TaskID: task.ID, Applied: applied, Session: binding.Path, Run: runID}, nil
 	}
 
 	outcomes := wf.ParseOutcomes(runResult.TranscriptTail)
@@ -385,14 +382,14 @@ func (s *Supervisor) dispatch(ctx context.Context, task wf.Task, opts Dispatch) 
 		if err := space.Dispose(ctx); err != nil {
 			s.logf("%s: dispose workspace: %v", task.ShortID, err)
 		} else {
-			s.disposedWorkspace(ref, runID, space)
+			s.disposedWorkspace(task, runID, space)
 		}
 	}
 
-	s.endRun(ref, runID, outcome, applied.Bindings, time.Now().UTC())
+	s.endRun(task, runID, outcome, applied.Bindings, time.Now().UTC())
 	settled = true
 
-	return Result{Task: task, TaskID: ref.id, Applied: applied, Session: binding.Path, Run: runID}, nil
+	return Result{Task: task, TaskID: task.ID, Applied: applied, Session: binding.Path, Run: runID}, nil
 }
 
 // resolveWorkflow selects the canned workflow for a task, escalating rather

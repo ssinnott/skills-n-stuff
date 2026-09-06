@@ -107,16 +107,7 @@ func (a *app) cmdReview(ctx context.Context, args []string) (int, error) {
 	if err != nil {
 		return 1, err
 	}
-	// A task the tracker still holds goes through the ladder over its
-	// metadata, exactly as before. One the ledger minted has no row and no
-	// metadata, and its bindings are the record's own.
-	var result review.Result
-	if found.Task.ID != "" {
-		result, err = sess.Open(ctx, found.Task, a.cfg)
-	} else {
-		result, err = sess.OpenBindings(ctx, found.Record.Ref(), found.Record.Bindings,
-			review.Externals{Repo: a.cfg.Repo, Base: reviewBase(a.cfg.Base)})
-	}
+	result, err := sess.Open(ctx, found.Task, a.cfg)
 	if err != nil {
 		return 1, err
 	}
@@ -126,16 +117,6 @@ func (a *app) cmdReview(ctx context.Context, args []string) (int, error) {
 	}
 	printReviewResult(result)
 	return 0, nil
-}
-
-// reviewBase is the branch a diff is taken against when nothing names one.
-// BuildLadder applies the same default for a tracker-backed task; a ledger
-// task takes this path instead and must not end up with an empty base.
-func reviewBase(base string) string {
-	if base == "" {
-		return "main"
-	}
-	return base
 }
 
 func (a *app) cmdReviewComment(ctx context.Context, args, positional []string) (int, error) {
@@ -150,10 +131,7 @@ func (a *app) cmdReviewComment(ctx context.Context, args, positional []string) (
 	}
 	// A comment goes on the tracker row: it is the discussion surface, and
 	// wf keeps no thread of its own.
-	task, err := a.requireTask(found)
-	if err != nil {
-		return 1, err
-	}
+	task := found.Task
 
 	raw, err := io.ReadAll(os.Stdin)
 	if err != nil {

@@ -29,10 +29,6 @@ const usage = `wf — workflow CLI over pluggable queues
   wf show <ref>                one task: its runs and what each produced
   wf escalations               tasks flagged needs-human
   wf workflows                 canned workflows loaded from the workflow dir
-  wf task new "<title>"        start a task with no tracker row at all
-  wf task adopt <ref>          file an existing task into the tracker
-         --queue <tracker-id>
-  wf task list                 every task wf has recorded
   wf run [--once] [--ref R]    dispatch work to agents
          [--max N] [--repo P]
          [--workflow W]
@@ -44,10 +40,9 @@ const usage = `wf — workflow CLI over pluggable queues
   wf review comment <ref>      read a pasted review prompt from stdin
   wf gc [--delete]              report ledger bindings whose referent is gone; --delete drops dead records
 
-A <ref> is any of four: wf's own task id, its short handle, the tracker's id
-or the tracker's short id. Ambiguity names the candidates rather than picking.
+A <ref> is anything ` + "`kata show`" + ` accepts: the issue's ULID or its short id.
 
-Add --json to ready, show, escalations, workflows, task, run and review for
+Add --json to ready, show, escalations, workflows, run and review for
 machine-readable output; that is the protocol both the pi extension and the
 Obsidian plugin speak.
 
@@ -142,8 +137,10 @@ func run(ctx context.Context, argv []string) (int, error) {
 		return a.cmdReview(ctx, rest)
 	case "gc":
 		return a.cmdGC(ctx, rest)
-	case "task":
-		return a.cmdTask(ctx, rest)
+	case "migrate-ledger":
+		// Hidden: a one-off migration, not part of the command surface.
+		// See cmd/wf/migrate.go.
+		return a.cmdMigrateLedger(ctx, rest)
 	default:
 		return 1, fmt.Errorf("unknown command: %s\n\n%s", cmd, usage)
 	}
@@ -252,11 +249,7 @@ func (a *app) cmdRun(ctx context.Context, args []string) (int, error) {
 	}
 
 	if hasFlag(args, "--once") || ref != "" {
-		dispatchRef, err := a.dispatchRef(ctx, ref)
-		if err != nil {
-			return 1, err
-		}
-		result, err := sup.RunOnceWith(ctx, dispatchRef,
+		result, err := sup.RunOnceWith(ctx, ref,
 			supervisor.Dispatch{Workflow: flagValue(args, "--workflow")})
 		if errors.Is(err, supervisor.ErrNothingReady) {
 			if asJSON {
@@ -408,8 +401,7 @@ func (a *app) summary(t wf.Task) string {
 // flag values without a full flag parser.
 var knownFlags = map[string]bool{
 	"--limit": true, "--max": true, "--repo": true, "--ref": true, "--config": true,
-	"--vault": true, "--pr": true, "--format": true,
-	"--handle": true, "--queue": true, "--workflow": true,
+	"--vault": true, "--pr": true, "--format": true, "--workflow": true,
 }
 
 func flagValue(args []string, flag string) string {
