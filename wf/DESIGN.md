@@ -17,6 +17,9 @@ kata is the first queue backend, pi the first runner, git worktrees the
 first workspace. The seams exist so the second of each is an adapter
 rather than a rewrite.
 
+[DESIGN-slim.md](DESIGN-slim.md) proposes rolling part of that back; see it
+for which pieces stay.
+
 [DESIGN-task.md](DESIGN-task.md) is **built**, and supersedes this document
 wherever the two disagree about what a task is. The task here is a normalized
 queue row with bindings stuck to it as ad-hoc metadata keys; there it is wf's
