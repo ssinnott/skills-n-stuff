@@ -73,7 +73,10 @@ func (a *app) cmdTaskNew(args, positional []string) (int, error) {
 	}
 	fmt.Printf("%s  %s\n", rec.Handle, rec.Title)
 	fmt.Printf("id       %s\n", rec.ID)
-	fmt.Printf("   wf run %s --workflow <name>\n", rec.Handle)
+	// Not `wf run`: dispatch writes through the tracker, so an unfiled task
+	// is refused. Point at the step that actually comes next.
+	fmt.Printf("   wf task adopt %s --queue <tracker-id>\n", rec.Handle)
+	fmt.Printf("   wf note sync %s\n", rec.Handle)
 	return 0, nil
 }
 

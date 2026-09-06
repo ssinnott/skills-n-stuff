@@ -550,9 +550,14 @@ func forNote(rec wf.Record, rel string) wf.Record {
 // available is the label the queue binding recorded when the row was last
 // seen. A task that was never filed falls back to its handle and then its
 // id, which is honest rather than invented.
+// title defers to Record.Name — the queue label when the task is filed, its
+// own title otherwise — so a note is named for the work rather than for the
+// handle. This package predates Record.Title and had its own copy of the
+// rule with no title to fall back on, which is why a trackerless task's note
+// came out called "8f8b".
 func title(rec wf.Record) string {
-	if b, ok := rec.Bindings.Current(wf.KindQueue); ok && b.Label != "" {
-		return b.Label
+	if name := rec.Name(); name != "" {
+		return name
 	}
 	return ref(rec)
 }

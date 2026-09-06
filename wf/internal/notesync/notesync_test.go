@@ -643,3 +643,30 @@ func TestWriteNoteReplacesRatherThanTruncates(t *testing.T) {
 		t.Errorf("leftovers beside the note: %v", entries)
 	}
 }
+
+// A task that was never filed still has a title, and its note should be
+// named for the work rather than for the handle a human would have typed.
+func TestNoteIsNamedForTheWorkOnATrackerlessTask(t *testing.T) {
+	s, ledger, vault := fixture(t)
+
+	rec := wf.Record{ID: "t20260101T000000-abc", Handle: "knww", Title: "Add the parser"}
+	if err := ledger.Save(rec); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	res, err := s.Sync(rec, Options{Create: true})
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if !strings.Contains(res.Note, "Add the parser") {
+		t.Errorf("note path = %q, want it named for the title, not the handle", res.Note)
+	}
+
+	text, err := os.ReadFile(filepath.Join(vault, filepath.FromSlash(res.Note)))
+	if err != nil {
+		t.Fatalf("read note: %v", err)
+	}
+	if !strings.Contains(string(text), "# Add the parser") {
+		t.Errorf("heading missing from:\n%s", text)
+	}
+}
