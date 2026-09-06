@@ -252,7 +252,7 @@ func TestRerunTakesOverAsCurrentWhileTheFirstStays(t *testing.T) {
 	}
 }
 
-func TestEveryBindingARunProducedCarriesTheRun(t *testing.T) {
+func TestEveryLocalBindingARunProducedCarriesTheRun(t *testing.T) {
 	q := newQueue(wf.Task{ID: "01HZ", ShortID: "abc4", Title: "Productive work"})
 	r := &fakeRunner{transcript: "" +
 		"REPO: /code/app\n" +
@@ -278,39 +278,38 @@ func TestEveryBindingARunProducedCarriesTheRun(t *testing.T) {
 	for _, b := range produced {
 		kinds[b.Kind] = b
 	}
-	for _, want := range []wf.Kind{wf.KindWorkspace, wf.KindSession, wf.KindPR, wf.KindIssue, wf.KindDoc, wf.KindTask} {
+	// Only what is machine-local goes on the run: a workspace and a
+	// session. PRs, issues, documents, repos and the NEXT follow-on are all
+	// shareable and have no place in the ledger at all.
+	for _, want := range []wf.Kind{wf.KindWorkspace, wf.KindSession} {
 		if _, ok := kinds[want]; !ok {
 			t.Errorf("no %s binding tagged with the run: %+v", want, produced)
 		}
 	}
-	if pr := kinds[wf.KindPR]; pr.Ref != "https://example.test/pull/412" || pr.Label != "Add the parser" {
-		t.Errorf("pr binding = %+v", pr)
+	for _, unwanted := range []wf.Kind{wf.KindPR, wf.KindIssue, wf.KindDoc, wf.KindTask, wf.KindRepo} {
+		if b, ok := kinds[unwanted]; ok {
+			t.Errorf("%s is a shareable fact and must not be in the ledger: %+v", unwanted, b)
+		}
 	}
-	if next := kinds[wf.KindTask]; next.Get(wf.MetaRelation) != wf.RelationNext {
-		t.Errorf("follow-on binding = %+v, want relation next", next)
-	}
-
-	// The repo is context the run named rather than something it produced,
-	// so it reads as the task's own and renders above the runs.
-	repo, ok := rec.Bindings.Current(wf.KindRepo)
-	if !ok || repo.Ref != "/code/app" {
-		t.Fatalf("repo binding = %+v", repo)
-	}
-	if repo.Via != "" {
-		t.Errorf("repo binding Via = %q, want the task's own", repo.Via)
+	if _, ok := rec.Bindings.Current(wf.KindRepo); ok {
+		t.Error("the repo is a shareable fact and must not be in the ledger at all")
 	}
 
-	// The tracker still carries every one of those facts as flat metadata.
-	// Publication is one way and unchanged; the ledger is additional, not a
-	// replacement.
+	// The tracker carries every one of those facts as flat metadata — their
+	// only home now — and a client reads them back through LoadBindings.
 	if q.meta("01HZ", wf.RepoKey) != "/code/app" {
-		t.Errorf("tracker repo metadata = %v, want it still published", q.meta("01HZ", wf.RepoKey))
+		t.Errorf("tracker repo metadata = %v, want it published", q.meta("01HZ", wf.RepoKey))
 	}
 	if q.meta("01HZ", wf.PRsKey) == nil {
 		t.Error("tracker PR metadata was dropped")
 	}
 	if q.meta("01HZ", wf.IssuesKey) == nil {
 		t.Error("tracker issue metadata was dropped")
+	}
+
+	published := wf.LoadBindings(wf.Task{ID: "01HZ", Meta: q.tasks["01HZ"].Meta})
+	if pr, ok := published.Current(wf.KindPR); !ok || pr.Ref != "https://example.test/pull/412" {
+		t.Errorf("published pr binding = %+v", pr)
 	}
 }
 
@@ -360,10 +359,14 @@ func TestWorkspaceBindingRecordsTheBranchAndTheHost(t *testing.T) {
 		t.Errorf("runner = %q, want the runner that actually ran", got)
 	}
 
-	// A PR URL resolves from any machine, so it carries no host at all.
-	pr, ok := rec.Bindings.Current(wf.KindPR)
-	if !ok {
-		t.Fatal("no pr binding")
+	// A PR is shareable and resolves from any machine, so it has no place
+	// in the ledger at all — it lives on the tracker, published by Apply.
+	if _, ok := rec.Bindings.Current(wf.KindPR); ok {
+		t.Error("a PR binding must not be in the ledger — it is a shareable fact")
+	}
+	pr, ok := wf.LoadBindings(wf.Task{ID: "01HZ", Meta: q.tasks["01HZ"].Meta}).Current(wf.KindPR)
+	if !ok || pr.Ref != "https://a/1" {
+		t.Fatalf("published pr binding = %+v", pr)
 	}
 	if pr.Host != "" {
 		t.Errorf("pr host = %q, want none — a URL is not machine-local", pr.Host)

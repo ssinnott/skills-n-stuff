@@ -24,13 +24,6 @@ import (
 // than a second key with its own reader.
 const DocKey = "wf.doc"
 
-// ObsidianNoteKey is the key DocKey replaced. Still read, so a task bound
-// by an earlier release keeps resolving; never written.
-//
-// Deprecated: delete one release after the rename ships, on the same terms
-// as the Legacy session keys.
-const ObsidianNoteKey = "obsidian.note"
-
 // BindOptions configures artifact binding for one run.
 type BindOptions struct {
 	// Vault is the Obsidian vault root. Empty disables binding entirely.

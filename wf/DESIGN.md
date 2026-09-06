@@ -80,6 +80,8 @@ friends), which are read for one release and never written.
   `kata list --meta` and renders for free in the CLI, TUI and web UI.
 
 - **The agent session is bound to the task by metadata, written at spawn.**
+  (Superseded by DESIGN-slim.md stage 5: the session is recorded in the
+  local ledger, never in tracker metadata.)
   `wf.session` (file path), `wf.session_id`, `wf.workspace`, and a
   `wf.session_history` JSON array — role names, with the runner carried as a
   value on the binding rather than as half of a key. The `pi.*` names these

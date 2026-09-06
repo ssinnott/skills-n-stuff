@@ -583,7 +583,8 @@ Staged so that each stage is shippable and the risky one is last.
       local-first. `review.json` folds into it. Runs become the middle layer
       and `Apply` writes bindings tagged `via: <run-id>` instead of flat
       keys. Record the branch. Fixes the multi-host clobber, and makes a
-      re-run possible while a kept checkout is still on disk.
+      re-run possible while a kept checkout is still on disk. (dual write
+      removed in DESIGN-slim.md stage 5)
 - [x] **4 — Standalone identity and explicit dispatch.** wf-minted ids,
       `wf task new`, adopt into a tracker, ref resolution across both id
       spaces, `wf run <ref> --workflow <name>`. `wf review --pr` becomes a

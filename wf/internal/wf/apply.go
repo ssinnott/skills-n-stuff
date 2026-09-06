@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"time"
 )
 
 // Applying a run's outcomes to the tracker.
@@ -53,11 +52,13 @@ type IssueRecord struct {
 }
 
 // PRsFromMeta reads recorded PR urls, if any. Garbage or absent metadata
-// reads as empty rather than failing: like HistoryFromMeta, this is a
-// convenience read, not a lifecycle input.
+// reads as empty rather than failing — a binding is how work is found
+// again, never a lifecycle input, so bad metadata must cost a link, never a
+// run.
 //
 // A decoder for LoadBindings rather than a call site's entry point — see
-// BindingFromMeta on why consumers go through the one reader.
+// the package comment on load.go for why consumers go through the one
+// reader.
 func PRsFromMeta(meta map[string]any) []string {
 	data, ok := metaJSONBytes(meta[PRsKey])
 	if !ok {
@@ -146,92 +147,6 @@ func recordRunFacts(ctx context.Context, q Queue, task Task, outcomes []Outcome)
 	return nil
 }
 
-// runBindings turns what a run reported into typed bindings tagged with the
-// run that produced them.
-//
-// This is the ledger half of a deliberate dual write, and recordRunFacts
-// above is the other. Publication to the tracker keeps going exactly as it
-// did — the same flat keys, written one way and never read back — because
-// kata's CLI, TUI and web UI render those keys and a task's shareable facts
-// belong where the humans looking at the tracker will see them. The bindings
-// are the *record*: they carry the three things a flat key cannot, which are
-// provenance (which run opened this PR), lifecycle (a PR that merged, a
-// checkout that was disposed) and plurality (two runs, two sets of
-// artifacts, neither overwriting the other).
-//
-// Persisting them is the caller's job rather than this package's, and the
-// reason is the import direction rather than taste: the ledger in
-// internal/store imports this package for wf.Record, so this package cannot
-// import it back. The split lands in the right place anyway — Apply decides
-// what a run produced, and the supervisor, which knows where wf's memory
-// lives and which host it is on, decides where that goes.
-//
-// at is passed in rather than read from the clock so every binding one Apply
-// produces shares one timestamp and a test can pin it. Real timestamps
-// matter here beyond tidiness: Bindings.Current breaks ties toward the last
-// recorded, and bindings recovered from flat metadata all carry a zero time,
-// so every one of them ties. A binding written into the ledger never has to
-// fall back on that rule.
-func runBindings(outcomes []Outcome, bound []BoundDoc, runID string, at time.Time) Bindings {
-	var bs Bindings
-
-	// The repo is context the run *named*, not an artifact it produced, so
-	// it carries no Via and reads as the task's own — which is also how it
-	// renders: above the runs rather than inside one. A second run in the
-	// same repo refreshes this binding instead of adding a second.
-	if repo := ReportedRepo(outcomes); repo != "" {
-		bs = bs.Upsert(Binding{Kind: KindRepo, Ref: repo, At: at})
-	}
-
-	for _, o := range outcomes {
-		switch o.Verb {
-		case VerbPR:
-			if o.URL == "" {
-				continue
-			}
-			// Live, not merged: wf saw it open and has not looked since.
-			// Refreshing that is later work, and asserting a state nobody
-			// checked would be the ledger lying.
-			bs = bs.Upsert(Binding{
-				Kind: KindPR, Ref: o.URL, Label: o.Title,
-				State: BindingLive, At: at, Via: runID,
-			})
-		case VerbIssue:
-			if o.URL == "" {
-				continue
-			}
-			bs = bs.Upsert(Binding{
-				Kind: KindIssue, Ref: o.URL, Label: o.Title,
-				State: BindingLive, At: at, Via: runID,
-			})
-		case VerbDoc:
-			// The final location, for the same reason closeResult uses
-			// it: a binding into a worktree that gets disposed on the
-			// next line is a link to nothing.
-			path := finalPath(o.Path, bound)
-			if path == "" {
-				continue
-			}
-			b := Binding{Kind: KindDoc, Ref: path, Label: o.Title, At: at, Via: runID}
-			// The store is a value on the binding, never half of a key
-			// name, and it is only claimed once the document has actually
-			// moved: an unbound DOC path is still wherever the agent
-			// wrote it.
-			if path != o.Path {
-				b.Meta = map[string]string{MetaStore: storeVault}
-			}
-			bs = bs.Upsert(b)
-		}
-	}
-
-	// A DONE's review path is deliberately not a doc binding. It is
-	// evidence that something was reviewed, which is what closeResult
-	// already makes of it; KindDoc means a document the run produced, and
-	// an agent that produced one says DOC.
-
-	return bs
-}
-
 // ApplyResult reports what a run's outcomes did to the task.
 type ApplyResult struct {
 	Closed    bool
@@ -240,13 +155,6 @@ type ApplyResult struct {
 	Created []string
 	// Bound holds artifacts that landed in the Obsidian vault.
 	Bound []BoundDoc
-	// Bindings are the typed records of what the run produced, tagged with
-	// the run in Via. They are returned rather than written because this
-	// package cannot import the ledger that stores them — see runBindings.
-	// They are filled in on every path, escalations included: an escalated
-	// run that still opened a PR left that trace, and losing it here would
-	// lose exactly the runs worth going back to.
-	Bindings Bindings
 	// Reason explains an escalation.
 	Reason string
 }
@@ -259,15 +167,6 @@ type ApplyOptions struct {
 	IdempotencyKey string
 	// Bind configures artifact binding; a zero value disables it.
 	Bind BindOptions
-	// Run is the id of the run these outcomes came from. Every binding the
-	// run produced carries it, which is the whole of what makes "which run
-	// opened this PR" answerable. Empty means no run — the bindings then
-	// read as the task's own, which is the honest record for work bound by
-	// hand rather than a missing one.
-	Run string
-	// Now pins the timestamp every produced binding carries. Zero means the
-	// wall clock.
-	Now time.Time
 }
 
 // SetState records wf's work state, mirroring needs-human into the
@@ -291,13 +190,6 @@ func SetState(ctx context.Context, q Queue, ref string, state WorkState) error {
 // transcript excerpt is included because an escalation a human cannot
 // diagnose from the tracker is an escalation they have to go hunting for.
 func Escalate(ctx context.Context, q Queue, task Task, reason, transcript string) (ApplyResult, error) {
-	return escalate(ctx, q, task, reason, transcript, nil)
-}
-
-// escalate is Escalate carrying the bindings the run produced before it got
-// stuck. They ride on the result rather than being written here because
-// nothing in this package writes the ledger — see runBindings.
-func escalate(ctx context.Context, q Queue, task Task, reason, transcript string, produced Bindings) (ApplyResult, error) {
 	body := fmt.Sprintf("**Needs a human** — %s\n\n%s", reason, sessionHint(task))
 	if excerpt := tail(transcript, 1500); excerpt != "" {
 		body += fmt.Sprintf("\n\nLast output from the run:\n\n```\n%s\n```", excerpt)
@@ -309,7 +201,7 @@ func escalate(ctx context.Context, q Queue, task Task, reason, transcript string
 	if err := SetState(ctx, q, task.ID, StateNeedsHuman); err != nil {
 		return ApplyResult{}, err
 	}
-	return ApplyResult{Escalated: true, Reason: reason, Bindings: produced}, nil
+	return ApplyResult{Escalated: true, Reason: reason}, nil
 }
 
 // Apply turns a settled run into tracker state.
@@ -323,26 +215,19 @@ func Apply(
 	outcomes []Outcome,
 	opts ApplyOptions,
 ) (ApplyResult, error) {
-	at := opts.Now
-	if at.IsZero() {
-		at = time.Now().UTC()
-	}
-
-	// Both halves of the dual write happen before the completeness check,
-	// and for the same reason: a run that escalated without reporting DONE
-	// may still have opened a PR or named its checkout, and that trace
-	// belongs on the task either way. Whichever way this returns, the
-	// caller gets bindings for what the run actually produced.
+	// Publication happens before the completeness check, and for the same
+	// reason recordSession is written at spawn: a run that escalated
+	// without reporting DONE may still have opened a PR or named its
+	// checkout, and that trace belongs on the task either way.
 	if err := recordRunFacts(ctx, q, task, outcomes); err != nil {
 		return ApplyResult{}, err
 	}
-	produced := runBindings(outcomes, nil, opts.Run, at)
 
 	if len(outcomes) == 0 {
-		return escalate(ctx, q, task, "the run reported no outcomes", opts.Transcript, produced)
+		return Escalate(ctx, q, task, "the run reported no outcomes", opts.Transcript)
 	}
 	if !IsComplete(outcomes) {
-		return escalate(ctx, q, task, "the run ended without DONE", opts.Transcript, produced)
+		return Escalate(ctx, q, task, "the run ended without DONE", opts.Transcript)
 	}
 
 	result := ApplyResult{}
@@ -356,11 +241,6 @@ func Apply(
 		return result, err
 	}
 	result.Bound = bound
-	// Recomputed rather than patched: binding an artifact moves it, and a
-	// doc binding must name where the document ended up for the same reason
-	// closeResult's evidence does.
-	produced = runBindings(outcomes, bound, opts.Run, at)
-	result.Bindings = produced
 
 	// A completion with nothing to show for it is not a completion. Every
 	// legitimate outcome leaves a trace the protocol already carries — a PR,
@@ -374,9 +254,9 @@ func Apply(
 	// defeat the only thing making a closed task trustworthy.
 	closing := closeResult(task, outcomes, bound)
 	if !closing.HasEvidence() {
-		return escalate(ctx, q, task,
+		return Escalate(ctx, q, task,
 			"the run reported DONE but produced no evidence — no pull request, commit, document, or test",
-			opts.Transcript, produced)
+			opts.Transcript)
 	}
 
 	// Record what the run produced before closing, so the narrative is on
@@ -403,15 +283,6 @@ func Apply(
 			return result, fmt.Errorf("create follow-on task for %s: %w", task.ShortID, err)
 		}
 		result.Created = append(result.Created, created.ShortID)
-		// The parent/child edge is a binding on this end. The sibling's
-		// own end of it needs a record for the sibling, which is a task
-		// that does not exist in the ledger until something files it —
-		// so this is one direction today and honest about being one.
-		result.Bindings = result.Bindings.Upsert(Binding{
-			Kind: KindTask, Ref: created.ID, Label: o.Text,
-			State: BindingLive, At: at, Via: opts.Run,
-			Meta: map[string]string{MetaRelation: RelationNext},
-		})
 	}
 
 	// Filed issues are recorded, never gating: creating the issue was the
@@ -541,15 +412,17 @@ func followOnBody(task Task, outcomes []Outcome, bound []BoundDoc) string {
 	return body
 }
 
+// sessionHint points an escalated task's comment at `wf attach`. A session
+// is machine-local and lives only in the local ledger, which this package
+// never reads, so it cannot say whether one was actually bound — only the
+// ref, which is all `wf attach` needs to look. If no session was ever
+// recorded, `wf attach` says so.
 func sessionHint(task Task) string {
-	if _, ok := LoadBindings(task).Current(KindSession); ok {
-		ref := task.ShortID
-		if ref == "" {
-			ref = task.ID
-		}
-		return fmt.Sprintf("Session: `wf attach %s`", ref)
+	ref := task.ShortID
+	if ref == "" {
+		ref = task.ID
 	}
-	return "No session was bound to this run."
+	return fmt.Sprintf("Session: `wf attach %s`", ref)
 }
 
 func link(url, title string) string {

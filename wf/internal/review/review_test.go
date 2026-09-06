@@ -189,7 +189,7 @@ func TestBuildLadderPrefersTaskRepoOverConfig(t *testing.T) {
 	})
 	cfg := &config.Config{Repo: "/from/config"}
 
-	bs, _ := BuildLadder(context.Background(), task, cfg, nil)
+	bs, _ := BuildLadder(context.Background(), task, nil, cfg, nil)
 	got, err := Resolve(bs, Externals{Repo: "/from/config", Branch: "wf/x", BranchExists: true})
 	if err != nil {
 		t.Fatalf("Resolve() error = %v", err)
@@ -202,7 +202,7 @@ func TestBuildLadderPrefersTaskRepoOverConfig(t *testing.T) {
 func TestBuildLadderFallsBackToConfigRepo(t *testing.T) {
 	cfg := &config.Config{Repo: "/from/config"}
 
-	bs, ex := BuildLadder(context.Background(), taskWithMeta(nil), cfg, nil)
+	bs, ex := BuildLadder(context.Background(), taskWithMeta(nil), nil, cfg, nil)
 	if ex.Repo != "/from/config" {
 		t.Errorf("Externals.Repo = %q, want config.Repo as the fallback", ex.Repo)
 	}
@@ -226,7 +226,7 @@ func TestBuildLadderUsesBranchCheckerAgainstDerivedBranch(t *testing.T) {
 		return true
 	}
 
-	_, ex := BuildLadder(context.Background(), taskWithMeta(nil), cfg, checker)
+	_, ex := BuildLadder(context.Background(), taskWithMeta(nil), nil, cfg, checker)
 	if !ex.BranchExists {
 		t.Error("BranchExists = false, want the checker's true to carry through")
 	}
@@ -238,22 +238,33 @@ func TestBuildLadderUsesBranchCheckerAgainstDerivedBranch(t *testing.T) {
 	}
 }
 
-// The ladder reads the task's bindings, so the metadata a run wrote is
-// enough to resolve it end to end.
-func TestBuildLadderResolvesFromTaskMetadata(t *testing.T) {
+// A workspace is machine-local, so it comes off the ledger's own bindings
+// rather than the task's tracker metadata — the ladder still resolves it
+// end to end once the caller passes those in.
+func TestBuildLadderResolvesFromLedgerWorkspace(t *testing.T) {
 	dir := mustExistingDir(t)
-	task := taskWithMeta(map[string]any{
-		wf.SessionWorkspaceKey: dir,
-		wf.SessionPathKey:      "/s/1.jsonl",
-	})
+	task := taskWithMeta(nil)
+	local := wf.Bindings{{Kind: wf.KindWorkspace, Ref: dir, State: wf.BindingLive}}
 
-	bs, ex := BuildLadder(context.Background(), task, &config.Config{Repo: "/repo"}, nil)
+	bs, ex := BuildLadder(context.Background(), task, local, &config.Config{Repo: "/repo"}, nil)
 	got, err := Resolve(bs, ex)
 	if err != nil {
 		t.Fatalf("Resolve() error = %v", err)
 	}
 	if got.Kind != KindWorktree || got.Repo != dir {
 		t.Errorf("Resolve() = %+v, want the recorded workspace", got)
+	}
+}
+
+// A superseded workspace must not be pulled in — only the live one is.
+func TestBuildLadderIgnoresSupersededLedgerWorkspace(t *testing.T) {
+	dir := mustExistingDir(t)
+	task := taskWithMeta(nil)
+	local := wf.Bindings{{Kind: wf.KindWorkspace, Ref: dir, State: wf.BindingSuperseded}}
+
+	bs, ex := BuildLadder(context.Background(), task, local, &config.Config{Repo: "/repo", Base: "main"}, nil)
+	if _, err := Resolve(bs, ex); err == nil {
+		t.Error("Resolve() succeeded, want ErrNoTarget — a superseded workspace must not be current")
 	}
 }
 

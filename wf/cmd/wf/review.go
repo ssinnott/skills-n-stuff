@@ -107,7 +107,7 @@ func (a *app) cmdReview(ctx context.Context, args []string) (int, error) {
 	if err != nil {
 		return 1, err
 	}
-	result, err := sess.Open(ctx, found.Task, a.cfg)
+	result, err := sess.Open(ctx, found.Task, found.Record.Bindings, a.cfg)
 	if err != nil {
 		return 1, err
 	}

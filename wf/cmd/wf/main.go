@@ -320,20 +320,15 @@ func (a *app) cmdAttach(ctx context.Context, args []string) (int, error) {
 		return 1, errors.New("wf attach <ref>")
 	}
 
-	// The ledger answers first, and for a session it is the better answer:
-	// its bindings carry the run that spawned each one and the host that
-	// owns it, where flat metadata has nowhere to put either. A task the
-	// ledger never saw still resolves through the tracker, whose metadata
-	// LoadBindings reads inside a.resolve.
+	// A session is machine-local and lives only in the ledger — never on
+	// the tracker — so the ledger record is the only place to look.
 	found, err := a.resolve(ctx, ref)
 	if err != nil {
 		return 1, err
 	}
 	session, ok := found.Record.Bindings.Current(wf.KindSession)
 	if !ok {
-		if session, ok = a.sessionFromMeta(ctx, found); !ok {
-			return 1, fmt.Errorf("%s has no bound session yet", ref)
-		}
+		return 1, fmt.Errorf("%s: no session recorded on this host", ref)
 	}
 	if session.Host != "" && session.Host != a.cfg.Actor {
 		// A session file is a fact about one machine. Handing over a path

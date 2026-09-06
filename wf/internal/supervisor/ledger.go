@@ -2,15 +2,14 @@ package supervisor
 
 // Recording a run in wf's own ledger.
 //
-// The dispatch loop publishes to the tracker exactly as it always has, and
-// additionally writes what a run produced here as typed bindings. That dual
-// write is the design's posture rather than a transitional state: the
-// tracker is authoritative for *work state* — title, priority, open or
-// closed, queue order — and every one of those stays a read against it. The
-// ledger is authoritative for *bindings*, because a binding points at
-// something that lives on one machine and is exactly as durable as the thing
-// it points at. The two are disjoint by construction, so neither overwrites
-// the other and publication never syncs back.
+// A fact lives in exactly one place. The tracker is authoritative for work
+// state — title, priority, open or closed, queue order — and for every
+// shareable fact a run makes: repo, PRs, filed issues, produced documents.
+// Apply publishes those, and LoadBindings reads them back from the same
+// place. The ledger holds what the tracker cannot: the run itself, and the
+// bindings that only resolve on this machine — a workspace checkout, an
+// agent session. Nothing here is also written to the tracker, and nothing
+// the tracker holds is copied back into here.
 //
 // Nothing in here may fail a run. Every binding is a reference to something
 // independently verifiable, so a lost or unwritable ledger costs history and
@@ -163,11 +162,12 @@ func (s *Supervisor) recordSession(task wf.Task, runID string, session wf.Sessio
 	})
 }
 
-// endRun settles the run and files everything it produced. The bindings come
-// from Apply, which is what decides what a run made; they arrive already
-// tagged with the run in Via, because provenance is the edge the flat
-// metadata could not express.
-func (s *Supervisor) endRun(task wf.Task, runID string, outcome wf.SessionOutcome, produced wf.Bindings, at time.Time) {
+// endRun settles the run: it stamps when it ended and how. What the run
+// produced is published to the tracker by Apply and read back from there —
+// PRs, issues, documents and repos are shareable facts and have no ledger
+// binding to settle here. recordWorkspace and recordSession already wrote
+// this run's machine-local bindings at the point each was created.
+func (s *Supervisor) endRun(task wf.Task, runID string, outcome wf.SessionOutcome, at time.Time) {
 	s.record(task, "settle run", func(rec *wf.Record) {
 		for i := range rec.Runs {
 			if rec.Runs[i].ID != runID {
@@ -176,18 +176,6 @@ func (s *Supervisor) endRun(task wf.Task, runID string, outcome wf.SessionOutcom
 			ended := at
 			rec.Runs[i].Ended = &ended
 			rec.Runs[i].Outcome = outcome
-		}
-		for _, b := range produced {
-			// Apply builds these without knowing which machine it is on,
-			// so the host is stamped here rather than there. It matters
-			// for a DOC: path no workflow bound into the vault: that file
-			// is still sitting in a worktree about to be disposed, and
-			// without a host it reads on another device as a path that
-			// should be there.
-			if b.Host == "" && b.MachineLocal() {
-				b.Host = s.actor()
-			}
-			rec.Bindings = rec.Bindings.Upsert(b)
 		}
 	})
 }

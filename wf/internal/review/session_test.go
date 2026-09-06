@@ -10,21 +10,22 @@ import (
 	"github.com/ssinnott/skills-n-stuff/wf/internal/wf"
 )
 
+// liveWorkspaceBindings is a ledger's live-workspace binding for dir — the
+// shape Session.Open expects as its local argument, since a workspace is
+// machine-local and never on the task's own tracker metadata.
+func liveWorkspaceBindings(dir string) wf.Bindings {
+	return wf.Bindings{{Kind: wf.KindWorkspace, Ref: dir, State: wf.BindingLive}}
+}
+
 func TestSessionOpenSpawnsAndRecordsState(t *testing.T) {
 	dir := t.TempDir() // stands in for a live worktree
 	statePath := filepath.Join(t.TempDir(), "review.json")
 	spawner := &fakeSpawner{stdout: `{"port":4966,"url":"http://localhost:4966","pid":3983}`}
 
-	task := wf.Task{
-		ID: "01HZ", ShortID: "neck", Title: "Add the parser",
-		Meta: map[string]any{
-			wf.SessionWorkspaceKey: dir,
-			wf.SessionPathKey:      "/s/1.jsonl",
-		},
-	}
+	task := wf.Task{ID: "01HZ", ShortID: "neck", Title: "Add the parser"}
 
 	s := &Session{Spawner: spawner, StatePath: statePath}
-	result, err := s.Open(context.Background(), task, &config.Config{})
+	result, err := s.Open(context.Background(), task, liveWorkspaceBindings(dir), &config.Config{})
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
@@ -55,13 +56,10 @@ func TestSessionOpenReplacesThePreviousViewer(t *testing.T) {
 	}
 
 	spawner := &fakeSpawner{stdout: `{"port":5000,"url":"http://localhost:5000","pid":42}`}
-	task := wf.Task{
-		ID: "01HZ", ShortID: "neck", Title: "Add the parser",
-		Meta: map[string]any{wf.SessionWorkspaceKey: dir, wf.SessionPathKey: "/s/1.jsonl"},
-	}
+	task := wf.Task{ID: "01HZ", ShortID: "neck", Title: "Add the parser"}
 
 	s := &Session{Spawner: spawner, StatePath: statePath}
-	result, err := s.Open(context.Background(), task, &config.Config{})
+	result, err := s.Open(context.Background(), task, liveWorkspaceBindings(dir), &config.Config{})
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
@@ -81,11 +79,11 @@ func TestSessionOpenDocTargetSpawnsNothing(t *testing.T) {
 
 	task := wf.Task{
 		ID: "01HZ", ShortID: "neck", Title: "Research the thing",
-		Meta: map[string]any{wf.ObsidianNoteKey: "Research/plan.md"},
+		Meta: map[string]any{wf.DocKey: "Research/plan.md"},
 	}
 
 	s := &Session{Spawner: spawner, StatePath: statePath}
-	result, err := s.Open(context.Background(), task, &config.Config{})
+	result, err := s.Open(context.Background(), task, nil, &config.Config{})
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
@@ -113,15 +111,13 @@ func TestSessionOpenSeedsFindingsAndReportsCount(t *testing.T) {
 	task := wf.Task{
 		ID: "01HZ", ShortID: "neck", Title: "Add the parser",
 		Meta: map[string]any{
-			wf.SessionWorkspaceKey: dir,
-			wf.SessionPathKey:      "/s/1.jsonl",
 			wf.IssuesKey: `[{"url":"https://a/i1","title":"internal/foo.go:42 nil check"},` +
 				`{"url":"https://a/i2","title":"no anchor here"}]`,
 		},
 	}
 
 	s := &Session{Spawner: spawner, StatePath: statePath}
-	result, err := s.Open(context.Background(), task, &config.Config{})
+	result, err := s.Open(context.Background(), task, liveWorkspaceBindings(dir), &config.Config{})
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
@@ -144,7 +140,7 @@ func TestSessionOpenNoTargetReturnsError(t *testing.T) {
 	task := wf.Task{ID: "01HZ", ShortID: "neck", Title: "Nothing to show"}
 
 	s := &Session{Spawner: &fakeSpawner{}, StatePath: statePath}
-	if _, err := s.Open(context.Background(), task, &config.Config{}); err == nil {
+	if _, err := s.Open(context.Background(), task, nil, &config.Config{}); err == nil {
 		t.Error("Open() = nil error, want ErrNoTarget for a task with nothing recorded")
 	}
 }
@@ -250,13 +246,10 @@ func TestSessionOpenRequestsRefsRememberedPort(t *testing.T) {
 	}
 
 	spawner := &fakeSpawner{stdout: `{"port":4981,"url":"http://localhost:4981","pid":1}`}
-	task := wf.Task{
-		ID: "01HZ", ShortID: "neck", Title: "Add the parser",
-		Meta: map[string]any{wf.SessionWorkspaceKey: dir, wf.SessionPathKey: "/s/1.jsonl"},
-	}
+	task := wf.Task{ID: "01HZ", ShortID: "neck", Title: "Add the parser"}
 
 	s := &Session{Spawner: spawner, StatePath: statePath}
-	if _, err := s.Open(context.Background(), task, &config.Config{}); err != nil {
+	if _, err := s.Open(context.Background(), task, liveWorkspaceBindings(dir), &config.Config{}); err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
 
@@ -277,13 +270,10 @@ func TestSessionOpenWithNoRememberedPortAsksForNone(t *testing.T) {
 	dir := t.TempDir()
 	statePath := filepath.Join(t.TempDir(), "review.json")
 	spawner := &fakeSpawner{stdout: `{"port":4966,"url":"http://localhost:4966","pid":1}`}
-	task := wf.Task{
-		ID: "01HZ", ShortID: "neck", Title: "Add the parser",
-		Meta: map[string]any{wf.SessionWorkspaceKey: dir, wf.SessionPathKey: "/s/1.jsonl"},
-	}
+	task := wf.Task{ID: "01HZ", ShortID: "neck", Title: "Add the parser"}
 
 	s := &Session{Spawner: spawner, StatePath: statePath}
-	if _, err := s.Open(context.Background(), task, &config.Config{}); err != nil {
+	if _, err := s.Open(context.Background(), task, liveWorkspaceBindings(dir), &config.Config{}); err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
 	for _, a := range spawner.gotArgs {
@@ -304,13 +294,10 @@ func TestSessionOpenRecordsTheBoundPortNotTheRequestedOne(t *testing.T) {
 	}
 
 	spawner := &fakeSpawner{stdout: `{"port":4981,"url":"http://localhost:4981","pid":1}`}
-	task := wf.Task{
-		ID: "01HZ", ShortID: "neck", Title: "Add the parser",
-		Meta: map[string]any{wf.SessionWorkspaceKey: dir, wf.SessionPathKey: "/s/1.jsonl"},
-	}
+	task := wf.Task{ID: "01HZ", ShortID: "neck", Title: "Add the parser"}
 
 	s := &Session{Spawner: spawner, StatePath: statePath}
-	if _, err := s.Open(context.Background(), task, &config.Config{}); err != nil {
+	if _, err := s.Open(context.Background(), task, liveWorkspaceBindings(dir), &config.Config{}); err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
 

@@ -148,13 +148,19 @@ func GitBranchChecker(ctx context.Context, repo, branch string) bool {
 // BuildLadder assembles both halves of a resolution: the task's bindings,
 // and the few facts about the world that no binding holds. It invents
 // nothing that is not already recorded somewhere.
+//
+// local is the task's ledger bindings: a workspace is machine-local and was
+// never on the tracker to begin with, so LoadBindings(task) alone has no
+// rung 2 to offer. Only the live workspace bindings are pulled in — the PR
+// and doc rungs come from kata, which is their only home.
 func BuildLadder(
 	ctx context.Context,
 	task wf.Task,
+	local wf.Bindings,
 	cfg *config.Config,
 	branchExists BranchChecker,
 ) (wf.Bindings, Externals) {
-	bs := wf.LoadBindings(task)
+	bs := append(wf.LoadBindings(task), local.Live(wf.KindWorkspace)...)
 
 	ex := Externals{Branch: "wf/" + workspace.WorktreeName(task)}
 	if cfg != nil {

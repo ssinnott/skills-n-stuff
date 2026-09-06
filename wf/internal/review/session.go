@@ -45,14 +45,16 @@ func (s *Session) now() time.Time {
 
 // Open resolves ref's target and, unless it is a bare document, replaces
 // the live viewer with one seeded from the task's own findings. It reads
-// the task once, through LoadBindings: the target and the findings are two
-// questions about the same set of bindings.
-func (s *Session) Open(ctx context.Context, task wf.Task, cfg *config.Config) (Result, error) {
+// the task's shareable bindings through LoadBindings and takes the task's
+// machine-local bindings — its workspace — from the ledger record the
+// caller holds: the target and the findings are two questions about the
+// union of those two sets.
+func (s *Session) Open(ctx context.Context, task wf.Task, local wf.Bindings, cfg *config.Config) (Result, error) {
 	ref := task.ShortID
 	if ref == "" {
 		ref = task.ID
 	}
-	bs, ex := BuildLadder(ctx, task, cfg, s.BranchExists)
+	bs, ex := BuildLadder(ctx, task, local, cfg, s.BranchExists)
 	return s.OpenBindings(ctx, ref, bs, ex)
 }
 

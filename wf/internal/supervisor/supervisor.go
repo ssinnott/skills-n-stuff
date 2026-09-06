@@ -2,10 +2,11 @@
 // outcomes, release.
 //
 // The loop holds no durable state of its own. Everything it needs to resume
-// after a crash is in the tracker — the lease, the state, the session
-// binding — which is why killing the supervisor mid-flight costs nothing but
-// the in-flight run, and why a second supervisor on another machine can pick
-// up work this one abandoned.
+// after a crash is either on the tracker — the lease, the state — or in the
+// local ledger — the workspace and session bindings — which is why killing
+// the supervisor mid-flight costs nothing but the in-flight run, and why a
+// second supervisor on another machine can pick up work this one abandoned
+// (on that machine's own workspace and session, never the first one's).
 package supervisor
 
 import (
@@ -32,11 +33,12 @@ type Supervisor struct {
 	Runner    wf.Runner
 	Workflows *workflow.Set
 	Config    *config.Config
-	// Store is wf's own task ledger: runs, and the typed bindings each run
-	// produced. Nil disables it, and the loop runs unchanged — nothing here
-	// takes a lifecycle decision from the ledger, so a missing one costs
-	// history and never work. See ledger.go for what is written and why the
-	// tracker keeps being written alongside it.
+	// Store is wf's own task ledger: runs, and the machine-local bindings
+	// each run produced — a workspace checkout, an agent session. Nil
+	// disables it, and the loop runs unchanged — nothing here takes a
+	// lifecycle decision from the ledger, so a missing one costs history
+	// and never work. See ledger.go for what is written and why shareable
+	// facts are not written here at all.
 	Store store.Store
 	// Workspaces builds a provider for a workflow. Injected so the loop can
 	// be tested without git.
@@ -285,7 +287,7 @@ func (s *Supervisor) dispatch(ctx context.Context, task wf.Task, opts Dispatch) 
 	settled := false
 	defer func() {
 		if !settled {
-			s.endRun(task, runID, wf.SessionFailed, nil, time.Now().UTC())
+			s.endRun(task, runID, wf.SessionFailed, time.Now().UTC())
 		}
 	}()
 
@@ -329,9 +331,6 @@ func (s *Supervisor) dispatch(ctx context.Context, task wf.Task, opts Dispatch) 
 		Cwd:     handle.Cwd(),
 		Started: time.Now().UTC(),
 	}
-	if err := wf.BindSession(ctx, s.Queue, task.ID, binding); err != nil {
-		return Result{}, err
-	}
 	s.recordSession(task, runID, binding)
 
 	stopRenewal := s.renewLease(ctx, task)
@@ -339,7 +338,6 @@ func (s *Supervisor) dispatch(ctx context.Context, task wf.Task, opts Dispatch) 
 	stopRenewal()
 
 	if runErr != nil {
-		_ = wf.FinishSession(ctx, s.Queue, task.ID, wf.SessionFailed, time.Now())
 		applied, escErr := wf.Escalate(ctx, s.Queue, task, "the agent process failed: "+runErr.Error(), runResult.TranscriptTail)
 		if escErr != nil {
 			return Result{}, escErr
@@ -347,7 +345,7 @@ func (s *Supervisor) dispatch(ctx context.Context, task wf.Task, opts Dispatch) 
 		s.keepWorkspace(space)
 		// The checkout stays live and stays bound: a crashed agent is the
 		// case the whole record exists to make inspectable.
-		s.endRun(task, runID, wf.SessionFailed, applied.Bindings, time.Now().UTC())
+		s.endRun(task, runID, wf.SessionFailed, time.Now().UTC())
 		settled = true
 		return Result{Task: task, TaskID: task.ID, Applied: applied, Session: binding.Path, Run: runID}, nil
 	}
@@ -358,9 +356,6 @@ func (s *Supervisor) dispatch(ctx context.Context, task wf.Task, opts Dispatch) 
 		// Keyed on the session so a retried run closes once, not twice.
 		IdempotencyKey: "wf-close-" + binding.ID,
 		Bind:           s.bindOptions(flow, workspaceDir),
-		// Everything this run produced comes back tagged with the run,
-		// which is what turns a flat pile of artifacts into a history.
-		Run: runID,
 	})
 	if err != nil {
 		return Result{}, err
@@ -369,9 +364,6 @@ func (s *Supervisor) dispatch(ctx context.Context, task wf.Task, opts Dispatch) 
 	outcome := wf.SessionDone
 	if applied.Escalated {
 		outcome = wf.SessionEscalated
-	}
-	if err := wf.FinishSession(ctx, s.Queue, task.ID, outcome, time.Now()); err != nil {
-		s.logf("%s: record session outcome: %v", task.ShortID, err)
 	}
 
 	// A worktree is disposed only when the run closed cleanly. An escalated
@@ -386,7 +378,7 @@ func (s *Supervisor) dispatch(ctx context.Context, task wf.Task, opts Dispatch) 
 		}
 	}
 
-	s.endRun(task, runID, outcome, applied.Bindings, time.Now().UTC())
+	s.endRun(task, runID, outcome, time.Now().UTC())
 	settled = true
 
 	return Result{Task: task, TaskID: task.ID, Applied: applied, Session: binding.Path, Run: runID}, nil

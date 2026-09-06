@@ -60,13 +60,16 @@ directly, so the queue backend can change without touching either.
 title, priority, labels, state, lease, and so on — sit at the top level, the
 same shape `ready` and `run --json` emit. Alongside them, `bindings` is the
 task's own — everything no run produced — and `runs` is the ledger's history
-for the task, each entry carrying what that run produced.
+for the task, each entry carrying what that run produced. `session` and
+`cwd` are the one field pair that only `show` fills in: a session is
+machine-local and lives in the local ledger, never on the tracker, so
+`ready`, `escalations` and `run --json` — which never load the ledger —
+leave both empty.
 
 ```json
 { "tasks": [ { "id": "01M1S…", "shortId": "neck", "title": "Add the parser",
               "priority": 1, "workflow": "plan-to-pr",
               "lease": { "actor": "wf-laptop", "stale": false },
-              "session": "/home/me/.wf/sessions/neck-….jsonl",
               "note": "Research/plan.md", "needsHuman": false } ] }
 ```
 
@@ -151,24 +154,24 @@ default.
 
 ## How the pieces bind
 
-**Task ↔ session.** Every run records `wf.session` (the session file path),
-`wf.session_id`, `wf.workspace`, and appends to a `wf.session_history` array.
-These are written *at spawn*, before the agent produces anything, so a crashed
-or hung run is still attachable — those are the runs you most need to read.
-`wf attach` resolves them and execs `pi --session <path>`.
+**Task ↔ session.** A session and the workspace it ran in are recorded in
+the local ledger (`~/.wf/tasks/<id>.json`) at spawn — before the agent
+produces anything, so a crashed or hung run is still attachable — and never
+on the tracker. `wf attach` reads the binding from the ledger and execs `pi
+--session <path>`. A session is a fact about one machine: it is meaningless
+on another, so it is never published anywhere a second host would read it
+back from.
 
-The keys name roles, not products: *which* runner produced a session is a
-value on the binding, not half of a key name, so a second runner is a new
-value rather than a parallel set of keys. The `pi.*` names these replaced are
-still read for one release, and never written.
+The runner is a value on the binding, not half of a key name: *which*
+runner produced a session is carried as data, so a second runner is a new
+value rather than a parallel set of keys.
 
 **Task ↔ note.** The note's frontmatter carries `wf-task: <id>` — the durable
 half, since it survives a rename in Obsidian — alongside `kata-issue: <ULID>`
-naming the tracker row. The task carries the note as a `doc` binding with
-`store: vault` (and `wf.doc: <path>` on the tracker, formerly `obsidian.note`,
-still read). Workflows with `bind-docs` do this automatically for every
-document produced. Nothing is mirrored: titles and status live in the tracker,
-prose lives in the note, and the only shared state is the id pair.
+naming the tracker row. `wf.doc: <path>` on the tracker is the other half of
+the binding, published once by `wf bind` or by a workflow with `bind-docs`.
+Nothing is mirrored: titles and status live in the tracker, prose lives in
+the note, and the only shared state is the id pair.
 
 The Obsidian plugin renders the task's managed block — its runs and what each
 produced — from `wf show --json`, delimited by `%% wf:begin %%` and
@@ -214,11 +217,12 @@ tries, in order, the first rung that matches:
 1. **A PR.** If the task recorded one (`wf.pr` metadata, written when a run
    reports `PR:`), difit opens `--pr <url>` — the shipped truth once one
    exists.
-2. **A live worktree.** If the run's checkout (`wf.workspace`) is still on
-   disk, difit opens it directly with `--include-untracked` — this is the
-   rung that matters most, because an escalated run that produced no PR is
-   exactly what a human needs to look at, and its checkout is the only place
-   the agent's untracked and uncommitted state still lives.
+2. **A live worktree.** If the run's checkout (its workspace binding in the
+   local ledger) is still on disk, difit opens it directly with
+   `--include-untracked` — this is the rung that matters most, because an
+   escalated run that produced no PR is exactly what a human needs to look
+   at, and its checkout is the only place the agent's untracked and
+   uncommitted state still lives.
 3. **A surviving branch.** If the worktree was disposed but its branch is
    still around, difit diffs it against the repo's base branch with
    `--merge-base`.

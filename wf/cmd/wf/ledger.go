@@ -46,25 +46,3 @@ func (a *app) resolve(ctx context.Context, ref string) (resolved, error) {
 	}
 	return resolved{Task: task, Record: rec}, nil
 }
-
-// sessionFromMeta is the last place to look for a session: the tracker's own
-// metadata, read directly.
-//
-// It is not redundant with what a.resolve already did. That path reads
-// bindings off the task `kata show` returns, and this one asks `kata meta
-// get` — two different responses from a backend whose wire format is
-// undocumented, which is exactly the class of surprise DESIGN.md names as
-// its standing risk. `wf attach` is the command where being wrong costs a
-// human the session of a run that died, so it asks twice.
-func (a *app) sessionFromMeta(ctx context.Context, found resolved) (wf.Binding, bool) {
-	if found.Task.ID == "" {
-		return wf.Binding{}, false
-	}
-	meta, err := a.queue.GetMeta(ctx, found.Task.ID)
-	if err != nil {
-		return wf.Binding{}, false
-	}
-	// Only the metadata is in hand here, so the task is assembled around
-	// it — LoadBindings reads nothing else.
-	return wf.LoadBindings(wf.Task{ID: found.Task.ID, Meta: meta}).Current(wf.KindSession)
-}

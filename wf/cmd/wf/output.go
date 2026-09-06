@@ -28,6 +28,12 @@ import (
 // task rather than two. `ready`, `escalations` and `run --json` keep
 // emitting bare jsonTask; a client that wants the run count reads
 // len(runs) from `show`.
+//
+// jsonTask.Session and .Cwd are the one exception to "bare jsonTask": a
+// session is machine-local and lives only in the ledger, so only `show` —
+// which has a ledger record in hand — can fill them in. `ready`,
+// `escalations` and `run --json` build jsonTask from the tracker row alone
+// and leave both fields empty.
 
 type jsonLease struct {
 	Actor   string `json:"actor"`
@@ -169,11 +175,6 @@ func (a *app) toJSON(t wf.Task) jsonTask {
 			Stale:   lease.IsStale(now()),
 		}
 	}
-	bindings := wf.LoadBindings(t)
-	if session, ok := bindings.Current(wf.KindSession); ok {
-		out.Session = session.Ref
-		out.Cwd = session.Get(wf.MetaCwd)
-	}
 	// The bound note is the tracker's own fact, read straight off its
 	// metadata rather than through a binding: wf.doc is written once, by
 	// `wf bind`, and is never a run's output.
@@ -310,6 +311,13 @@ func (a *app) showToJSON(found resolved) jsonShow {
 	out := jsonShow{
 		jsonTask: a.toJSON(found.Task),
 		Bindings: bindingsToJSON(sortBindings(taskOwnBindings(rec))),
+	}
+	// session and cwd are machine-local facts, so only `show` — which has
+	// loaded the ledger record — can answer them; ready, escalations and
+	// run --json carry none.
+	if session, ok := rec.Bindings.Current(wf.KindSession); ok {
+		out.Session = session.Ref
+		out.Cwd = session.Get(wf.MetaCwd)
 	}
 	if !rec.Updated.IsZero() {
 		out.Updated = stamp(rec.Updated)
