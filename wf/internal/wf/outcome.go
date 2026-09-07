@@ -120,7 +120,7 @@ func ParseOutcomes(text string) []Outcome {
 }
 
 // IsComplete reports whether the run declared a terminal DONE. A run
-// without one escalates rather than closing — silence is not success.
+// without one escalates rather than completing — silence is not success.
 func IsComplete(outcomes []Outcome) bool {
 	for _, o := range outcomes {
 		if o.Verb == VerbDone {
@@ -130,28 +130,40 @@ func IsComplete(outcomes []Outcome) bool {
 	return false
 }
 
-// ToCloseResult folds outcomes into the evidence a close needs. PRs are
-// recorded as evidence, not treated as gates.
-func ToCloseResult(outcomes []Outcome) CloseResult {
-	result := CloseResult{Message: "Completed by agent"}
-
+// HasOutput reports whether the run has anything to show: a pull request, a
+// document, an issue it filed, or a DONE naming a review artifact. This is
+// a run's bar, not the task's — an ISSUE is a run's whole output when the
+// workflow was "file the issue", but never evidence that the task's work
+// exists (see CloseResult).
+func HasOutput(outcomes []Outcome) bool {
 	for _, o := range outcomes {
 		switch o.Verb {
+		case VerbPR, VerbDoc, VerbIssue:
+			return true
 		case VerbDone:
-			if o.Message != "" {
-				result.Message = o.Message
-			}
 			if o.Path != "" {
-				result.Docs = appendUnique(result.Docs, o.Path)
+				return true
 			}
-		case VerbPR:
-			result.PRs = appendUnique(result.PRs, o.URL)
-		case VerbDoc:
-			result.Docs = appendUnique(result.Docs, o.Path)
 		}
 	}
+	return false
+}
 
-	return result
+// DocPaths returns the documents a run reported, in report order: DOC
+// lines plus a DONE that names a review artifact.
+func DocPaths(outcomes []Outcome) []string {
+	var paths []string
+	for _, o := range outcomes {
+		switch o.Verb {
+		case VerbDoc:
+			paths = appendUnique(paths, o.Path)
+		case VerbDone:
+			if o.Path != "" {
+				paths = appendUnique(paths, o.Path)
+			}
+		}
+	}
+	return paths
 }
 
 // Spawned splits out the outcomes that create sibling work.

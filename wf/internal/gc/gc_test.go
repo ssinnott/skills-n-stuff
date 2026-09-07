@@ -19,15 +19,18 @@ func sweeper(t *testing.T, present map[string]bool) (*GC, store.Store) {
 	st := store.New(t.TempDir())
 	return &GC{
 		Store:  st,
-		Actor:  actor,
 		Exists: func(path string) bool { return present[path] },
 	}, st
 }
 
 func save(t *testing.T, st store.Store, rec wf.Record) {
 	t.Helper()
-	if err := st.Save(rec); err != nil {
-		t.Fatalf("Save() error = %v", err)
+	err := st.Update(rec.ID, func(r *wf.Record) error {
+		*r = rec
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Update() error = %v", err)
 	}
 }
 
@@ -42,9 +45,9 @@ func find(report Report, k Kind) (Finding, bool) {
 
 func TestALiveWorkspaceIsNotReported(t *testing.T) {
 	g, st := sweeper(t, map[string]bool{"/wt/live": true})
-	save(t, st, wf.Record{ID: "t1", Created: time.Now(),
+	save(t, st, wf.Record{ID: "t1",
 		Bindings: wf.Bindings{
-			{Kind: wf.KindWorkspace, Ref: "/wt/live", State: wf.BindingLive, Host: actor, At: time.Now()},
+			{Kind: wf.KindWorkspace, Ref: "/wt/live", State: wf.BindingLive, At: time.Now()},
 		}})
 
 	report, err := g.Sweep(context.Background(), Options{})
@@ -58,9 +61,9 @@ func TestALiveWorkspaceIsNotReported(t *testing.T) {
 
 func TestAMissingWorkspaceIsReportedNotWritten(t *testing.T) {
 	g, st := sweeper(t, nil)
-	save(t, st, wf.Record{ID: "t1", Created: time.Now(),
+	save(t, st, wf.Record{ID: "t1",
 		Bindings: wf.Bindings{
-			{Kind: wf.KindWorkspace, Ref: "/wt/gone", State: wf.BindingLive, Host: actor, At: time.Now()},
+			{Kind: wf.KindWorkspace, Ref: "/wt/gone", State: wf.BindingLive, At: time.Now()},
 		}})
 	before, err := st.Load("t1")
 	if err != nil {
@@ -93,9 +96,9 @@ func TestAMissingWorkspaceIsReportedNotWritten(t *testing.T) {
 
 func TestAMissingSessionIsReported(t *testing.T) {
 	g, st := sweeper(t, nil)
-	save(t, st, wf.Record{ID: "t1", Created: time.Now(),
+	save(t, st, wf.Record{ID: "t1",
 		Bindings: wf.Bindings{
-			{Kind: wf.KindSession, Ref: "/sessions/gone.jsonl", State: wf.BindingLive, Host: actor, At: time.Now()},
+			{Kind: wf.KindSession, Ref: "/sessions/gone.jsonl", State: wf.BindingLive, At: time.Now()},
 		}})
 
 	report, err := g.Sweep(context.Background(), Options{})
@@ -109,12 +112,12 @@ func TestAMissingSessionIsReported(t *testing.T) {
 
 func TestDeleteMarksAMissingWorkspaceWithoutDroppingTheRecord(t *testing.T) {
 	g, st := sweeper(t, map[string]bool{"/wt/still-here": true})
-	save(t, st, wf.Record{ID: "t1", Created: time.Now(),
+	save(t, st, wf.Record{ID: "t1",
 		Bindings: wf.Bindings{
 			// A second, still-live workspace keeps the record itself from
 			// being droppable, so this isolates marking from pruning.
-			{Kind: wf.KindWorkspace, Ref: "/wt/gone", State: wf.BindingLive, Host: actor, At: time.Now()},
-			{Kind: wf.KindWorkspace, Ref: "/wt/still-here", State: wf.BindingLive, Host: actor, At: time.Now()},
+			{Kind: wf.KindWorkspace, Ref: "/wt/gone", State: wf.BindingLive, At: time.Now()},
+			{Kind: wf.KindWorkspace, Ref: "/wt/still-here", State: wf.BindingLive, At: time.Now()},
 		}})
 
 	report, err := g.Sweep(context.Background(), Options{Delete: true})
@@ -144,36 +147,13 @@ func TestDeleteMarksAMissingWorkspaceWithoutDroppingTheRecord(t *testing.T) {
 	}
 }
 
-func TestForeignHostBindingIsNeverMarkedAndBlocksDeletion(t *testing.T) {
-	// os.Stat here proves nothing about a checkout on another machine, and
-	// marking it missing would be the multi-host clobber the binding design
-	// exists to stop.
-	g, st := sweeper(t, nil)
-	save(t, st, wf.Record{ID: "t1", Created: time.Now(),
-		Bindings: wf.Bindings{
-			{Kind: wf.KindWorkspace, Ref: "/wt/desktop", State: wf.BindingLive,
-				Host: "wf@desktop", At: time.Now()},
-		}})
-
-	report, err := g.Sweep(context.Background(), Options{Delete: true})
-	if err != nil {
-		t.Fatalf("Sweep() error = %v", err)
-	}
-	if len(report.Findings) != 0 {
-		t.Errorf("findings = %+v, want none for another host's binding", report.Findings)
-	}
-	if _, err := st.Load("t1"); err != nil {
-		t.Errorf("Load() error = %v; a record another host still owns must survive --delete", err)
-	}
-}
-
 func TestDeleteDropsARecordWithNothingLocalLeft(t *testing.T) {
 	g, st := sweeper(t, nil)
-	save(t, st, wf.Record{ID: "t1", Created: time.Now(),
+	save(t, st, wf.Record{ID: "t1",
 		Bindings: wf.Bindings{
-			{Kind: wf.KindWorkspace, Ref: "/wt/neck", State: wf.BindingDisposed, Host: actor, At: time.Now()},
-			{Kind: wf.KindSession, Ref: "/sessions/neck.jsonl", State: wf.BindingDisposed, Host: actor, At: time.Now()},
-			{Kind: wf.KindPR, Ref: "https://github.com/acme/w/pull/1", State: wf.BindingMerged, At: time.Now()},
+			{Kind: wf.KindWorkspace, Ref: "/wt/neck", State: wf.BindingDisposed, At: time.Now()},
+			{Kind: wf.KindSession, Ref: "/sessions/neck.jsonl", State: wf.BindingDisposed, At: time.Now()},
+			{Kind: wf.KindSession, Ref: "/sessions/neck-2.jsonl", State: wf.BindingMissing, At: time.Now()},
 		}})
 
 	report, err := g.Sweep(context.Background(), Options{Delete: true})
@@ -191,9 +171,9 @@ func TestDeleteDropsARecordWithNothingLocalLeft(t *testing.T) {
 
 func TestBareRunNeverDeletes(t *testing.T) {
 	g, st := sweeper(t, nil)
-	save(t, st, wf.Record{ID: "t1", Created: time.Now(),
+	save(t, st, wf.Record{ID: "t1",
 		Bindings: wf.Bindings{
-			{Kind: wf.KindWorkspace, Ref: "/wt/gone", State: wf.BindingDisposed, Host: actor, At: time.Now()},
+			{Kind: wf.KindWorkspace, Ref: "/wt/gone", State: wf.BindingDisposed, At: time.Now()},
 		}})
 
 	report, err := g.Sweep(context.Background(), Options{})
@@ -220,11 +200,11 @@ func TestSweepNeverRemovesAnArtifact(t *testing.T) {
 	}
 
 	g, st := sweeper(t, map[string]bool{worktree: true})
-	save(t, st, wf.Record{ID: "t1", Created: time.Now(),
+	save(t, st, wf.Record{ID: "t1",
 		Bindings: wf.Bindings{
 			// Disposed on paper, still on disk: Dispose is best effort. gc
 			// never removes it, only the ledger row that names it.
-			{Kind: wf.KindWorkspace, Ref: worktree, State: wf.BindingDisposed, Host: actor, At: time.Now()},
+			{Kind: wf.KindWorkspace, Ref: worktree, State: wf.BindingDisposed, At: time.Now()},
 		}})
 
 	if _, err := g.Sweep(context.Background(), Options{Delete: true}); err != nil {
@@ -238,13 +218,13 @@ func TestSweepNeverRemovesAnArtifact(t *testing.T) {
 func TestUnreadableLedgerFileIsReportedNotDeleted(t *testing.T) {
 	dir := t.TempDir()
 	st := store.New(dir)
-	save(t, st, wf.Record{ID: "good", Created: time.Now()})
+	save(t, st, wf.Record{ID: "good"})
 	bad := filepath.Join(dir, "tasks", "bad.json")
 	if err := os.WriteFile(bad, []byte("{not json"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	g := &GC{Store: st, Actor: actor, Exists: func(string) bool { return true }}
+	g := &GC{Store: st, Exists: func(string) bool { return true }}
 
 	report, err := g.Sweep(context.Background(), Options{Delete: true})
 	if err != nil {

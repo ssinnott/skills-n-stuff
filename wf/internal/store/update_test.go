@@ -58,9 +58,6 @@ func TestUpdateCreatesAMissingRecord(t *testing.T) {
 		if rec.ID != "fresh" {
 			t.Errorf("fn saw ID %q, want the id it was called with", rec.ID)
 		}
-		if rec.Created.IsZero() {
-			t.Error("a fresh record should arrive with Created stamped")
-		}
 		if len(rec.Runs) != 0 || len(rec.Bindings) != 0 {
 			t.Errorf("a fresh record should be empty: %+v", rec)
 		}
@@ -75,7 +72,7 @@ func TestUpdateCreatesAMissingRecord(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Update did not create the record: %v", err)
 	}
-	if len(got.Runs) != 1 || got.Created.IsZero() || got.Updated.IsZero() {
+	if len(got.Runs) != 1 || got.Updated.IsZero() {
 		t.Errorf("created record = %+v", got)
 	}
 }

@@ -5,7 +5,7 @@ package supervisor
 // Two claims are under test and they pull in opposite directions, which is
 // why they are tested together: naming a workflow has to *override* implicit
 // selection, and implicit selection has to keep working untouched for a
-// queue that routes by label with nobody naming anything.
+// task that routes by label with nobody naming anything.
 
 import (
 	"context"
@@ -31,9 +31,8 @@ func TestNamedWorkflowOverridesLabelRouting(t *testing.T) {
 	s := newSupervisor(q, r, &fakeProvider{}, loadFlows(t, twoFlows(t)))
 	ledger := withLedger(t, s)
 
-	result, err := s.RunOnceWith(context.Background(), "01HZ", Dispatch{Workflow: "triage"})
-	if err != nil {
-		t.Fatalf("RunOnceWith() error = %v", err)
+	if _, err := s.RunOnce(context.Background(), "01HZ", Dispatch{Workflow: "triage"}); err != nil {
+		t.Fatalf("RunOnce() error = %v", err)
 	}
 
 	rec := loadRecord(t, ledger, "01HZ")
@@ -44,7 +43,7 @@ func TestNamedWorkflowOverridesLabelRouting(t *testing.T) {
 	// The workflow is recorded on the *run*, which is what gives a task
 	// dispatched twice under two recipes a history instead of one
 	// overwritten field.
-	if run.ID != result.Run || run.Workflow != "triage" {
+	if run.Workflow != "triage" {
 		t.Errorf("run = %+v, want the named workflow recorded on it", run)
 	}
 	if run.Profile != "writer" {
@@ -57,8 +56,8 @@ func TestNamedWorkflowOverridesLabelRouting(t *testing.T) {
 	}
 }
 
-func TestQueueDrivenSelectionIsUnchangedWhenNobodyNamesAnything(t *testing.T) {
-	// The other half of the same decision. A queue that routes by label must
+func TestLabelRoutingIsUnchangedWhenNobodyNamesAnything(t *testing.T) {
+	// The other half of the same decision. A task that routes by label must
 	// keep working with no name anywhere, which is what makes the explicit
 	// form an override rather than a replacement.
 	q := newQueue(wf.Task{ID: "01HZ", ShortID: "abc4", Title: "Routed work", Labels: []string{"code"}})
@@ -66,7 +65,7 @@ func TestQueueDrivenSelectionIsUnchangedWhenNobodyNamesAnything(t *testing.T) {
 	s := newSupervisor(q, r, &fakeProvider{}, loadFlows(t, twoFlows(t)))
 	ledger := withLedger(t, s)
 
-	if _, err := s.RunOnce(context.Background(), ""); err != nil {
+	if _, err := run(s, "01HZ"); err != nil {
 		t.Fatalf("RunOnce() error = %v", err)
 	}
 
@@ -79,14 +78,14 @@ func TestQueueDrivenSelectionIsUnchangedWhenNobodyNamesAnything(t *testing.T) {
 func TestNamedWorkflowThatIsNotLoadedFailsWithoutEscalating(t *testing.T) {
 	// A name a human just typed has a human at the other end of the
 	// terminal. Filing a comment about their typo is noise on the task, and
-	// flagging it needs-human would take it out of the queue for a mistake
-	// nobody made against the task itself.
+	// flagging it needs-human would mark it for a mistake nobody made
+	// against the task itself.
 	q := newQueue(wf.Task{ID: "01HZ", ShortID: "abc4", Title: "Work"})
 	r := &fakeRunner{transcript: "DONE\n"}
 	s := newSupervisor(q, r, &fakeProvider{}, loadFlows(t, twoFlows(t)))
 	ledger := withLedger(t, s)
 
-	_, err := s.RunOnceWith(context.Background(), "01HZ", Dispatch{Workflow: "no-such-flow"})
+	_, err := s.RunOnce(context.Background(), "01HZ", Dispatch{Workflow: "no-such-flow"})
 	if err == nil {
 		t.Fatal("naming a workflow that is not loaded must fail")
 	}
@@ -105,28 +104,23 @@ func TestNamedWorkflowThatIsNotLoadedFailsWithoutEscalating(t *testing.T) {
 }
 
 func TestDispatchRecordsUnderTheTasksOwnID(t *testing.T) {
-	// kata's ULID is the task's only id now: the ledger record lives at
-	// exactly that id, with nothing to look up and nothing to mint. A second
+	// kata's ULID is the task's only id: the ledger record lives at exactly
+	// that id, with nothing to look up and nothing to mint. A second
 	// dispatch has to land on the same file rather than a second one.
 	q := newQueue(wf.Task{ID: "01HZ", ShortID: "abc4", Title: "Twice-run work"})
 	r := &fakeRunner{transcript: "I stopped and need a decision.\n"}
-	s := newSupervisor(q, r, &fakeProvider{}, nil)
+	s := newSupervisor(q, r, &fakeProvider{}, basicFlows(t))
 	ledger := withLedger(t, s)
 
-	first, err := s.RunOnce(context.Background(), "")
+	first, err := run(s, "01HZ")
 	if err != nil {
 		t.Fatalf("first RunOnce() error = %v", err)
 	}
-	if first.TaskID != "01HZ" {
-		t.Fatalf("TaskID = %q, want the tracker's own id", first.TaskID)
+	if first.Task.ID != "01HZ" {
+		t.Fatalf("Task.ID = %q, want the tracker's own id", first.Task.ID)
 	}
-
-	second, err := s.RunOnce(context.Background(), "01HZ")
-	if err != nil {
+	if _, err := run(s, "01HZ"); err != nil {
 		t.Fatalf("second RunOnce() error = %v", err)
-	}
-	if second.TaskID != first.TaskID {
-		t.Errorf("second dispatch filed under %q, want %q", second.TaskID, first.TaskID)
 	}
 
 	recs, err := ledger.List()

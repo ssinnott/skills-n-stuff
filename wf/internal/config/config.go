@@ -35,7 +35,6 @@ type Config struct {
 	PiBin   string `json:"piBin"`
 	// DifitCommand is the review viewer's shell command line, defaulting to "npx difit".
 	DifitCommand    string `json:"difitCommand"`
-	MaxConcurrent   int    `json:"maxConcurrent"`
 	LeaseTTLSeconds int    `json:"leaseTTLSeconds"`
 
 	// Path records where this config was loaded from, or "" for defaults.
@@ -92,9 +91,6 @@ func (c *Config) applyDefaults() {
 	}
 	if c.WorkflowDir == "" && home != "" {
 		c.WorkflowDir = filepath.Join(home, ".wf", "workflows")
-	}
-	if c.MaxConcurrent <= 0 {
-		c.MaxConcurrent = 1
 	}
 	if c.DifitCommand == "" {
 		c.DifitCommand = "npx difit"

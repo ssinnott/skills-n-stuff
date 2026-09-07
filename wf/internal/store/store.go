@@ -16,8 +16,6 @@ import (
 type Store interface {
 	// Load returns one record by the tracker's id; a record not there is a *NotFoundError.
 	Load(id string) (wf.Record, error)
-	// Save writes a record whole, stamping Updated; the id is the caller's.
-	Save(rec wf.Record) error
 	// Update is read-modify-write on one record: an upsert, since a missing record arrives as a zero Record. See the lock comment in file.go for its guarantees.
 	Update(id string, fn func(*wf.Record) error) error
 	// List returns every readable record; an unreadable one is skipped and named in a *SkipError.
@@ -55,13 +53,4 @@ func (e *SkipError) Error() string {
 		parts = append(parts, fmt.Sprintf("%s: %v", s.Path, s.Err))
 	}
 	return fmt.Sprintf("skipped %d unreadable task file(s): %s", len(e.Skipped), strings.Join(parts, "; "))
-}
-
-// Paths lists the files that were skipped, without the formatted error.
-func (e *SkipError) Paths() []string {
-	out := make([]string, 0, len(e.Skipped))
-	for _, s := range e.Skipped {
-		out = append(out, s.Path)
-	}
-	return out
 }

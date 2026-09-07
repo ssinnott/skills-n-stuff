@@ -29,14 +29,10 @@ import (
 )
 
 // State that kata cannot express natively — its status is binary
-// open/closed — is carried as metadata. The keys are the core's, not this
-// adapter's: the convention they follow happens to be kata's own, which
-// ships `--with-hooks` for `work.attention` precisely so escalations show up
-// in the CLI, TUI and web UI without bespoke code.
-const (
-	AttentionKey = wf.AttentionKey
-	StateKey     = wf.StateKey
-)
+// open/closed — is carried as metadata under the core's keys. The
+// convention they follow happens to be kata's own, which ships
+// `--with-hooks` for `work.attention` precisely so escalations show up in
+// the CLI, TUI and web UI without bespoke code.
 
 // Backend is a kata-backed wf.Queue.
 type Backend struct {
@@ -68,8 +64,6 @@ func New(opts Options) *Backend {
 }
 
 var _ wf.Queue = (*Backend)(nil)
-
-func (b *Backend) Name() string { return "kata" }
 
 // globals appends the flags every invocation carries. The actor is passed
 // exactly once: cobra takes the last occurrence of a repeated flag, so
@@ -192,19 +186,13 @@ func (b *Backend) Comment(ctx context.Context, ref, body string) error {
 // Close maps the outcome protocol onto kata's close discipline. Everything
 // goes through repeated --evidence rather than the --pr and --commit sugar,
 // because those take a single value and a run can open several PRs.
-func (b *Backend) Close(ctx context.Context, ref string, result wf.CloseResult, _ string) error {
+func (b *Backend) Close(ctx context.Context, ref string, result wf.CloseResult) error {
 	args := []string{"close", ref, "--done", "--message", result.Message}
 	for _, pr := range result.PRs {
 		args = append(args, "--evidence", "pr:"+pr)
 	}
-	for _, sha := range result.Commits {
-		args = append(args, "--evidence", "commit:"+sha)
-	}
 	for _, doc := range result.Docs {
 		args = append(args, "--evidence", "reviewed-paths:"+doc)
-	}
-	for _, test := range result.Tests {
-		args = append(args, "--evidence", "test:"+test)
 	}
 	_, err := b.run(ctx, args...)
 	return err
@@ -215,20 +203,8 @@ func (b *Backend) Create(ctx context.Context, in wf.CreateInput) (wf.Task, error
 	if in.Body != "" {
 		args = append(args, "--body", in.Body)
 	}
-	for _, label := range in.Labels {
-		args = append(args, "--label", label)
-	}
-	if in.Priority > 0 {
-		args = append(args, "--priority", strconv.Itoa(in.Priority))
-	}
 	if in.RelatedTo != "" {
 		args = append(args, "--related", in.RelatedTo)
-	}
-	if in.BlockedBy != "" {
-		args = append(args, "--blocked-by", in.BlockedBy)
-	}
-	for k, v := range in.Meta {
-		args = append(args, "--meta", k+"="+v)
 	}
 	if in.IdempotencyKey != "" {
 		args = append(args, "--idempotency-key", in.IdempotencyKey)
@@ -249,9 +225,6 @@ func (b *Backend) SetMeta(ctx context.Context, ref, key, value string, opts wf.S
 	args := []string{"meta", "set", ref, key, value}
 	if opts.JSON {
 		args = append(args, "--json-value")
-	}
-	if opts.IfMatch != "" {
-		args = append(args, "--if-match", opts.IfMatch)
 	}
 	_, err := b.run(ctx, args...)
 	return err
@@ -280,7 +253,7 @@ func (b *Backend) GetMeta(ctx context.Context, ref string) (map[string]any, erro
 
 // Escalations lists tasks flagged for a human, as a plain metadata query.
 func (b *Backend) Escalations(ctx context.Context) ([]wf.Task, error) {
-	raw, err := b.runJSON(ctx, "list", "--meta", AttentionKey+"=needs-human")
+	raw, err := b.runJSON(ctx, "list", "--meta", wf.AttentionKey+"=needs-human")
 	if err != nil {
 		return nil, err
 	}
@@ -419,13 +392,6 @@ func NormalizeIssue(raw map[string]any) wf.Task {
 		priority = p
 	}
 
-	rev := pickString(raw, "revision", "rev", "version")
-	if rev == "" {
-		if n, ok := pickNumber(raw, "revision", "rev", "version"); ok {
-			rev = strconv.Itoa(n)
-		}
-	}
-
 	return wf.Task{
 		ID:       id,
 		ShortID:  shortID,
@@ -435,7 +401,6 @@ func NormalizeIssue(raw map[string]any) wf.Task {
 		Labels:   pickLabels(raw, "labels", "tags"),
 		Owner:    pickString(raw, "owner", "assignee"),
 		Meta:     MetaObject(map[string]any{"metadata": pickAny(raw, "metadata", "meta")}),
-		Rev:      rev,
 	}
 }
 

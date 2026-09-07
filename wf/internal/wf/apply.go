@@ -7,8 +7,10 @@ import (
 	"strings"
 )
 
-// Applying a run's outcomes to the tracker: silence is never success, so a
-// run that did not report DONE escalates rather than closing.
+// Applying a run's outcomes to the tracker. A run that reports DONE with
+// something to show completes and leaves the task open for a human to run
+// the next workflow or close; silence is never success, so a run that did
+// not report DONE escalates instead.
 
 const (
 	// StateKey carries wf's state vocabulary.
@@ -17,10 +19,12 @@ const (
 	AttentionKey = "work.attention"
 	// RepoKey records the repo a REPO: outcome named.
 	RepoKey = "wf.repo"
-	// PRsKey records PR: outcomes as a JSON array of URLs.
+	// PRsKey records PR: outcomes as a JSON array of URLs, across every run.
 	PRsKey = "wf.pr"
-	// IssuesKey records ISSUE: outcomes as JSON.
+	// IssuesKey records ISSUE: outcomes as JSON, across every run.
 	IssuesKey = "wf.issue"
+	// DocsKey records the vault paths of produced documents, across every run.
+	DocsKey = "wf.docs"
 )
 
 // IssueRecord is the persisted shape of one ISSUE: outcome.
@@ -31,15 +35,12 @@ type IssueRecord struct {
 
 // PRsFromMeta reads recorded PR urls; garbage or absent metadata reads as empty.
 func PRsFromMeta(meta map[string]any) []string {
-	data, ok := metaJSONBytes(meta[PRsKey])
-	if !ok {
-		return nil
-	}
-	var out []string
-	if err := json.Unmarshal(data, &out); err != nil {
-		return nil
-	}
-	return out
+	return stringsFromMeta(meta[PRsKey])
+}
+
+// DocsFromMeta reads the produced documents recorded on a task.
+func DocsFromMeta(meta map[string]any) []string {
+	return stringsFromMeta(meta[DocsKey])
 }
 
 // IssuesFromMeta reads recorded ISSUE outcomes, if any.
@@ -49,6 +50,18 @@ func IssuesFromMeta(meta map[string]any) []IssueRecord {
 		return nil
 	}
 	var out []IssueRecord
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil
+	}
+	return out
+}
+
+func stringsFromMeta(raw any) []string {
+	data, ok := metaJSONBytes(raw)
+	if !ok {
+		return nil
+	}
+	var out []string
 	if err := json.Unmarshal(data, &out); err != nil {
 		return nil
 	}
@@ -70,8 +83,22 @@ func metaJSONBytes(raw any) ([]byte, bool) {
 	return b, true
 }
 
-// recordRunFacts persists what a run reported about itself regardless of how
-// it settles: an escalated run that opened a PR leaves that trace here.
+// setJSONMeta writes a list-valued key.
+func setJSONMeta(ctx context.Context, q Queue, task Task, key string, value any, what string) error {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Errorf("encode %s for %s: %w", what, task.ShortID, err)
+	}
+	if err := q.SetMeta(ctx, task.ID, key, string(encoded), SetMetaOptions{JSON: true}); err != nil {
+		return fmt.Errorf("record %s on %s: %w", what, task.ShortID, err)
+	}
+	return nil
+}
+
+// recordRunFacts persists what a run reported about itself regardless of
+// how it settles: an escalated run that opened a PR leaves that trace here.
+// Lists merge with what earlier runs recorded, since a task accumulates
+// output across every workflow run against it.
 func recordRunFacts(ctx context.Context, q Queue, task Task, outcomes []Outcome) error {
 	if repo := ReportedRepo(outcomes); repo != "" {
 		if err := q.SetMeta(ctx, task.ID, RepoKey, repo, SetMetaOptions{}); err != nil {
@@ -79,43 +106,63 @@ func recordRunFacts(ctx context.Context, q Queue, task Task, outcomes []Outcome)
 		}
 	}
 
-	var prs []string
+	prs := PRsFromMeta(task.Meta)
+	added := false
 	for _, o := range outcomes {
 		if o.Verb == VerbPR {
+			before := len(prs)
 			prs = appendUnique(prs, o.URL)
+			added = added || len(prs) > before
 		}
 	}
-	if len(prs) > 0 {
-		encoded, err := json.Marshal(prs)
-		if err != nil {
-			return fmt.Errorf("encode PR urls for %s: %w", task.ShortID, err)
-		}
-		if err := q.SetMeta(ctx, task.ID, PRsKey, string(encoded), SetMetaOptions{JSON: true}); err != nil {
-			return fmt.Errorf("record PR urls on %s: %w", task.ShortID, err)
+	if added {
+		if err := setJSONMeta(ctx, q, task, PRsKey, prs, "PR urls"); err != nil {
+			return err
 		}
 	}
 
 	issues, _ := Spawned(outcomes)
 	if len(issues) > 0 {
-		records := make([]IssueRecord, 0, len(issues))
+		records := IssuesFromMeta(task.Meta)
 		for _, o := range issues {
-			records = append(records, IssueRecord{URL: o.URL, Title: o.Title})
+			if !hasIssue(records, o.URL) {
+				records = append(records, IssueRecord{URL: o.URL, Title: o.Title})
+			}
 		}
-		encoded, err := json.Marshal(records)
-		if err != nil {
-			return fmt.Errorf("encode filed issues for %s: %w", task.ShortID, err)
-		}
-		if err := q.SetMeta(ctx, task.ID, IssuesKey, string(encoded), SetMetaOptions{JSON: true}); err != nil {
-			return fmt.Errorf("record filed issues on %s: %w", task.ShortID, err)
+		if err := setJSONMeta(ctx, q, task, IssuesKey, records, "filed issues"); err != nil {
+			return err
 		}
 	}
 
 	return nil
 }
 
+func hasIssue(records []IssueRecord, url string) bool {
+	for _, r := range records {
+		if r.URL == url {
+			return true
+		}
+	}
+	return false
+}
+
+// recordDocs adds the documents a run bound into the vault to the task's list.
+func recordDocs(ctx context.Context, q Queue, task Task, bound []BoundDoc) error {
+	if len(bound) == 0 {
+		return nil
+	}
+	docs := DocsFromMeta(task.Meta)
+	for _, b := range bound {
+		docs = appendUnique(docs, b.VaultPath)
+	}
+	return setJSONMeta(ctx, q, task, DocsKey, docs, "documents")
+}
+
 // ApplyResult reports what a run's outcomes did to the task.
 type ApplyResult struct {
-	Closed    bool
+	// Completed means the run reported DONE with something to show; the
+	// task stays open, in review, for a human's next move.
+	Completed bool
 	Escalated bool
 	// Created holds refs of follow-on tasks materialized from NEXT.
 	Created []string
@@ -129,8 +176,6 @@ type ApplyResult struct {
 type ApplyOptions struct {
 	// Transcript is the run's output, excerpted into escalation comments.
 	Transcript string
-	// IdempotencyKey makes a retried close a no-op.
-	IdempotencyKey string
 	// Bind configures artifact binding; a zero value disables it.
 	Bind BindOptions
 }
@@ -166,8 +211,9 @@ func Escalate(ctx context.Context, q Queue, task Task, reason, transcript string
 	return ApplyResult{Escalated: true, Reason: reason}, nil
 }
 
-// Apply turns a settled run into tracker state: a complete run closes the
-// task with its evidence and files follow-on work; an incomplete one escalates.
+// Apply turns a settled run into tracker state: a complete run records what
+// it produced and files follow-on work, then leaves the task in review; an
+// incomplete one escalates. Closing is a human's call — see Close.
 func Apply(
 	ctx context.Context,
 	q Queue,
@@ -175,7 +221,8 @@ func Apply(
 	outcomes []Outcome,
 	opts ApplyOptions,
 ) (ApplyResult, error) {
-	// Publication happens before the completeness check: an escalated run may still have opened a PR.
+	// Publication happens before the completeness check: an escalated run
+	// may still have opened a PR.
 	if err := recordRunFacts(ctx, q, task, outcomes); err != nil {
 		return ApplyResult{}, err
 	}
@@ -186,26 +233,26 @@ func Apply(
 	if !IsComplete(outcomes) {
 		return Escalate(ctx, q, task, "the run ended without DONE", opts.Transcript)
 	}
+	if !HasOutput(outcomes) {
+		return Escalate(ctx, q, task,
+			"the run reported DONE but produced nothing — no pull request, document, or issue",
+			opts.Transcript)
+	}
 
 	result := ApplyResult{}
-	issues, next := Spawned(outcomes)
+	_, next := Spawned(outcomes)
 
-	// Artifacts move into the vault before the summary is written.
+	// Artifacts move into the vault before the summary is written, so the
+	// summary can cite their final location.
 	bound, err := BindArtifacts(ctx, q, task, outcomes, opts.Bind)
 	if err != nil {
 		return result, err
 	}
 	result.Bound = bound
-
-	// A completion with no evidence escalates instead of closing; see DESIGN.md.
-	closing := closeResult(task, outcomes, bound)
-	if !closing.HasEvidence() {
-		return Escalate(ctx, q, task,
-			"the run reported DONE but produced no evidence — no pull request, commit, document, or test",
-			opts.Transcript)
+	if err := recordDocs(ctx, q, task, bound); err != nil {
+		return result, err
 	}
 
-	// Recorded before closing, so it's on the issue even if the close fails.
 	if summary := runSummary(outcomes, bound); summary != "" {
 		if err := q.Comment(ctx, task.ID, summary); err != nil {
 			return result, fmt.Errorf("comment outcomes on %s: %w", task.ShortID, err)
@@ -218,7 +265,6 @@ func Apply(
 			Title:          o.Text,
 			Body:           followOnBody(task, outcomes, bound),
 			RelatedTo:      task.ID,
-			Meta:           map[string]string{"wf.origin": task.ID},
 			IdempotencyKey: fmt.Sprintf("wf-next-%s-%s", task.ID, slugKey(o.Text)),
 		})
 		if err != nil {
@@ -227,17 +273,40 @@ func Apply(
 		result.Created = append(result.Created, created.ShortID)
 	}
 
-	// Filed issues never gate completion; see DESIGN.md.
-	_ = issues
+	if err := SetState(ctx, q, task.ID, StateReview); err != nil {
+		return result, err
+	}
 
-	if err := q.Close(ctx, task.ID, closing, opts.IdempotencyKey); err != nil {
+	result.Completed = true
+	return result, nil
+}
+
+// Evidence gathers what the task's runs recorded on the tracker row: the
+// pull requests and vault documents that a close cites. Filed issues are
+// deliberately absent, since they say work moved elsewhere.
+func Evidence(task Task) CloseResult {
+	return CloseResult{
+		PRs:  PRsFromMeta(task.Meta),
+		Docs: DocsFromMeta(task.Meta),
+	}
+}
+
+// Close is the human's terminal transition: it closes the task with the
+// evidence its runs accumulated, refusing when there is none. message may
+// be empty, in which case one is composed from the evidence.
+func Close(ctx context.Context, q Queue, task Task, message string) (CloseResult, error) {
+	result := Evidence(task)
+	if !result.HasEvidence() {
+		return result, fmt.Errorf("%s has no pull request or document recorded to close with; run a workflow that produces one, or close it in the tracker directly", taskRef(task))
+	}
+	result.Message = closeMessage(task, message, result)
+
+	if err := q.Close(ctx, task.ID, result); err != nil {
 		return result, fmt.Errorf("close %s: %w", task.ShortID, err)
 	}
 	if err := SetState(ctx, q, task.ID, StateDone); err != nil {
 		return result, err
 	}
-
-	result.Closed = true
 	return result, nil
 }
 
@@ -274,23 +343,12 @@ func runSummary(outcomes []Outcome, bound []BoundDoc) string {
 // MinCloseMessage is the shortest close message kata's `close --done` accepts.
 const MinCloseMessage = 40
 
-// closeResult records evidence at final locations, so a closed task does not
-// cite a path inside a disposed worktree.
-func closeResult(task Task, outcomes []Outcome, bound []BoundDoc) CloseResult {
-	result := ToCloseResult(outcomes)
-	for i, doc := range result.Docs {
-		result.Docs[i] = finalPath(doc, bound)
-	}
-	result.Message = closeMessage(task, result)
-	return result
-}
-
-// closeMessage composes the substance a close needs, adding what wf actually
-// knows rather than padding with filler when the agent wrote too little.
-func closeMessage(task Task, result CloseResult) string {
-	message := strings.TrimSpace(result.Message)
+// closeMessage composes the substance a close needs from what wf actually
+// knows, rather than padding a short message with filler.
+func closeMessage(task Task, message string, result CloseResult) string {
+	message = strings.TrimSpace(message)
 	if message == "" {
-		message = "Completed by agent"
+		message = "Closed by wf close"
 	}
 	if len(message) >= MinCloseMessage {
 		return message
@@ -306,15 +364,7 @@ func closeMessage(task Task, result CloseResult) string {
 	if n := len(result.Docs); n > 0 {
 		parts = append(parts, fmt.Sprintf("%s: %s", plural(n, "document"), strings.Join(result.Docs, ", ")))
 	}
-	if n := len(result.Tests); n > 0 {
-		parts = append(parts, fmt.Sprintf("%s: %s", plural(n, "check"), strings.Join(result.Tests, ", ")))
-	}
-
-	composed := strings.Join(parts, ". ")
-	if len(composed) < MinCloseMessage {
-		composed += ". Closed on the agent's DONE report; no pull request, document, or test evidence was produced."
-	}
-	return composed
+	return strings.Join(parts, ". ")
 }
 
 func plural(n int, noun string) string {
@@ -346,11 +396,15 @@ func followOnBody(task Task, outcomes []Outcome, bound []BoundDoc) string {
 // sessionHint points an escalated task's comment at `wf attach`, naming only
 // the ref: sessions are machine-local, in a ledger this package never reads.
 func sessionHint(task Task) string {
-	ref := task.ShortID
-	if ref == "" {
-		ref = task.ID
+	return fmt.Sprintf("Session: `wf attach %s`", taskRef(task))
+}
+
+// taskRef is what a human types for a task: the short id when it has one.
+func taskRef(task Task) string {
+	if task.ShortID != "" {
+		return task.ShortID
 	}
-	return fmt.Sprintf("Session: `wf attach %s`", ref)
+	return task.ID
 }
 
 func link(url, title string) string {

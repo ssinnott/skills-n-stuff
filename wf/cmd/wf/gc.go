@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/ssinnott/skills-n-stuff/wf/internal/gc"
-	"github.com/ssinnott/skills-n-stuff/wf/internal/store"
 )
 
 func (a *app) cmdGC(ctx context.Context, args []string) (int, error) {
@@ -16,7 +15,7 @@ func (a *app) cmdGC(ctx context.Context, args []string) (int, error) {
 	}
 
 	opts := gc.Options{Delete: *del}
-	report, err := (&gc.GC{Store: store.New(store.Root(a.cfg.Path)), Actor: a.cfg.Actor}).Sweep(ctx, opts)
+	report, err := (&gc.GC{Store: a.ledger}).Sweep(ctx, opts)
 	if err != nil {
 		return 1, err
 	}

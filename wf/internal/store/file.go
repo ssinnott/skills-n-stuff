@@ -121,7 +121,7 @@ func (s *FileStore) read(id string) (wf.Record, error) {
 	return rec, nil
 }
 
-// Save writes the record whole and stamps Updated; Created is left alone.
+// Save writes the record whole and stamps Updated.
 func (s *FileStore) Save(rec wf.Record) error {
 	if err := validID(rec.ID); err != nil {
 		return err
@@ -152,7 +152,7 @@ func (s *FileStore) Update(id string, fn func(*wf.Record) error) error {
 		if !errors.As(err, &missing) {
 			return err
 		}
-		rec = wf.Record{ID: id, Created: time.Now().UTC()}
+		rec = wf.Record{ID: id}
 	}
 
 	if err := fn(&rec); err != nil {

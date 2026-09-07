@@ -19,12 +19,12 @@ import (
 // against real git worktrees and a real stub agent process but a fake queue.
 //
 // The split is deliberate rather than duplication for its own sake. Every
-// claim stage 3 makes about a checkout — that a re-run gets its own, that
-// the branch on the binding is a ref that actually exists, that an escalated
-// run's evidence is still there afterwards — is a claim about git, and git
-// is installed everywhere the tests run while kata is not. What only the
-// kata suite can prove is that the tracker publication still lands, which is
-// what it checks.
+// claim about a checkout — that a later run continues on the branch an
+// earlier one left, that the branch on the binding is a ref that actually
+// exists, that an escalated run's evidence is still there afterwards — is a
+// claim about git, and git is installed everywhere the tests run while kata
+// is not. What only the kata suite can prove is that the tracker
+// publication still lands, which is what it checks.
 
 func realGit(t *testing.T) {
 	t.Helper()
@@ -36,7 +36,7 @@ func realGit(t *testing.T) {
 	}
 }
 
-// gitHarness is the dispatch loop with everything real except the queue.
+// gitHarness is one dispatch with everything real except the queue.
 type gitHarness struct {
 	sup    *Supervisor
 	ledger store.Store
@@ -72,10 +72,11 @@ func newGitHarness(t *testing.T, task wf.Task, script string) *gitHarness {
 		agent:  agent,
 		ledger: ledger,
 		sup: &Supervisor{
-			Queue:  q,
-			Runner: &runner.Pi{Bin: agent, SessionRoot: cfg.SessionRoot},
-			Config: cfg,
-			Store:  ledger,
+			Queue:     q,
+			Runner:    &runner.Pi{Bin: agent, SessionRoot: cfg.SessionRoot},
+			Workflows: basicFlows(t),
+			Config:    cfg,
+			Store:     ledger,
 			Workspaces: func(workflow.Workflow) wf.WorkspaceProvider {
 				return &workspace.Provider{Repo: repo, Root: root}
 			},
@@ -133,84 +134,120 @@ echo "starting on the parser"
 exit 3
 `
 
-func TestRealGitRerunKeepsTheEscalatedCheckout(t *testing.T) {
-	// The bug the whole design exists to fix, against real worktrees. The
-	// first run escalates and its checkout is kept because that checkout is
-	// the evidence; the re-run must get its own and leave that one alone.
-	h := newGitHarness(t, wf.Task{ID: "01HZ", ShortID: "abc4", Title: "Ambiguous work"}, stuckStub)
+// leavingStub leaves a file behind, so a later run can prove it continued
+// in the same checkout rather than a fresh one.
+const leavingStub = `#!/bin/sh
+echo "wip" > half-done.txt
+echo "I need a human decision about which schema to use."
+`
+
+func TestRealGitRerunContinuesInTheEscalatedCheckout(t *testing.T) {
+	// The first run escalates and its checkout is kept, because the state in
+	// it is what a human, or the re-run, picks up from. The re-run must land
+	// in that checkout, finish the work, and dispose of it.
+	h := newGitHarness(t, wf.Task{ID: "01HZ", ShortID: "abc4", Title: "Ambiguous work"}, leavingStub)
 	ctx := context.Background()
 
-	first, err := h.sup.RunOnce(ctx, "")
+	first, err := run(h.sup, "01HZ")
 	if err != nil {
 		t.Fatalf("first RunOnce() error = %v", err)
 	}
 	if !first.Applied.Escalated {
 		t.Fatalf("Applied = %+v, want escalated", first.Applied)
 	}
+	rec, err := h.ledger.Load("01HZ")
+	if err != nil {
+		t.Fatalf("no ledger record: %v", err)
+	}
+	kept, ok := rec.Bindings.Current(wf.KindWorkspace)
+	if !ok || kept.State != wf.BindingLive {
+		t.Fatalf("workspace binding = %+v, want it kept live", kept)
+	}
+	if _, err := os.Stat(filepath.Join(kept.Ref, "half-done.txt")); err != nil {
+		t.Fatalf("the escalated run's state is not in its checkout: %v", err)
+	}
 
-	h.setAgent(t, shippingStub)
-	// By ref, the way `wf run --ref` does: the task is flagged for a human,
-	// so the ready queue will not offer it up again on its own.
-	second, err := h.sup.RunOnce(ctx, "01HZ")
+	h.setAgent(t, "#!/bin/sh\ntest -f half-done.txt || { echo 'lost the earlier state'; exit 1; }\n"+
+		"echo 'PR: https://example.com/pr/1 — Add the parser'\n"+
+		"echo 'DONE Implemented the tolerant separator parser and covered it with tests.'\n")
+	second, err := run(h.sup, "01HZ")
 	if err != nil {
 		t.Fatalf("second RunOnce() error = %v", err)
 	}
-	if !second.Applied.Closed {
-		t.Fatalf("Applied = %+v, want the re-run to close", second.Applied)
+	if !second.Applied.Completed {
+		t.Fatalf("Applied = %+v, want the re-run to complete in the kept checkout", second.Applied)
 	}
 
-	rec, err := h.ledger.Load("01HZ")
+	rec, err = h.ledger.Load("01HZ")
 	if err != nil {
 		t.Fatalf("no ledger record: %v", err)
 	}
 	if len(rec.Runs) != 2 {
 		t.Fatalf("runs = %+v, want two", rec.Runs)
 	}
+	spaces := rec.Bindings.ByKind(wf.KindWorkspace)
+	if len(spaces) != 1 || spaces[0].Ref != kept.Ref {
+		t.Fatalf("workspace bindings = %+v, want the one continued checkout", spaces)
+	}
+	if spaces[0].Via != rec.Runs[1].ID || spaces[0].State != wf.BindingDisposed {
+		t.Errorf("checkout = %+v, want it disposed by the re-run", spaces[0])
+	}
+	if _, err := os.Stat(kept.Ref); !os.IsNotExist(err) {
+		t.Errorf("a completed run should have removed its checkout: %v", err)
+	}
+	// The branch stays, for whatever the task's next workflow is.
+	if !workspace.BranchExists(ctx, h.repo, kept.Get(wf.MetaBranch)) {
+		t.Errorf("branch %q was deleted with the checkout", kept.Get(wf.MetaBranch))
+	}
+}
 
-	byRun := map[string]wf.Binding{}
-	for _, b := range rec.Bindings.ByKind(wf.KindWorkspace) {
-		byRun[b.Via] = b
+func TestRealGitLaterRunPicksUpTheBranch(t *testing.T) {
+	// The address-comments case: an earlier run completed, pushed a PR from
+	// its branch and disposed its checkout. The next run on the task gets a
+	// fresh checkout of that same branch.
+	h := newGitHarness(t, wf.Task{ID: "01HZ", ShortID: "abc4", Title: "Fix the bug"}, shippingStub)
+	ctx := context.Background()
+
+	if _, err := run(h.sup, "01HZ"); err != nil {
+		t.Fatalf("first RunOnce() error = %v", err)
 	}
-	if len(byRun) != 2 {
-		t.Fatalf("workspace bindings = %+v, want one per run", rec.Bindings.ByKind(wf.KindWorkspace))
+	h.setAgent(t, "#!/bin/sh\ngit rev-parse --abbrev-ref HEAD > branch.txt\n"+
+		"echo 'PR: https://example.com/pr/1 — Add the parser'\n"+
+		"echo 'DONE Addressed the review comments.'\n")
+	h.sup.Workspaces = func(workflow.Workflow) wf.WorkspaceProvider {
+		return &workspace.Provider{Repo: h.repo, Root: h.root}
+	}
+	if _, err := run(h.sup, "01HZ"); err != nil {
+		t.Fatalf("second RunOnce() error = %v", err)
 	}
 
-	kept := byRun[first.Run]
-	if kept.State != wf.BindingSuperseded {
-		t.Errorf("first checkout state = %q, want superseded", kept.State)
+	rec, err := h.ledger.Load("01HZ")
+	if err != nil {
+		t.Fatal(err)
 	}
-	// Superseded, and every word of that: still on disk, still on its branch,
-	// still reachable from the run that made it.
-	if _, err := os.Stat(kept.Ref); err != nil {
-		t.Errorf("the escalated run's checkout was destroyed: %v", err)
+	// One binding per run, each disposed by its own run. The directory name
+	// may well be the same — the first was freed — which is why the record
+	// keeps both rather than overwriting one with the other.
+	spaces := rec.Bindings.ByKind(wf.KindWorkspace)
+	if len(spaces) != 2 {
+		t.Fatalf("workspace bindings = %+v, want one per run", spaces)
 	}
-	branch := kept.Get(wf.MetaBranch)
-	if branch == "" {
-		t.Fatal("the first checkout recorded no branch")
+	for i, b := range spaces {
+		if b.Via != rec.Runs[i].ID {
+			t.Errorf("checkout %d Via = %q, want run %q", i, b.Via, rec.Runs[i].ID)
+		}
 	}
-	if !workspace.BranchExists(ctx, "", h.repo, branch) {
-		t.Errorf("branch %q, recorded by the first run, is not a ref in the repo", branch)
+	branch := spaces[0].Get(wf.MetaBranch)
+	if spaces[1].Get(wf.MetaBranch) != branch {
+		t.Errorf("second run's branch = %q, want the first's %q", spaces[1].Get(wf.MetaBranch), branch)
 	}
-	if kept.Get(wf.MetaRepo) != h.repo {
-		t.Errorf("first checkout repo = %q, want %q", kept.Get(wf.MetaRepo), h.repo)
+	if !workspace.BranchExists(ctx, h.repo, branch) {
+		t.Errorf("branch %q is not a ref", branch)
 	}
-	if kept.Host != "wf-laptop" {
-		t.Errorf("first checkout host = %q", kept.Host)
-	}
-
-	fresh := byRun[second.Run]
-	if fresh.Ref == kept.Ref {
-		t.Fatal("the re-run reused the escalated run's checkout")
-	}
-	if fresh.Get(wf.MetaBranch) == branch {
-		t.Fatal("the re-run reused the escalated run's branch")
-	}
-	// The re-run closed cleanly, so it removed its own checkout and said so.
-	if fresh.State != wf.BindingDisposed {
-		t.Errorf("re-run checkout state = %q, want disposed", fresh.State)
-	}
-	if _, err := os.Stat(fresh.Ref); !os.IsNotExist(err) {
-		t.Errorf("a cleanly closed run left its checkout behind: %v", err)
+	for _, b := range spaces {
+		if b.State != wf.BindingDisposed {
+			t.Errorf("checkout %q state = %q, want disposed", b.Ref, b.State)
+		}
 	}
 }
 
@@ -221,7 +258,7 @@ func TestRealGitRunSurvivesADeadAgent(t *testing.T) {
 	h := newGitHarness(t, wf.Task{ID: "01HZ", ShortID: "abc4", Title: "Work that dies"}, dyingStub)
 	ctx := context.Background()
 
-	result, err := h.sup.RunOnce(ctx, "")
+	result, err := run(h.sup, "01HZ")
 	if err != nil {
 		t.Fatalf("RunOnce() error = %v", err)
 	}
@@ -237,8 +274,8 @@ func TestRealGitRunSurvivesADeadAgent(t *testing.T) {
 		t.Fatalf("runs = %+v, want the dead run recorded", rec.Runs)
 	}
 	run := rec.Runs[0]
-	if run.ID != result.Run || !run.Done() || run.Outcome != wf.SessionEscalated {
-		t.Errorf("run = %+v, want %s settled as escalated", run, result.Run)
+	if !run.Done() || run.Outcome != wf.SessionEscalated {
+		t.Errorf("run = %+v, want settled as escalated", run)
 	}
 
 	// The session file it never wrote anything useful into is still bound
@@ -246,12 +283,6 @@ func TestRealGitRunSurvivesADeadAgent(t *testing.T) {
 	session, ok := rec.Bindings.Current(wf.KindSession)
 	if !ok || session.Via != run.ID {
 		t.Fatalf("session binding = %+v", session)
-	}
-	if session.Get(wf.MetaRunner) != "pi" {
-		t.Errorf("runner = %q, want the runner as a value on the binding", session.Get(wf.MetaRunner))
-	}
-	if session.Host != "wf-laptop" {
-		t.Errorf("session host = %q", session.Host)
 	}
 
 	// And the checkout is live, on a branch that exists.
@@ -262,7 +293,7 @@ func TestRealGitRunSurvivesADeadAgent(t *testing.T) {
 	if _, err := os.Stat(space.Ref); err != nil {
 		t.Errorf("kept checkout is not on disk: %v", err)
 	}
-	if !workspace.BranchExists(ctx, "", h.repo, space.Get(wf.MetaBranch)) {
+	if !workspace.BranchExists(ctx, h.repo, space.Get(wf.MetaBranch)) {
 		t.Errorf("recorded branch %q is not a ref", space.Get(wf.MetaBranch))
 	}
 }
@@ -274,8 +305,7 @@ func TestRealGitBranchSurvivesARenamedTask(t *testing.T) {
 	h := newGitHarness(t, wf.Task{ID: "01HZ", ShortID: "abc4", Title: "Original title"}, stuckStub)
 	ctx := context.Background()
 
-	result, err := h.sup.RunOnce(ctx, "")
-	if err != nil {
+	if _, err := run(h.sup, "01HZ"); err != nil {
 		t.Fatalf("RunOnce() error = %v", err)
 	}
 
@@ -299,11 +329,11 @@ func TestRealGitBranchSurvivesARenamedTask(t *testing.T) {
 	if derived == recorded {
 		t.Fatal("the rename did not change what the name rule derives — the test proves nothing")
 	}
-	if workspace.BranchExists(ctx, "", h.repo, derived) {
+	if workspace.BranchExists(ctx, h.repo, derived) {
 		t.Errorf("derived branch %q should not exist after a rename", derived)
 	}
-	if !workspace.BranchExists(ctx, "", h.repo, recorded) {
-		t.Errorf("branch %q recorded by run %s is gone", recorded, result.Run)
+	if !workspace.BranchExists(ctx, h.repo, recorded) {
+		t.Errorf("branch %q recorded by run %s is gone", recorded, rec.Runs[0].ID)
 	}
 }
 
@@ -321,9 +351,8 @@ func TestRealGitNamedWorkflowRunsAndIsRecordedOnTheRun(t *testing.T) {
 	})
 	ctx := context.Background()
 
-	result, err := h.sup.RunOnceWith(ctx, "01HZ", Dispatch{Workflow: "deep"})
-	if err != nil {
-		t.Fatalf("RunOnceWith() error = %v", err)
+	if _, err := h.sup.RunOnce(ctx, "01HZ", Dispatch{Workflow: "deep"}); err != nil {
+		t.Fatalf("RunOnce() error = %v", err)
 	}
 
 	rec, err := h.ledger.Load("01HZ")
@@ -338,7 +367,7 @@ func TestRealGitNamedWorkflowRunsAndIsRecordedOnTheRun(t *testing.T) {
 		t.Fatalf("runs = %+v, want one", rec.Runs)
 	}
 	run := rec.Runs[0]
-	if run.ID != result.Run || run.Workflow != "deep" || run.Profile != "careful" {
+	if run.Workflow != "deep" || run.Profile != "careful" {
 		t.Errorf("run = %+v, want the named workflow recorded on it", run)
 	}
 
@@ -352,7 +381,7 @@ func TestRealGitNamedWorkflowRunsAndIsRecordedOnTheRun(t *testing.T) {
 	if _, err := os.Stat(space.Ref); err != nil {
 		t.Errorf("the named run's checkout is not on disk: %v", err)
 	}
-	if !workspace.BranchExists(ctx, "", h.repo, space.Get(wf.MetaBranch)) {
+	if !workspace.BranchExists(ctx, h.repo, space.Get(wf.MetaBranch)) {
 		t.Errorf("branch %q recorded by the named run is not a ref", space.Get(wf.MetaBranch))
 	}
 }

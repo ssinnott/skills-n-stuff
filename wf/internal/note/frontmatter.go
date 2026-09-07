@@ -12,9 +12,6 @@ import (
 // IssueKey is the frontmatter field naming the bound task's durable ref (kata's ULID).
 const IssueKey = "kata-issue"
 
-// TaskKey is the frontmatter field naming the bound wf task.
-const TaskKey = "wf-task"
-
 // Not a YAML parser: reads and writes exactly one scalar key per call.
 var frontmatterRe = regexp.MustCompile(`(?s)\A---\r?\n(.*?)\r?\n---\r?\n?`)
 

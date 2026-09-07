@@ -1,6 +1,6 @@
 // Package gc reports, and under --delete drops, ledger bindings whose
 // referent no longer exists on this host. git owns worktrees and branches;
-// wf review owns its pane; another host's binding is never judged.
+// wf review owns its pane.
 package gc
 
 import (
@@ -56,7 +56,6 @@ type Options struct{ Delete bool }
 // GC sweeps a ledger for dead machine-local bindings.
 type GC struct {
 	Store  store.Store
-	Actor  string                 // this host's identity, matched against Binding.Host
 	Exists func(path string) bool // test seam over os.Stat
 }
 
@@ -67,8 +66,6 @@ func (g *GC) exists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
 }
-
-func (g *GC) mine(b wf.Binding) bool { return b.Host == "" || b.Host == g.Actor }
 
 // Sweep examines every record and, under Delete, repairs it.
 func (g *GC) Sweep(ctx context.Context, opts Options) (Report, error) {
@@ -94,17 +91,13 @@ func (g *GC) Sweep(ctx context.Context, opts Options) (Report, error) {
 	return report, nil
 }
 
-// sweepRecord marks dead local workspace/session bindings, and reports the
-// record droppable once nothing local or foreign is still live.
+// sweepRecord marks dead workspace/session bindings, and reports the
+// record droppable once nothing is still live.
 func (g *GC) sweepRecord(rec wf.Record, opts Options) []Finding {
 	var findings []Finding
 	var missing []wf.Binding
-	foreign, settled := false, true
+	settled := true
 	for _, b := range rec.Bindings {
-		if !g.mine(b) {
-			foreign = true
-			continue
-		}
 		if b.Kind != wf.KindWorkspace && b.Kind != wf.KindSession {
 			continue
 		}
@@ -122,7 +115,7 @@ func (g *GC) sweepRecord(rec wf.Record, opts Options) []Finding {
 			settled = false
 		}
 	}
-	drop := !foreign && settled
+	drop := settled
 	if drop {
 		findings = append(findings, Finding{Kind: RecordStale, Task: rec.ID,
 			Ref: rec.ID, Detail: "nothing live left on this host", Repair: RepairDelete})

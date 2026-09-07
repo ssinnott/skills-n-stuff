@@ -13,7 +13,10 @@ import (
 // Binding produced documents back into an Obsidian vault: moves DOC-outcome
 // files in, then writes both halves of the id pair. See DESIGN.md.
 
-// DocKey is the task-side half of the note binding.
+// DocKey is the task-side half of the note binding: the one note a task is
+// bound to. `wf bind` writes it by hand; a run writes it only when the task
+// has none yet, so the first document produced becomes the task's note and
+// later ones are recorded as documents (DocsKey) without displacing it.
 const DocKey = "wf.doc"
 
 // BindOptions configures artifact binding for one run.
@@ -32,7 +35,6 @@ type BoundDoc struct {
 	Source string
 	// VaultPath is the path relative to the vault root.
 	VaultPath string
-	Moved     bool
 }
 
 // BindArtifacts moves DOC artifacts into the vault and links them to the
@@ -51,7 +53,7 @@ func BindArtifacts(
 
 	var bound []BoundDoc
 
-	for _, o := range docPaths(outcomes) {
+	for _, o := range DocPaths(outcomes) {
 		source := o
 		if !filepath.IsAbs(source) && opts.WorkspaceDir != "" {
 			source = filepath.Join(opts.WorkspaceDir, source)
@@ -60,7 +62,7 @@ func BindArtifacts(
 			continue
 		}
 
-		vaultPath, moved, err := placeInVault(source, opts)
+		vaultPath, err := placeInVault(source, opts)
 		if err != nil {
 			return bound, err
 		}
@@ -74,52 +76,52 @@ func BindArtifacts(
 			return bound, fmt.Errorf("write bound note %s: %w", vaultPath, err)
 		}
 
-		bound = append(bound, BoundDoc{Source: o, VaultPath: vaultPath, Moved: moved})
+		bound = append(bound, BoundDoc{Source: o, VaultPath: vaultPath})
 	}
 
 	if len(bound) == 0 {
 		return nil, nil
 	}
 
-	// The task points at one note — the first produced — the rest are in the
-	// run summary.
-	if err := q.SetMeta(ctx, task.ID, DocKey, bound[0].VaultPath, SetMetaOptions{}); err != nil {
-		return bound, fmt.Errorf("bind note path on %s: %w", task.ShortID, err)
+	if metaString(task.Meta, DocKey) == "" {
+		if err := q.SetMeta(ctx, task.ID, DocKey, bound[0].VaultPath, SetMetaOptions{}); err != nil {
+			return bound, fmt.Errorf("bind note path on %s: %w", task.ShortID, err)
+		}
 	}
 	return bound, nil
 }
 
 // placeInVault returns the document's path relative to the vault, moving it
 // there if needed.
-func placeInVault(source string, opts BindOptions) (string, bool, error) {
+func placeInVault(source string, opts BindOptions) (string, error) {
 	vault, err := filepath.Abs(opts.Vault)
 	if err != nil {
-		return "", false, fmt.Errorf("resolve vault %s: %w", opts.Vault, err)
+		return "", fmt.Errorf("resolve vault %s: %w", opts.Vault, err)
 	}
 	abs, err := filepath.Abs(source)
 	if err != nil {
-		return "", false, fmt.Errorf("resolve document %s: %w", source, err)
+		return "", fmt.Errorf("resolve document %s: %w", source, err)
 	}
 
 	if rel, err := filepath.Rel(vault, abs); err == nil && !strings.HasPrefix(rel, "..") {
-		return rel, false, nil
+		return rel, nil
 	}
 
 	destDir := filepath.Join(vault, opts.VaultDir)
 	if err := os.MkdirAll(destDir, 0o755); err != nil {
-		return "", false, fmt.Errorf("create vault directory %s: %w", destDir, err)
+		return "", fmt.Errorf("create vault directory %s: %w", destDir, err)
 	}
 
 	dest := uniquePath(filepath.Join(destDir, filepath.Base(abs)))
 	if err := moveFile(abs, dest); err != nil {
-		return "", false, err
+		return "", err
 	}
 
 	rel, err := filepath.Rel(vault, dest)
 	if err != nil {
-		return "", false, fmt.Errorf("resolve vault path for %s: %w", dest, err)
+		return "", fmt.Errorf("resolve vault path for %s: %w", dest, err)
 	}
-	return rel, true, nil
+	return rel, nil
 }
 
 // uniquePath avoids clobbering an existing note.
@@ -154,19 +156,4 @@ func moveFile(src, dest string) error {
 		return fmt.Errorf("remove %s after copy: %w", src, err)
 	}
 	return nil
-}
-
-func docPaths(outcomes []Outcome) []string {
-	var paths []string
-	for _, o := range outcomes {
-		switch o.Verb {
-		case VerbDoc:
-			paths = appendUnique(paths, o.Path)
-		case VerbDone:
-			if o.Path != "" {
-				paths = appendUnique(paths, o.Path)
-			}
-		}
-	}
-	return paths
 }

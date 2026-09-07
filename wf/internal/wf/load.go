@@ -1,8 +1,9 @@
 package wf
 
 // LoadBindings reads every shareable binding recorded on a task's tracker
-// row. Nothing here returns an error: garbled metadata reads as no binding at
-// all. States are left unknown rather than asserted, and Binding.IsLive treats unknown as live — unproven, not hidden.
+// row. Nothing here returns an error: garbled metadata reads as no binding
+// at all. States are left unknown rather than asserted, and Binding.IsLive
+// treats unknown as live — unproven, not hidden.
 func LoadBindings(task Task) Bindings {
 	meta := task.Meta
 	var bs Bindings
@@ -25,12 +26,16 @@ func LoadBindings(task Task) Bindings {
 		bs = bs.Upsert(Binding{Kind: KindIssue, Ref: issue.URL, Label: issue.Title})
 	}
 
+	// The bound note first, then every document runs produced; Upsert
+	// folds the two together when the note is one of them.
 	if doc := metaString(meta, DocKey); doc != "" {
-		bs = bs.Upsert(Binding{
-			Kind: KindDoc,
-			Ref:  doc,
-			Meta: map[string]string{MetaStore: StoreVault},
-		})
+		bs = bs.Upsert(Binding{Kind: KindDoc, Ref: doc})
+	}
+	for _, doc := range DocsFromMeta(meta) {
+		if doc == "" {
+			continue
+		}
+		bs = bs.Upsert(Binding{Kind: KindDoc, Ref: doc})
 	}
 
 	return bs

@@ -177,8 +177,8 @@ export class WfQueueView extends ItemView {
             for (const result of results) {
                 if (result.escalated) {
                     new Notice(`${result.task.shortId} needs you: ${result.reason ?? "escalated"}`, 8000);
-                } else if (result.closed) {
-                    new Notice(`${result.task.shortId} closed.`);
+                } else if (result.completed) {
+                    new Notice(`${result.task.shortId} run complete — pick the next workflow or close it.`);
                 }
                 for (const note of result.notes ?? []) {
                     new Notice(`Note written: ${note}`, 6000);

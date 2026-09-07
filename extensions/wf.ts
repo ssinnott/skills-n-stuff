@@ -83,7 +83,7 @@ interface ShowTask extends Task {
 
 interface RunResult {
 	task: Task;
-	closed: boolean;
+	completed: boolean;
 	escalated: boolean;
 	reason?: string;
 	session?: string;
@@ -117,7 +117,7 @@ const USAGE = [
 	"  /wf escalations        what needs you",
 	"  /wf show <ref>         one task in detail",
 	"  /wf attach <ref>       switch this session to the task's agent session",
-	"  /wf run [--max N]      dispatch work now",
+	"  /wf run <ref> [--workflow W]   run one workflow against a task",
 	"  /wf run --ref <ref>    dispatch one task",
 	"  /wf workflows          canned workflows that are loaded",
 	"  /wf bind <ref> <note>  bind a task to a vault note",
@@ -210,8 +210,8 @@ function renderRun(results: RunResult[]): string {
 		if (r.escalated) {
 			lines.push(`${r.task.shortId} escalated — ${r.reason || "needs a human"}`);
 			lines.push(`   /wf attach ${r.task.shortId}`);
-		} else if (r.closed) {
-			lines.push(`${r.task.shortId} closed — ${r.task.title}`);
+		} else if (r.completed) {
+			lines.push(`${r.task.shortId} run complete — ${r.task.title} (next: /wf run ${r.task.shortId} --workflow <name>, or wf close ${r.task.shortId})`);
 		}
 		for (const note of r.notes || []) lines.push(`   note: ${note}`);
 		for (const ref of r.created || []) lines.push(`   follow-on: ${ref}`);

@@ -60,34 +60,22 @@ func (a *app) printRecord(found resolved) {
 	fmt.Println()
 	fmt.Printf("id        %s\n", task.ID)
 
-	own := taskOwnBindings(rec)
-	for _, b := range own.ByKind(wf.KindRepo) {
-		fmt.Println(a.bindingLine("", b, found))
-	}
 	a.printTrackerFacts(found)
 
 	for i, run := range rec.Runs {
 		fmt.Println()
 		fmt.Printf("run %-5d %s\n", i+1, runSummary(run))
-		for _, b := range sortBindings(rec.Produced(run.ID)) {
+		for _, b := range sortBindings(rec.Bindings.From(run.ID)) {
 			fmt.Println(a.bindingLine("  ", b, found))
 		}
 	}
 
-	// Whatever is the task's own and is not identity: an adopted PR, a note
-	// bound by hand, a live review pane, a NEXT sibling. Printed after the
-	// runs because that is where they read — they are the task's current
-	// state, not any run's output.
-	var rest wf.Bindings
-	for _, b := range own {
-		if b.Kind != wf.KindRepo {
-			rest = append(rest, b)
-		}
-	}
-	rest = sortBindings(rest)
-	if len(rest) > 0 {
+	// Whatever the ledger holds that no recorded run produced. Printed after
+	// the runs because that is where it reads — the task's current state,
+	// not any run's output.
+	if own := sortBindings(taskOwnBindings(rec)); len(own) > 0 {
 		fmt.Println()
-		for _, b := range rest {
+		for _, b := range own {
 			fmt.Println(a.bindingLine("", b, found))
 		}
 	}
@@ -99,6 +87,12 @@ func (a *app) printRecord(found resolved) {
 func (a *app) printTrackerFacts(found resolved) {
 	task := found.Task
 	fmt.Printf("priority  %d\n", task.Priority)
+	for _, pr := range wf.PRsFromMeta(task.Meta) {
+		fmt.Printf("pr        %s\n", pr)
+	}
+	for _, doc := range wf.DocsFromMeta(task.Meta) {
+		fmt.Printf("document  %s\n", doc)
+	}
 	if len(task.Labels) > 0 {
 		fmt.Printf("labels    %s\n", strings.Join(task.Labels, ", "))
 	}
@@ -177,12 +171,12 @@ func (a *app) bindingLine(indent string, b wf.Binding, found resolved) string {
 		fmt.Sprintf("%s%-9s %-44s %s", indent, b.Kind, b.Ref, a.bindingDetail(b, found)), " ")
 }
 
-// bindingDetail is the right-hand column: the binding's state in the word
-// its kind actually uses, plus whichever single fact makes it actionable.
+// bindingDetail is the right-hand column: the binding's state, plus
+// whichever single fact makes it actionable.
 func (a *app) bindingDetail(b wf.Binding, found resolved) string {
 	var parts []string
-	if label := b.StateLabel(); label != "" {
-		parts = append(parts, label)
+	if b.State != wf.BindingUnknown {
+		parts = append(parts, string(b.State))
 	}
 
 	switch b.Kind {
@@ -194,18 +188,8 @@ func (a *app) bindingDetail(b wf.Binding, found resolved) string {
 		// The command, not the path: the path is already in the left
 		// column and is not what anyone types.
 		parts = append(parts, "wf attach "+taskRef(found.Task))
-	case wf.KindTask:
-		if rel := b.Get(wf.MetaRelation); rel != "" {
-			parts = append(parts, rel)
-		}
 	}
 
-	// A machine-local binding recorded elsewhere is a fact about another
-	// machine, not a path on this one. Saying whose it is beats printing a
-	// directory that will not resolve here.
-	if b.Host != "" && b.Host != a.cfg.Actor {
-		parts = append(parts, "on "+b.Host)
-	}
 	if b.Label != "" {
 		parts = append(parts, b.Label)
 	}
@@ -225,7 +209,7 @@ func taskRef(task wf.Task) string {
 // is the same order `wf review`'s ladder walks.
 var kindOrder = map[wf.Kind]int{
 	wf.KindRepo: 0, wf.KindWorkspace: 1, wf.KindSession: 2,
-	wf.KindPR: 3, wf.KindDoc: 4, wf.KindIssue: 5, wf.KindTask: 6,
+	wf.KindPR: 3, wf.KindDoc: 4, wf.KindIssue: 5,
 }
 
 // sortBindings puts a run's output in a readable order without disturbing

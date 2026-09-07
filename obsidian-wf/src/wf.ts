@@ -37,16 +37,14 @@ export interface WfTask {
 /**
  * One typed reference wf's ledger holds against a task — a produced PR, a
  * worktree, a session, a bound note. Mirrors `jsonBinding` in wf's own
- * `cmd/wf/output.go`. `stateLabel` is the word to show a human, carried
- * rather than derived so a client that translated `state` for itself could
- * not drift from what `wf show` prints for the same binding.
+ * `cmd/wf/output.go`. `state` is the word `wf show` prints for the binding,
+ * shown as is so a client cannot drift from it.
  */
 export interface WfBinding {
     kind: string;
     ref: string;
     label?: string;
     state?: string;
-    stateLabel?: string;
     /** RFC3339 timestamp. */
     at?: string;
     /** The run id that produced this binding, empty for the task's own. */
@@ -91,7 +89,8 @@ export type WfShow = WfTask & {
 
 export interface WfRunResult {
     task: WfTask;
-    closed: boolean;
+    /** The run reported DONE with something to show; the task stays open in review. */
+    completed: boolean;
     escalated: boolean;
     reason?: string;
     session?: string;

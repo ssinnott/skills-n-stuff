@@ -44,8 +44,7 @@ func TestNewSessionPathSanitizesRef(t *testing.T) {
 }
 
 func TestBuildArgsPassesSessionAndPrompt(t *testing.T) {
-	p := &Pi{}
-	args := p.BuildArgs("/sessions/abc4.jsonl", "do the thing", "")
+	args := BuildArgs("/sessions/abc4.jsonl", "do the thing", "")
 
 	// wf mints the session path so the binding is writable before the agent
 	// produces anything — that is the whole reason attach works on a crash.
@@ -60,17 +59,8 @@ func TestBuildArgsPassesSessionAndPrompt(t *testing.T) {
 	}
 }
 
-func TestBuildArgsIncludesExtras(t *testing.T) {
-	p := &Pi{ExtraArgs: []string{"--dangerously-skip-permissions"}}
-	args := p.BuildArgs("/s/a.jsonl", "prompt", "")
-	if !contains(args, "--dangerously-skip-permissions") || args[len(args)-1] != "prompt" {
-		t.Errorf("args = %v, want extras before the prompt", args)
-	}
-}
-
 func TestBuildArgsIncludesModel(t *testing.T) {
-	p := &Pi{}
-	args := p.BuildArgs("/s/a.jsonl", "prompt", "opus")
+	args := BuildArgs("/s/a.jsonl", "prompt", "opus")
 	if !contains(args, "--model") || args[len(args)-1] != "prompt" {
 		t.Errorf("args = %v, want --model before the prompt", args)
 	}
@@ -82,8 +72,7 @@ func TestBuildArgsIncludesModel(t *testing.T) {
 }
 
 func TestBuildArgsOmitsModelWhenEmpty(t *testing.T) {
-	p := &Pi{}
-	args := p.BuildArgs("/s/a.jsonl", "prompt", "")
+	args := BuildArgs("/s/a.jsonl", "prompt", "")
 	if contains(args, "--model") {
 		t.Errorf("args = %v, want no --model flag when unset", args)
 	}
@@ -124,9 +113,6 @@ func TestStartCapturesOutputAndProfile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Wait() error = %v", err)
 	}
-	if !result.OK {
-		t.Errorf("result = %+v, want OK", result)
-	}
 	if !strings.Contains(result.TranscriptTail, "profile=/profiles/coding") {
 		t.Errorf("PI_CODING_AGENT_DIR not passed through:\n%s", result.TranscriptTail)
 	}
@@ -157,9 +143,6 @@ func TestStartNonZeroExitIsNotAnError(t *testing.T) {
 	result, err := handle.Wait(context.Background())
 	if err != nil {
 		t.Fatalf("Wait() error = %v, want the failure reported in the result", err)
-	}
-	if result.OK || result.ExitCode != 3 {
-		t.Errorf("result = %+v, want a failed run with exit 3", result)
 	}
 	if !strings.Contains(result.TranscriptTail, "blew up") {
 		t.Errorf("stderr must reach the transcript:\n%s", result.TranscriptTail)

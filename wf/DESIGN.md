@@ -7,15 +7,64 @@ pi-session: —
 
 ## Goal
 
-One CLI that runs agent work off a queue. It reads ready work from a
-tracker, leases it, gives it an isolated workspace, runs a coding agent in
-it, parses the agent's outcome verbs, and writes the results back to the
-tracker as comments, links, and evidence-backed closes. The interactive
-agent session becomes a client of the same CLI, not its host.
+One CLI that runs agent workflows against tracker tasks. A human names a
+task and a workflow; wf leases the task, gives the agent an isolated
+workspace, runs it, parses the agent's outcome verbs, and writes what it
+produced back to the tracker as comments and links. A human closes the
+task when its work is done, with the evidence those runs accumulated. The
+interactive agent session is a client of the same CLI, not its host.
 
 kata is the first queue backend, pi the first runner, git worktrees the
 first workspace. The seams exist so the second of each is an adapter
 rather than a rewrite.
+
+## A task is a unit of work; a run is one workflow against it
+
+This section supersedes the loop-shaped language below, which is kept
+because the decisions it argues for still stand.
+
+A bug report is one task from the moment it is filed until the fix is
+merged. Between those two points a human runs several workflows against it
+— reproduce it, file it upstream, open the PR, address the review — one at
+a time, each by hand, with no guarantee of what the next one is or whether
+there is one. So:
+
+- **A run completes; it never closes.** A run that reports `DONE` with
+  something to show records its output on the task and leaves the task open
+  in `review`, for a human's next move. `wf close <ref>` is the terminal
+  transition, taken by a human, with the pull requests and documents every
+  run recorded. Rejected: a `next:` pointer between workflows, which would
+  have been a workflow engine in miniature and would have encoded a sequence
+  nobody can promise.
+- **Every run is manual.** There is no unattended loop, no picking from the
+  ready queue, no concurrency cap, no priority sort. `wf run <ref>` is the
+  whole dispatch surface. A task flagged `needs-human` runs again the same
+  way; the flag clears when the run starts. Rejected: automatic first runs
+  by label, which would have left the only automatic step being the one
+  nobody asked for.
+- **A run's bar is lower than a close's.** A run has to show a `PR:`, a
+  `DOC:` or an `ISSUE:`, because filing an issue is a whole run's job when
+  the workflow was "file the issue". A close counts only pull requests and
+  documents, because an issue says work moved elsewhere, not that this
+  task's work exists.
+- **Output accumulates.** `wf.pr`, `wf.issue` and `wf.docs` on the tracker
+  row are lists merged across every run, never replaced by the last one.
+  `wf.doc`, the task's note, is set by the first run that produces a
+  document and left alone after.
+- **The branch outlives the checkout.** A completed run disposes its
+  worktree but not its branch; the next run on the task is handed the
+  branch its predecessor recorded and gets a checkout of it, or continues
+  in the kept checkout of an escalated run, half-done state and all. That
+  is what lets the comment round land on the branch the PR was pushed from.
+- **State is four words.** `running`, `review`, `needs-human`, `done`. A
+  task with no state has never been run. Nothing reads the state to make a
+  decision; it is for the human and the tracker's UI.
+
+The vocabulary this removed — a `next` pointer never built, `claimed`,
+`ready` and `blocked` states never set, merged and superseded binding
+states never read, task-to-task relations never written, evidence kinds no
+verb could produce, and the seam methods and fields only one side of a
+seam ever touched — went with it.
 
 [DESIGN-slim.md](DESIGN-slim.md) proposes cutting wf back to this description,
 and names which of the pieces built since then stay.
@@ -31,12 +80,13 @@ friends), which are read for one release and never written.
 
 ## Non-goals
 
-- No workflow engine. The graph is `ready → lease → run → apply → release`,
-  one step deep. Durable multi-step execution state is a problem this
-  doesn't have; the ledger and the agent's own session file already hold
-  everything worth resuming.
-- No daemon of our own. kata already runs one, owns the durable event
-  cursor, and ships two UIs over it. `wf run` is a loop, not a service.
+- No workflow engine. One run is `lease → run → apply → release`, one step
+  deep, and which run comes next is a human's call each time. Durable
+  multi-step execution state is a problem this doesn't have; the tracker
+  row and the ledger already hold everything worth resuming.
+- No daemon of our own, and no loop either. kata already runs a daemon,
+  owns the durable event cursor, and ships two UIs over it. `wf run` runs
+  one task once.
 - No second source of truth. wf stores no issue state; every fact it acts
   on is read from the queue backend and every result is written back to it.
 - No tracker features. Priorities, dependencies, scheduling and search are
@@ -76,8 +126,8 @@ friends), which are read for one release and never written.
 
 - **State vocabulary lives above the interface too.** kata's status is
   binary open/closed; Linear has real workflow states; GitHub Projects has
-  custom single-select fields. wf defines `ready / claimed / running /
-  review / blocked / needs-human / done` and each adapter maps it. On kata
+  custom single-select fields. wf defines `running / review / needs-human /
+  done` and each adapter maps it. On kata
   the mapping is metadata, following the convention kata's own docs use
   (`work.attention=needs-human`), so the escalation queue is a plain
   `kata list --meta` and renders for free in the CLI, TUI and web UI.
@@ -363,8 +413,9 @@ friends), which are read for one release and never written.
       sibling, record filed issues without gating, escalate on anything
       that did not report DONE.
 - [x] Artifact binding: DOC outcomes move into the vault and link both ways.
-- [x] `wf run --once` and `wf run --max N`: leases, renewal while running,
-      stale reclaim, concurrency cap.
+- [x] `wf run <ref>`: leases, renewal while running, stale reclaim. The
+      unattended loop and its concurrency cap were built and then removed
+      once every run became a human's choice.
 - [x] Integration tests against a real kata daemon (v0.16.0): create, get,
       ready, metadata, leases, claim conflicts, release, close with evidence,
       escalation queries, idempotent follow-ons.
@@ -449,7 +500,8 @@ with kata's wire format, and the integration tests are what keep it honest.
 
 ## Done means
 
-`wf run --once` picks the top ready issue off a real kata daemon, leases
-it, builds a worktree, runs pi in it, and closes the issue with evidence
-the agent actually produced — and `wf attach <ref>` drops you into that
-exact session afterwards.
+`wf run <ref> --workflow repro` leases a real kata issue, builds a
+worktree, runs pi in it, and records what the agent produced on the issue;
+`wf run <ref> --workflow plan-to-pr` picks up the same branch; `wf close
+<ref>` closes the issue with the pull request those runs recorded — and
+`wf attach <ref>` drops you into any of those sessions afterwards.

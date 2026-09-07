@@ -1,24 +1,28 @@
 // Package wf holds the core domain: the task model, the outcome protocol,
-// leases, session binding, and the three seams (queue, runner, workspace).
-// See DESIGN.md.
+// leases, and the three seams (queue, runner, workspace). See DESIGN.md.
 package wf
 
 import "context"
 
-// WorkState is wf's own vocabulary; backends map it, none own it.
+// WorkState is wf's own vocabulary; backends map it, none own it. A task
+// with no state has never been run.
 type WorkState string
 
 const (
-	StateReady      WorkState = "ready"
-	StateClaimed    WorkState = "claimed"
-	StateRunning    WorkState = "running"
-	StateReview     WorkState = "review"
-	StateBlocked    WorkState = "blocked"
+	// StateRunning is set for the life of one run.
+	StateRunning WorkState = "running"
+	// StateReview means the last run completed and a human decides what
+	// happens next: another workflow, or `wf close`.
+	StateReview WorkState = "review"
+	// StateNeedsHuman means the last run failed or ended without DONE.
 	StateNeedsHuman WorkState = "needs-human"
-	StateDone       WorkState = "done"
+	// StateDone is set when a human closes the task.
+	StateDone WorkState = "done"
 )
 
-// Task is one unit of queued work, normalized across backends.
+// Task is one unit of work, normalized across backends. It is long-lived:
+// runs under any number of workflows happen against it, and a human closes
+// it when the work is done.
 type Task struct {
 	// ID is the durable ref, surviving renames and moves (a ULID on kata).
 	ID string
@@ -30,34 +34,27 @@ type Task struct {
 	Labels   []string
 	Owner    string
 	Meta     map[string]any
-	// Rev is an opaque revision for optimistic concurrency, when offered.
-	Rev string
 }
 
 // CloseResult is the evidence a task closes with.
 type CloseResult struct {
 	Message string
 	PRs     []string
-	Commits []string
-	// Docs are paths of produced documents.
-	Docs  []string
-	Tests []string
+	// Docs are vault-relative paths of produced documents.
+	Docs []string
 }
 
-// HasEvidence reports whether the run left any trace; a close without one is refused.
+// HasEvidence reports whether the task's work left a trace; a close without
+// one is refused.
 func (r CloseResult) HasEvidence() bool {
-	return len(r.PRs) > 0 || len(r.Commits) > 0 || len(r.Docs) > 0 || len(r.Tests) > 0
+	return len(r.PRs) > 0 || len(r.Docs) > 0
 }
 
 // CreateInput describes a task to file.
 type CreateInput struct {
 	Title          string
 	Body           string
-	Labels         []string
-	Priority       int
 	RelatedTo      string
-	BlockedBy      string
-	Meta           map[string]string
 	IdempotencyKey string
 }
 
@@ -65,41 +62,39 @@ type CreateInput struct {
 type SetMetaOptions struct {
 	// JSON marks the value as raw JSON rather than a plain string.
 	JSON bool
-	// IfMatch is an optimistic concurrency guard, where available.
-	IfMatch string
 }
 
-// Queue is the tracker seam: seven verbs plus metadata access.
+// Queue is the tracker seam: the verbs the run loop and `wf close` need,
+// plus metadata access.
 type Queue interface {
-	Name() string
 	// Ready returns open, unblocked, actionable work.
 	Ready(ctx context.Context, limit int) ([]Task, error)
 	Get(ctx context.Context, ref string) (Task, error)
 	Claim(ctx context.Context, ref, actor string) error
 	Release(ctx context.Context, ref string) error
 	Comment(ctx context.Context, ref, body string) error
-	Close(ctx context.Context, ref string, result CloseResult, idempotencyKey string) error
+	Close(ctx context.Context, ref string, result CloseResult) error
 	Create(ctx context.Context, in CreateInput) (Task, error)
 	SetMeta(ctx context.Context, ref, key, value string, opts SetMetaOptions) error
 	UnsetMeta(ctx context.Context, ref, key string) error
-	GetMeta(ctx context.Context, ref string) (map[string]any, error)
 }
 
-// Workspace is an isolated checkout for one task: one worktree per task. Repo
-// and Branch are on the interface because a run has to *record* them, not recompute them later from a title a human is free to edit.
+// Workspace is an isolated checkout for one run: one worktree per task.
+// Branch is on the interface because a run has to *record* it, not
+// recompute it later from a title a human is free to edit.
 type Workspace interface {
 	Path() string
-	// Repo is the repository this checkout came from.
-	Repo() string
 	// Branch is the ref the checkout is on; empty for a provider with none.
 	Branch() string
 	Dispose(ctx context.Context) error
 }
 
-// WorkspaceProvider builds workspaces.
+// WorkspaceProvider builds workspaces. branch names the branch an earlier
+// run on the task left behind; a provider reuses it when it still exists,
+// so a later run picks up where the last one pushed, and starts fresh
+// otherwise.
 type WorkspaceProvider interface {
-	Name() string
-	Create(ctx context.Context, task Task) (Workspace, error)
+	Create(ctx context.Context, task Task, branch string) (Workspace, error)
 }
 
 // RunOptions configures a single agent run.
@@ -114,10 +109,10 @@ type RunOptions struct {
 	Model string
 }
 
-// RunResult is what a settled run reports back.
+// RunResult is what a settled run reports back. A non-zero exit is not an
+// error: the agent may still have reported outcomes worth applying, and one
+// that did not escalates for having no DONE.
 type RunResult struct {
-	OK       bool
-	ExitCode int
 	// TranscriptTail is trailing output, scanned for outcome verbs.
 	TranscriptTail string
 }
@@ -126,13 +121,10 @@ type RunResult struct {
 type RunHandle interface {
 	SessionID() string
 	SessionPath() string
-	Cwd() string
 	Wait(ctx context.Context) (RunResult, error)
-	Abort() error
 }
 
 // Runner is the agent seam.
 type Runner interface {
-	Name() string
 	Start(ctx context.Context, opts RunOptions) (RunHandle, error)
 }

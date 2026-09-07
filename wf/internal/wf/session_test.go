@@ -18,7 +18,6 @@ type fakeQueue struct {
 
 func newFakeQueue() *fakeQueue { return &fakeQueue{meta: map[string]any{}} }
 
-func (f *fakeQueue) Name() string                                { return "fake" }
 func (f *fakeQueue) Ready(context.Context, int) ([]Task, error)  { return nil, nil }
 func (f *fakeQueue) Get(context.Context, string) (Task, error)   { return Task{}, nil }
 func (f *fakeQueue) Claim(context.Context, string, string) error { return nil }
@@ -29,7 +28,7 @@ func (f *fakeQueue) Comment(_ context.Context, _, body string) error {
 	return nil
 }
 
-func (f *fakeQueue) Close(_ context.Context, _ string, result CloseResult, _ string) error {
+func (f *fakeQueue) Close(_ context.Context, _ string, result CloseResult) error {
 	if f.closeErr != nil {
 		return f.closeErr
 	}
@@ -46,13 +45,7 @@ func (f *fakeQueue) UnsetMeta(_ context.Context, _, key string) error {
 	delete(f.meta, key)
 	return nil
 }
-func (f *fakeQueue) GetMeta(context.Context, string) (map[string]any, error) {
-	out := map[string]any{}
-	for k, v := range f.meta {
-		out[k] = v
-	}
-	return out, nil
-}
+
 func (f *fakeQueue) SetMeta(_ context.Context, _, key, value string, _ SetMetaOptions) error {
 	f.meta[key] = value
 	return nil
@@ -80,5 +73,9 @@ func TestSeedPreambleCarriesRefAndVerbs(t *testing.T) {
 	// The one-writer rule has to be stated, or agents close their own issues.
 	if !strings.Contains(got, "Do NOT close it") {
 		t.Error("preamble must forbid the agent from closing the issue")
+	}
+	// The output bar is a run's bar: an ISSUE alone is enough for DONE.
+	if !strings.Contains(got, "at least one PR, DOC, or ISSUE line") {
+		t.Error("preamble must tell the agent what a DONE needs to show")
 	}
 }

@@ -23,7 +23,8 @@ const usage = `wf — workflow CLI over pluggable queues
   wf show <ref>                                                one task: its runs and what each produced
   wf escalations                                               tasks flagged needs-human
   wf workflows                                                 canned workflows loaded from the workflow dir
-  wf run [<ref>] [--once] [--max N] [--repo P] [--workflow W]  dispatch work to agents
+  wf run <ref> [--workflow W] [--repo P]                       run one workflow against a task
+  wf close <ref> [--message M]                                 close a task with the evidence its runs recorded
   wf attach <ref>                                              open the task's pi session
   wf bind <ref> <note.md>                                      bind a task to an Obsidian note, both ways
   wf ui [<ref>]                                                print the web UI deep link for a task
@@ -177,6 +178,8 @@ func run(ctx context.Context, argv []string) (int, error) {
 		return a.cmdWorkflows(rest)
 	case "run":
 		return a.cmdRun(ctx, rest)
+	case "close":
+		return a.cmdClose(ctx, rest)
 	case "attach":
 		return a.cmdAttach(ctx, rest)
 	case "bind":
@@ -187,10 +190,6 @@ func run(ctx context.Context, argv []string) (int, error) {
 		return a.cmdReview(ctx, rest)
 	case "gc":
 		return a.cmdGC(ctx, rest)
-	case "migrate-ledger":
-		// Hidden: a one-off migration, not part of the command surface.
-		// See cmd/wf/migrate.go.
-		return a.cmdMigrateLedger(ctx, rest)
 	default:
 		return 1, fmt.Errorf("unknown command: %s\n\n%s", cmd, usage)
 	}

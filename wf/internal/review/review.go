@@ -107,10 +107,13 @@ type BranchChecker func(ctx context.Context, repo, branch string) bool
 
 // GitBranchChecker is the production BranchChecker.
 func GitBranchChecker(ctx context.Context, repo, branch string) bool {
-	return workspace.BranchExists(ctx, "", repo, branch)
+	return workspace.BranchExists(ctx, repo, branch)
 }
 
-// BuildLadder assembles the task's bindings and the externals no binding holds.
+// BuildLadder assembles the task's bindings and the externals no binding
+// holds. The branch is the one the task's last checkout recorded, since a
+// title may have changed since; only a task with no checkout on record gets
+// the name a fresh run would cut.
 func BuildLadder(
 	ctx context.Context,
 	task wf.Task,
@@ -121,6 +124,9 @@ func BuildLadder(
 	bs := append(wf.LoadBindings(task), local.Live(wf.KindWorkspace)...)
 
 	ex := Externals{Branch: "wf/" + workspace.WorktreeName(task)}
+	if last, ok := local.Last(wf.KindWorkspace); ok && last.Get(wf.MetaBranch) != "" {
+		ex.Branch = last.Get(wf.MetaBranch)
+	}
 	if cfg != nil {
 		ex.Repo = cfg.Repo
 		ex.Base = cfg.Base

@@ -13,7 +13,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/ssinnott/skills-n-stuff/wf/internal/wf"
@@ -25,16 +24,9 @@ type Pi struct {
 	Bin string
 	// SessionRoot is where wf-owned session files are written.
 	SessionRoot string
-	// ProfileDir becomes PI_CODING_AGENT_DIR, selecting the worker's
-	// package and skill set.
-	ProfileDir string
-	// ExtraArgs are appended before the prompt, for model or tool flags.
-	ExtraArgs []string
 }
 
 var _ wf.Runner = (*Pi)(nil)
-
-func (p *Pi) Name() string { return "pi" }
 
 func (p *Pi) bin() string {
 	if p.Bin != "" {
@@ -82,51 +74,26 @@ func NewSessionPath(root, taskRef string, now time.Time) (id, path string) {
 type piRun struct {
 	sessionID   string
 	sessionPath string
-	cwd         string
-
-	cmd    *exec.Cmd
-	output *bytes.Buffer
-
-	mu   sync.Mutex
-	done bool
+	cmd         *exec.Cmd
+	output      *bytes.Buffer
 }
 
 func (r *piRun) SessionID() string   { return r.sessionID }
 func (r *piRun) SessionPath() string { return r.sessionPath }
-func (r *piRun) Cwd() string         { return r.cwd }
 
+// Wait blocks until pi exits. A non-zero exit is not an error to the
+// caller: the agent may still have reported outcomes worth applying, and
+// one that did not will escalate for want of a DONE.
 func (r *piRun) Wait(ctx context.Context) (wf.RunResult, error) {
 	err := r.cmd.Wait()
-
-	r.mu.Lock()
-	r.done = true
-	r.mu.Unlock()
-
 	result := wf.RunResult{TranscriptTail: r.output.String()}
-
 	if err != nil {
-		var exitErr *exec.ExitError
-		if e, ok := err.(*exec.ExitError); ok {
-			exitErr = e
-			result.ExitCode = exitErr.ExitCode()
-			// A non-zero exit is not an error to the caller: the agent may
-			// still have reported outcomes worth applying.
+		if _, ok := err.(*exec.ExitError); ok {
 			return result, nil
 		}
 		return result, fmt.Errorf("pi run: %w", err)
 	}
-
-	result.OK = true
 	return result, nil
-}
-
-func (r *piRun) Abort() error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.done || r.cmd.Process == nil {
-		return nil
-	}
-	return r.cmd.Process.Kill()
 }
 
 // Start spawns pi against a pre-minted session file and returns as soon as
@@ -146,18 +113,12 @@ func (p *Pi) Start(ctx context.Context, opts wf.RunOptions) (wf.RunHandle, error
 		ref = "run"
 	}
 	id, path := NewSessionPath(root, ref, time.Now())
-	args := p.BuildArgs(path, opts.Prompt, opts.Model)
 
-	cmd := exec.CommandContext(ctx, p.bin(), args...)
+	cmd := exec.CommandContext(ctx, p.bin(), BuildArgs(path, opts.Prompt, opts.Model)...)
 	cmd.Dir = opts.Cwd
-
-	profile := opts.ProfileDir
-	if profile == "" {
-		profile = p.ProfileDir
-	}
 	cmd.Env = os.Environ()
-	if profile != "" {
-		cmd.Env = append(cmd.Env, "PI_CODING_AGENT_DIR="+profile)
+	if opts.ProfileDir != "" {
+		cmd.Env = append(cmd.Env, "PI_CODING_AGENT_DIR="+opts.ProfileDir)
 	}
 
 	// stdout and stderr both feed the transcript: an agent that failed
@@ -171,7 +132,7 @@ func (p *Pi) Start(ctx context.Context, opts wf.RunOptions) (wf.RunHandle, error
 		return nil, fmt.Errorf("start pi: %w", err)
 	}
 
-	return &piRun{sessionID: id, sessionPath: path, cwd: opts.Cwd, cmd: cmd, output: output}, nil
+	return &piRun{sessionID: id, sessionPath: path, cmd: cmd, output: output}, nil
 }
 
 // BuildArgs assembles pi's argv. ASSUMPTION, unverified against a live pi:
@@ -179,9 +140,8 @@ func (p *Pi) Start(ctx context.Context, opts wf.RunOptions) (wf.RunHandle, error
 // a path that does not yet exist, and `--model <name>` selects the model —
 // per pi's published CLI reference (`-p, --print`, `--session <path|id>`,
 // `--model <name>`).
-func (p *Pi) BuildArgs(sessionPath, prompt, model string) []string {
+func BuildArgs(sessionPath, prompt, model string) []string {
 	args := []string{"--session", sessionPath, "-p"}
-	args = append(args, p.ExtraArgs...)
 	if model != "" {
 		args = append(args, "--model", model)
 	}
