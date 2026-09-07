@@ -1,9 +1,5 @@
-// Package workspace provides isolated checkouts for agent runs.
-//
-// One worktree per task. Two agents in one checkout is the failure that
-// costs an afternoon: they fight over the index, over branch state, and
-// over each other's uncommitted work, and the resulting mess looks like an
-// agent bug rather than a scheduling one.
+// Package workspace provides isolated git-worktree checkouts for agent
+// runs, one worktree per task. See DESIGN.md.
 package workspace
 
 import (
@@ -25,8 +21,7 @@ type Worktree struct {
 	branch string
 	repo   string
 	git    string
-	// keep suppresses removal on Dispose, so a run that escalated leaves
-	// its evidence on disk for a human to open.
+	// keep suppresses removal on Dispose, for an escalated run's evidence.
 	keep bool
 }
 
@@ -34,16 +29,13 @@ func (w *Worktree) Path() string   { return w.dir }
 func (w *Worktree) Repo() string   { return w.repo }
 func (w *Worktree) Branch() string { return w.branch }
 
-// compile-time proof the accessors a run records through are the ones the
-// seam promises.
+// compile-time proof Worktree satisfies the seam.
 var _ wf.Workspace = (*Worktree)(nil)
 
 // Keep marks the worktree to survive Dispose.
 func (w *Worktree) Keep() { w.keep = true }
 
-// Dispose removes the worktree and its branch unless it has been kept.
-// Removal is best effort on the branch: a worktree whose work was pushed
-// is worth cleaning up even if the branch ref lingers.
+// Dispose removes the worktree and its branch (best effort) unless kept.
 func (w *Worktree) Dispose(ctx context.Context) error {
 	if w.keep {
 		return nil
@@ -88,17 +80,8 @@ func (p *Provider) prefix() string {
 	return p.BranchPrefix
 }
 
-// Create cuts a worktree for the task on a fresh branch.
-//
-// It never reuses an existing directory — silently handing an agent someone
-// else's checkout is the failure this package exists to prevent — and it no
-// longer *refuses* one either. WorktreeName is derived from the task, so the
-// name a re-run computes is the name its predecessor already holds, and a
-// run that escalated has its checkout deliberately kept on disk: refusing
-// meant a task could never be re-run while the evidence from its last run
-// was still there, which is precisely the case a re-run is for. A taken name
-// takes the next free suffix instead, the same answer artifact binding
-// already gives two runs producing one filename.
+// Create cuts a worktree for the task on a fresh branch. It never reuses an
+// existing directory; a taken name gets the next free numeric suffix.
 func (p *Provider) Create(ctx context.Context, task wf.Task) (wf.Workspace, error) {
 	if p.Repo == "" {
 		return nil, fmt.Errorf("worktree provider: no repository configured")
@@ -127,16 +110,12 @@ func (p *Provider) Create(ctx context.Context, task wf.Task) (wf.Workspace, erro
 	return &Worktree{dir: dir, branch: branch, repo: p.Repo, git: p.git()}, nil
 }
 
-// maxWorktrees bounds the search for a free name. It is a guard against a
-// root nobody ever cleans up, not a policy: fifty kept checkouts of one task
-// is a `wf gc` problem, and looping forever to find the fifty-first would
-// hide it.
+// maxWorktrees bounds the search for a free name; it is a guard, not a
+// cleanup policy.
 const maxWorktrees = 50
 
-// free returns the first directory and branch pair that nothing holds.
-//
-// Both halves have to be free, not just the directory: Dispose removes the
-// branch on a best-effort basis, so a branch can outlive its checkout, and
+// free returns the first directory and branch pair that nothing holds. Both
+// halves must be free: a branch can outlive its checkout, and
 // `git worktree add -b` refuses a name that is already a ref.
 func (p *Provider) free(ctx context.Context, base string) (dir, branch string, err error) {
 	if base == "" {
@@ -163,15 +142,10 @@ func (p *Provider) free(ctx context.Context, base string) (dir, branch string, e
 
 var unsafeChars = regexp.MustCompile(`[^a-z0-9]+`)
 
-// WorktreeName builds a directory name that is stable for a task and safe
-// on disk: the short id keeps it unique, the slug keeps it readable.
-//
-// It is the naming rule for a *new* worktree and deliberately not the
-// lookup rule for an existing one. The slug comes from the task's title, so
-// a rename in the tracker changes what this returns while the checkout and
-// the branch on disk keep the old name — which is why a run records its
-// branch on the workspace binding it produced (see wf.MetaBranch) rather
-// than expecting anyone to recompute it from here later.
+// WorktreeName builds a directory name stable for a task and safe on disk:
+// the short id keeps it unique, the slug keeps it readable. A tracker
+// rename changes what this returns, so a run records its actual branch
+// rather than recomputing it later.
 func WorktreeName(task wf.Task) string {
 	slug := unsafeChars.ReplaceAllString(strings.ToLower(task.Title), "-")
 	slug = strings.Trim(slug, "-")
@@ -203,11 +177,8 @@ func IsRepo(ctx context.Context, git, dir string) bool {
 	return err == nil
 }
 
-// BranchExists reports whether branch is a local ref in repo. `wf review`
-// uses this to decide whether a task's worktree branch is still around
-// after its checkout was disposed: which branch to ask about now comes off
-// the workspace binding the run recorded, and this is what tells "branch
-// was never pushed" apart from "branch merged and deleted."
+// BranchExists reports whether branch is a local ref in repo; `wf review`
+// uses it to tell an unpushed branch from a merged-and-deleted one.
 func BranchExists(ctx context.Context, git, repo, branch string) bool {
 	if git == "" {
 		git = "git"
