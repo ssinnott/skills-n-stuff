@@ -5,7 +5,8 @@
   "main": "main.js",
   "scripts": {
     "build": "esbuild src/main.ts --bundle --external:obsidian --external:electron --format=cjs --platform=node --outfile=main.js && cp src/styles.css styles.css",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --test src/*.test.mts"
   },
   "devDependencies": {
     "esbuild": "^0.24.0",

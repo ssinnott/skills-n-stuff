@@ -1,19 +1,8 @@
-// Package workflow holds canned workflows: named recipes a task can be
-// tossed into the tracker under.
-//
-// A workflow here is *dispatch wiring*, not agent judgment — which profile
-// to run under, what prompt to seed, which resources to put in front of the
-// agent, and where its artifacts land. The judgment stays in skills the
-// profile loads. That division is deliberate: pi-tasks decided that which
-// workflows an agent sees belongs to the user's pi profile rather than to
-// any repo, and nothing here changes that. wf only decides which profile to
-// invoke and what to hand it.
-//
-// The file format is markdown with flat frontmatter, matching the skill and
-// command files these workflows sit alongside. The frontmatter is
-// deliberately flat — scalars and comma-separated lists — because Go's
-// standard library has no YAML parser and a dependency is not worth five
-// keys.
+// Package workflow holds canned workflows: named recipes that pick a pi
+// profile and model, seed a prompt, and say where a task's artifacts land.
+// A workflow is dispatch wiring, not agent judgment. Files are markdown with
+// flat frontmatter, matching the skill and command files they sit alongside.
+// See DESIGN.md.
 package workflow
 
 import (
@@ -27,7 +16,7 @@ import (
 )
 
 // MetaKey is the task metadata naming a workflow explicitly. It wins over
-// label matching, so a one-off task can override the label convention.
+// label matching.
 const MetaKey = "wf.workflow"
 
 // Workflow is one canned recipe.
@@ -38,9 +27,7 @@ type Workflow struct {
 	Profile string
 	// Model names the model pi should run this workflow under, passed
 	// straight through as pi's --model value; empty runs the configured
-	// default. A plan-and-implement step and a one-line triage step warrant
-	// different models, so this lives on the workflow rather than the
-	// profile, which is about tools and skills, not model choice.
+	// default.
 	Model string
 	// Workspace is "worktree" (default) or "none" for tasks that need no
 	// checkout, such as research that only writes to the vault.
@@ -49,9 +36,8 @@ type Workflow struct {
 	Base      string
 	// Labels select this workflow for tasks carrying any of them.
 	Labels []string
-	// Resources are files put in front of the agent by absolute path.
-	// They are referenced, never copied: a template belongs to the vault or
-	// the workflow directory, not to a disposable worktree.
+	// Resources are files put in front of the agent by absolute path,
+	// referenced rather than copied.
 	Resources []string
 	// BindDocs makes DOC artifacts bind back into the Obsidian vault.
 	BindDocs bool
@@ -168,8 +154,6 @@ func (s *Set) Select(task wf.Task) (Workflow, bool) {
 		if w, found := s.byName[name]; found {
 			return w, true
 		}
-		// A task naming a workflow we do not have is a configuration error
-		// the caller should escalate, not silently run under a default.
 		return Workflow{Name: name}, false
 	}
 

@@ -130,8 +130,6 @@ export class WfQueueView extends ItemView {
                 text: task.lease.stale ? `stale: ${task.lease.actor}` : `running: ${task.lease.actor}`,
             });
         }
-        if (task.runs && task.runs > 1) meta.createSpan({ cls: "pi-wf-chip", text: `${task.runs} runs` });
-
         const actions = row.createDiv({ cls: "pi-wf-actions" });
 
         // Opening the row is the common case: note on the left, its issue

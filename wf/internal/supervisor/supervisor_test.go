@@ -362,6 +362,7 @@ func TestSessionIsBoundBeforeTheRunFinishes(t *testing.T) {
 	release := make(chan struct{})
 	r := &fakeRunner{transcript: "DONE\n", release: release}
 	s := newSupervisor(q, r, &fakeProvider{}, nil)
+	ledger := withLedger(t, s)
 
 	done := make(chan struct{})
 	go func() {
@@ -371,12 +372,15 @@ func TestSessionIsBoundBeforeTheRunFinishes(t *testing.T) {
 		}
 	}()
 
-	// While the agent is still working, the binding must already be readable:
-	// a hung run is exactly the one you need to attach to.
+	// While the agent is still working, the binding must already be
+	// readable in the ledger — a session is machine-local and never on the
+	// tracker — because a hung run is exactly the one you need to attach to.
 	deadline := time.After(2 * time.Second)
 	for {
-		if path, ok := q.meta("01HZ", wf.SessionPathKey).(string); ok && path != "" {
-			break
+		if rec, err := ledger.Load("01HZ"); err == nil {
+			if session, ok := rec.Bindings.Current(wf.KindSession); ok && session.Ref != "" {
+				break
+			}
 		}
 		select {
 		case <-deadline:

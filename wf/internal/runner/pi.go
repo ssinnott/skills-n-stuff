@@ -1,10 +1,6 @@
-// Package runner drives coding agents. pi is the only implementation.
-//
-// The runner deliberately learns as little as possible about pi's output:
-// it captures the run's text and hands it to the outcome parser. That is
-// the narrow waist doing its job — a runner that understood pi's event
-// schema would have to be rewritten for every other agent, and would break
-// whenever the schema moved.
+// Package runner drives coding agents; pi is the only implementation. It
+// captures a run's raw text and hands it to the outcome parser rather than
+// learning pi's event schema. See DESIGN.md.
 package runner
 
 import (
@@ -47,15 +43,9 @@ func (p *Pi) bin() string {
 	return "pi"
 }
 
-// sessionRoot is wf-owned rather than pi's own sessions directory.
-//
-// wf mints the session path and passes it to `--session`, instead of
-// letting pi choose one and then parsing it back out of the output. That is
-// what makes the binding writable at spawn — we know the path before the
-// agent has produced a byte. The cost is that these sessions do not appear
-// in pi's own `-r` browser, which is an acceptable trade because `wf attach`
-// is the intended way in, and because a wf-owned path survives the
-// worktree being disposed.
+// sessionRoot is wf-owned rather than pi's own sessions directory: wf mints
+// the path and passes it via `--session`, so the binding is writable at
+// spawn, before the agent has produced a byte.
 func (p *Pi) sessionRoot() (string, error) {
 	if p.SessionRoot != "" {
 		return p.SessionRoot, nil
@@ -120,8 +110,7 @@ func (r *piRun) Wait(ctx context.Context) (wf.RunResult, error) {
 			exitErr = e
 			result.ExitCode = exitErr.ExitCode()
 			// A non-zero exit is not an error to the caller: the agent may
-			// still have reported outcomes worth applying, and a run that
-			// reported nothing escalates rather than failing the loop.
+			// still have reported outcomes worth applying.
 			return result, nil
 		}
 		return result, fmt.Errorf("pi run: %w", err)
@@ -185,19 +174,11 @@ func (p *Pi) Start(ctx context.Context, opts wf.RunOptions) (wf.RunHandle, error
 	return &piRun{sessionID: id, sessionPath: path, cwd: opts.Cwd, cmd: cmd, output: output}, nil
 }
 
-// BuildArgs assembles pi's argv.
-//
-// ASSUMPTION, unverified against a live pi: print mode takes the prompt as
-// a positional argument, `--session` accepts a path that does not yet
-// exist, and `--model <name>` selects the model. All three are taken from
-// pi's published CLI reference (`-p, --print`, `--session <path|id>`,
-// `--model <name>`). If the first live run disagrees, this function is the
-// only thing to change.
-//
-// model comes from the dispatched workflow, resolved against config's
-// default before this call — ExtraArgs is the operator's own fixed flags
-// (tool access, sandboxing) and stays put regardless of which model a given
-// run asks for, so the two never fight over the same flag.
+// BuildArgs assembles pi's argv. ASSUMPTION, unverified against a live pi:
+// print mode takes the prompt as a positional argument, `--session` accepts
+// a path that does not yet exist, and `--model <name>` selects the model —
+// per pi's published CLI reference (`-p, --print`, `--session <path|id>`,
+// `--model <name>`).
 func (p *Pi) BuildArgs(sessionPath, prompt, model string) []string {
 	args := []string{"--session", sessionPath, "-p"}
 	args = append(args, p.ExtraArgs...)

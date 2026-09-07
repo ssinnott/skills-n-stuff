@@ -10,26 +10,11 @@ import (
 	"github.com/ssinnott/skills-n-stuff/wf/internal/note"
 )
 
-// Binding produced documents back into an Obsidian vault.
-//
-// A workflow that produces prose declares where it lands; wf moves the file
-// into the vault if it was written somewhere disposable, then writes both
-// halves of the id pair — `kata-issue` in the note's frontmatter and
-// `wf.doc` in the task's metadata. Nothing else is mirrored, so a bound
-// note and its task can diverge in content without ever conflicting.
+// Binding produced documents back into an Obsidian vault: moves DOC-outcome
+// files in, then writes both halves of the id pair. See DESIGN.md.
 
-// DocKey is the task-side half of the note binding. The key names the
-// role — a produced document — while *which* store holds it is a value on
-// the binding (MetaStore), so a second prose layer is a new value rather
-// than a second key with its own reader.
+// DocKey is the task-side half of the note binding.
 const DocKey = "wf.doc"
-
-// ObsidianNoteKey is the key DocKey replaced. Still read, so a task bound
-// by an earlier release keeps resolving; never written.
-//
-// Deprecated: delete one release after the rename ships, on the same terms
-// as the Legacy session keys.
-const ObsidianNoteKey = "obsidian.note"
 
 // BindOptions configures artifact binding for one run.
 type BindOptions struct {
@@ -37,7 +22,7 @@ type BindOptions struct {
 	Vault string
 	// VaultDir is where produced documents land, relative to the vault.
 	VaultDir string
-	// WorkspaceDir is where the agent ran, used to resolve relative paths.
+	// WorkspaceDir resolves relative document paths.
 	WorkspaceDir string
 }
 
@@ -52,8 +37,7 @@ type BoundDoc struct {
 
 // BindArtifacts moves DOC artifacts into the vault and links them to the
 // task. Documents that cannot be found are skipped rather than failing the
-// run: an agent that named a file it did not write should not cost you the
-// close, and the missing path stays visible in the run summary.
+// run.
 func BindArtifacts(
 	ctx context.Context,
 	q Queue,
@@ -97,9 +81,8 @@ func BindArtifacts(
 		return nil, nil
 	}
 
-	// The task points at one note — the first produced — while the rest are
-	// recorded in the run summary. A task with a single wf.doc stays
-	// queryable; a list would not.
+	// The task points at one note — the first produced — the rest are in the
+	// run summary.
 	if err := q.SetMeta(ctx, task.ID, DocKey, bound[0].VaultPath, SetMetaOptions{}); err != nil {
 		return bound, fmt.Errorf("bind note path on %s: %w", task.ShortID, err)
 	}
@@ -107,7 +90,7 @@ func BindArtifacts(
 }
 
 // placeInVault returns the document's path relative to the vault, moving it
-// there when the agent wrote it somewhere disposable like a worktree.
+// there if needed.
 func placeInVault(source string, opts BindOptions) (string, bool, error) {
 	vault, err := filepath.Abs(opts.Vault)
 	if err != nil {
@@ -118,7 +101,6 @@ func placeInVault(source string, opts BindOptions) (string, bool, error) {
 		return "", false, fmt.Errorf("resolve document %s: %w", source, err)
 	}
 
-	// Already in the vault: bind it where it lies.
 	if rel, err := filepath.Rel(vault, abs); err == nil && !strings.HasPrefix(rel, "..") {
 		return rel, false, nil
 	}
@@ -140,8 +122,7 @@ func placeInVault(source string, opts BindOptions) (string, bool, error) {
 	return rel, true, nil
 }
 
-// uniquePath avoids clobbering an existing note: two runs producing
-// "plan.md" must not silently overwrite each other.
+// uniquePath avoids clobbering an existing note.
 func uniquePath(path string) string {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return path
@@ -157,8 +138,7 @@ func uniquePath(path string) string {
 	return path
 }
 
-// moveFile renames where it can and copies across filesystems, which is the
-// common case when worktrees and the vault live on different mounts.
+// moveFile renames where it can and copies across filesystems.
 func moveFile(src, dest string) error {
 	if err := os.Rename(src, dest); err == nil {
 		return nil

@@ -5,55 +5,46 @@ import "testing"
 func TestReviewArgsMutualExclusion(t *testing.T) {
 	tests := []struct {
 		name    string
-		args    []string
-		wantRef string
-		wantPR  string
+		ref     string
+		pr      string
 		wantErr bool
 	}{
 		{
-			name:    "ref alone",
-			args:    []string{"abc4"},
-			wantRef: "abc4",
+			name: "ref alone",
+			ref:  "abc4",
 		},
 		{
-			name:   "--pr alone",
-			args:   []string{"--pr", "https://github.com/acme/widgets/pull/1"},
-			wantPR: "https://github.com/acme/widgets/pull/1",
+			name: "--pr alone",
+			pr:   "https://github.com/acme/widgets/pull/1",
 		},
 		{
 			name:    "both ref and --pr is a usage error",
-			args:    []string{"abc4", "--pr", "https://github.com/acme/widgets/pull/1"},
+			ref:     "abc4",
+			pr:      "https://github.com/acme/widgets/pull/1",
 			wantErr: true,
 		},
 		{
 			name: "neither is fine at this layer — cmdReview itself rejects it",
-			args: []string{"--json"},
-		},
-		{
-			name:    "--pr alongside unrelated flags",
-			args:    []string{"--pr", "https://github.com/acme/widgets/pull/1", "--json", "--repo", "/r"},
-			wantPR:  "https://github.com/acme/widgets/pull/1",
-			wantRef: "",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ref, pr, err := reviewArgs(tt.args)
+			ref, pr, err := reviewArgs(tt.ref, tt.pr)
 			if tt.wantErr {
 				if err == nil {
-					t.Fatalf("reviewArgs(%v) = nil error, want one", tt.args)
+					t.Fatalf("reviewArgs(%q, %q) = nil error, want one", tt.ref, tt.pr)
 				}
 				return
 			}
 			if err != nil {
-				t.Fatalf("reviewArgs(%v) error = %v", tt.args, err)
+				t.Fatalf("reviewArgs(%q, %q) error = %v", tt.ref, tt.pr, err)
 			}
-			if ref != tt.wantRef {
-				t.Errorf("ref = %q, want %q", ref, tt.wantRef)
+			if ref != tt.ref {
+				t.Errorf("ref = %q, want %q", ref, tt.ref)
 			}
-			if pr != tt.wantPR {
-				t.Errorf("pr = %q, want %q", pr, tt.wantPR)
+			if pr != tt.pr {
+				t.Errorf("pr = %q, want %q", pr, tt.pr)
 			}
 		})
 	}

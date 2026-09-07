@@ -19,6 +19,21 @@ import (
 // knows how a task is shaped and one protocol to keep stable. The field
 // names are wf's own vocabulary, not kata's: a client written against these
 // keeps working when the queue backend changes.
+//
+// `wf show --json` emits one object: the tracker row's fields (jsonTask,
+// minus its runs count) at the top level, plus `bindings` — the task's own,
+// the ones no run produced — and `runs`, each carrying what that run
+// produced. There is no second, wf-only object any more: kata's ULID is the
+// task's only id, so the tracker row and the ledger record describe the same
+// task rather than two. `ready`, `escalations` and `run --json` keep
+// emitting bare jsonTask; a client that wants the run count reads
+// len(runs) from `show`.
+//
+// jsonTask.Session and .Cwd are the one exception to "bare jsonTask": a
+// session is machine-local and lives only in the ledger, so only `show` —
+// which has a ledger record in hand — can fill them in. `ready`,
+// `escalations` and `run --json` build jsonTask from the tracker row alone
+// and leave both fields empty.
 
 type jsonLease struct {
 	Actor   string `json:"actor"`
@@ -40,7 +55,6 @@ type jsonTask struct {
 	Lease    *jsonLease `json:"lease,omitempty"`
 	Session  string     `json:"session,omitempty"`
 	Cwd      string     `json:"cwd,omitempty"`
-	Runs     int        `json:"runs,omitempty"`
 	Note     string     `json:"note,omitempty"`
 	// NeedsHuman is the flag clients render as an escalation.
 	NeedsHuman bool `json:"needsHuman,omitempty"`
@@ -84,6 +98,26 @@ type jsonReview struct {
 	// difit`: how many harvested threads were folded into the posted
 	// comment. Absent for the plain-text format.
 	Count int `json:"count,omitempty"`
+}
+
+// jsonFinding and jsonGC are the `wf gc` contract.
+type jsonFinding struct {
+	Kind string `json:"kind"`
+	// Task is the record this finding belongs to, if any — the tracker's
+	// own id.
+	Task   string `json:"task,omitempty"`
+	Ref    string `json:"ref"`
+	Detail string `json:"detail,omitempty"`
+	Repair string `json:"repair,omitempty"`
+	Done   bool   `json:"done,omitempty"`
+	Error  string `json:"error,omitempty"`
+}
+
+type jsonGC struct {
+	Records  int           `json:"records"`
+	Deleted  bool          `json:"deleted"`
+	Repaired int           `json:"repaired"`
+	Findings []jsonFinding `json:"findings"`
 }
 
 func reviewToJSON(r review.Result) jsonReview {
@@ -141,16 +175,11 @@ func (a *app) toJSON(t wf.Task) jsonTask {
 			Stale:   lease.IsStale(now()),
 		}
 	}
-	bindings := wf.LoadBindings(t)
-	if session, ok := bindings.Current(wf.KindSession); ok {
-		out.Session = session.Ref
-		out.Cwd = session.Get(wf.MetaCwd)
-	}
-	if runs := len(bindings.ByKind(wf.KindSession)); runs > 0 {
-		out.Runs = runs
-	}
-	if doc, ok := bindings.Note(); ok {
-		out.Note = doc.Ref
+	// The bound note is the tracker's own fact, read straight off its
+	// metadata rather than through a binding: wf.doc is written once, by
+	// `wf bind`, and is never a run's output.
+	if doc, ok := t.Meta[wf.DocKey].(string); ok && doc != "" {
+		out.Note = doc
 	}
 	return out
 }
@@ -193,7 +222,7 @@ func (a *app) runResultToJSON(r supervisor.Result) jsonRunResult {
 	return out
 }
 
-// Machine-readable form of wf's own task object.
+// Machine-readable form of a task's bindings and run history.
 //
 // This is the shape `wf show` prints, with the same grouping: the task's own
 // bindings at the top level, and each run carrying what it produced. Both
@@ -231,24 +260,20 @@ type jsonRun struct {
 	Bindings []jsonBinding `json:"bindings,omitempty"`
 }
 
-type jsonRecord struct {
-	ID     string `json:"id"`
-	Handle string `json:"handle,omitempty"`
-	Title  string `json:"title,omitempty"`
-	// Queue and QueueShortID are the tracker row, when one is bound. They
-	// are the binding read out for convenience, not a second copy: the
-	// binding itself is still in Bindings.
-	Queue        string `json:"queue,omitempty"`
-	QueueShortID string `json:"queueShortId,omitempty"`
-	Created      string `json:"created,omitempty"`
-	Updated      string `json:"updated,omitempty"`
-	// Filed reports whether this task has a tracker row at all. False is an
-	// ordinary state, not an error: work can start before it is filed.
-	Filed bool      `json:"filed"`
-	Runs  []jsonRun `json:"runs,omitempty"`
-	// Bindings are the task's own — the ones no run produced. A run's
-	// output hangs off that run.
+// jsonShow is the whole of `wf show --json`: the tracker row's own fields at
+// the top level, the task's own bindings, and each run with what it
+// produced. One object, because there is one task now — kata's ULID is its
+// only id, so there is nothing left to give a second key to.
+type jsonShow struct {
+	jsonTask
+	// Bindings are the task's own — every binding no run produced. A run's
+	// output hangs off that run instead.
 	Bindings []jsonBinding `json:"bindings,omitempty"`
+	// Runs is the ledger's history for this task, oldest first.
+	Runs []jsonRun `json:"runs,omitempty"`
+	// Updated is when the ledger record last changed. Omitted for a task
+	// the ledger has never recorded anything about.
+	Updated string `json:"updated,omitempty"`
 }
 
 func bindingToJSON(b wf.Binding) jsonBinding {
@@ -279,26 +304,23 @@ func bindingsToJSON(bs wf.Bindings) []jsonBinding {
 	return out
 }
 
-// recordToJSON renders wf's own task object. task is the tracker row when
-// one was loaded, and is read only for the fields the tracker owns — never
-// merged into the record, which would be the sync-back the design refuses.
-func (a *app) recordToJSON(rec wf.Record, task wf.Task) jsonRecord {
-	out := jsonRecord{
-		ID:       rec.ID,
-		Handle:   rec.Handle,
-		Title:    rec.Name(),
+// showToJSON renders the whole of `wf show --json`: the tracker row found
+// resolved to, plus the task's own bindings and its runs from the ledger.
+func (a *app) showToJSON(found resolved) jsonShow {
+	rec := found.Record
+	out := jsonShow{
+		jsonTask: a.toJSON(found.Task),
 		Bindings: bindingsToJSON(sortBindings(taskOwnBindings(rec))),
 	}
-	if !rec.Created.IsZero() {
-		out.Created = stamp(rec.Created)
+	// session and cwd are machine-local facts, so only `show` — which has
+	// loaded the ledger record — can answer them; ready, escalations and
+	// run --json carry none.
+	if session, ok := rec.Bindings.Current(wf.KindSession); ok {
+		out.Session = session.Ref
+		out.Cwd = session.Get(wf.MetaCwd)
 	}
 	if !rec.Updated.IsZero() {
 		out.Updated = stamp(rec.Updated)
-	}
-	if row, ok := rec.Bindings.Current(wf.KindQueue); ok {
-		out.Filed = true
-		out.Queue = row.Ref
-		out.QueueShortID = row.Get(wf.MetaShortID)
 	}
 	for _, run := range rec.Runs {
 		entry := jsonRun{
@@ -321,29 +343,6 @@ func (a *app) recordToJSON(rec wf.Record, task wf.Task) jsonRecord {
 	return out
 }
 
-// taskJSON keeps the old `wf show --json` payload answerable for a task the
-// tracker never held. A client written against `task` predates the record
-// and must not break on a task wf minted, so the record stands in for the
-// row it does not have.
-func (a *app) taskJSON(found resolved) jsonTask {
-	if found.Task.ID != "" {
-		return a.toJSON(found.Task)
-	}
-	rec := found.Record
-	out := jsonTask{ID: rec.ID, ShortID: rec.Handle, Title: rec.Name()}
-	if session, ok := rec.Bindings.Current(wf.KindSession); ok {
-		out.Session = session.Ref
-		out.Cwd = session.Get(wf.MetaCwd)
-	}
-	if runs := len(rec.Runs); runs > 0 {
-		out.Runs = runs
-	}
-	if doc, ok := rec.Bindings.Current(wf.KindDoc); ok {
-		out.Note = doc.Ref
-	}
-	return out
-}
-
 // stamp is the one timestamp format the JSON protocol uses, matching what
 // jsonLease already emits.
 func stamp(t time.Time) string { return t.Format("2006-01-02T15:04:05Z07:00") }
@@ -355,12 +354,23 @@ func emit(key string, value any) error {
 	return emitFields(map[string]any{key: value})
 }
 
-// emitFields is emit for a document carrying more than one named field, as
-// `wf show` does when it reports both the tracker row and wf's own record.
+// emitFields is emit for a document carrying more than one named field.
 func emitFields(payload map[string]any) error {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(payload); err != nil {
+		return fmt.Errorf("write json: %w", err)
+	}
+	return nil
+}
+
+// emitValue writes value itself as the JSON document, with no wrapping key.
+// `wf show` is the one payload that IS the object rather than a named field
+// of one, now that there is only one task to describe.
+func emitValue(value any) error {
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(value); err != nil {
 		return fmt.Errorf("write json: %w", err)
 	}
 	return nil

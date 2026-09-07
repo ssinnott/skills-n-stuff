@@ -17,6 +17,9 @@ kata is the first queue backend, pi the first runner, git worktrees the
 first workspace. The seams exist so the second of each is an adapter
 rather than a rewrite.
 
+[DESIGN-slim.md](DESIGN-slim.md) proposes cutting wf back to this description,
+and names which of the pieces built since then stay.
+
 [DESIGN-task.md](DESIGN-task.md) is **built**, and supersedes this document
 wherever the two disagree about what a task is. The task here is a normalized
 queue row with bindings stuck to it as ad-hoc metadata keys; there it is wf's
@@ -40,6 +43,9 @@ friends), which are read for one release and never written.
   the backend's job. wf reads `ready` and trusts it.
 - Not a chat client. Steering a running worker means attaching to its
   session with pi directly; wf tells you which session that is.
+- No second id space. The tracker's id is the task's id; wf mints nothing.
+  A ledger beside the config holds only what the tracker has no field for:
+  runs, checkouts and session files on this host.
 
 ## Decisions
 
@@ -77,6 +83,8 @@ friends), which are read for one release and never written.
   `kata list --meta` and renders for free in the CLI, TUI and web UI.
 
 - **The agent session is bound to the task by metadata, written at spawn.**
+  (Superseded by DESIGN-slim.md stage 5: the session is recorded in the
+  local ledger, never in tracker metadata.)
   `wf.session` (file path), `wf.session_id`, `wf.workspace`, and a
   `wf.session_history` JSON array — role names, with the runner carried as a
   value on the binding rather than as half of a key. The `pi.*` names these
@@ -382,6 +390,11 @@ friends), which are read for one release and never written.
       reopened task is likely to land on the same browser origin as its
       earlier comments; `wf review comment --format difit` to harvest
       difit's own comment store instead of a pasted prompt.
+- [x] DESIGN-task.md's ledger: wf-minted ids, dual-written bindings, a
+      note renderer, PR refresh and a wider `gc` — built, then cut back to
+      a local ledger of machine-local bindings per DESIGN-slim.md.
+- [x] DESIGN-slim.md stages 1 to 5: PR refresh, `wf note sync`, the wider
+      `gc`, the review-pane binding, and wf's own id space, all deleted.
 
 ## What the live protocol turned out to be
 

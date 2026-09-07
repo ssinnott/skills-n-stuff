@@ -3,7 +3,7 @@
  *
  * Two panes over the wf agent work queue: a queue list and a framed kata UI,
  * joined to the vault by the id pair a bound note carries — `kata-issue` in
- * its frontmatter, `obsidian.note` on the task.
+ * its frontmatter, `wf.doc` on the task.
  *
  * The only Obsidian plugin in this repo: obsidian-pi-tasks, which bound pi
  * sessions to documents, has been removed (see DESIGN-tasks.md for what it
@@ -31,7 +31,8 @@ import { WfQueueView, VIEW_TYPE_WF_QUEUE } from "./queue";
 import { KataFrameView, VIEW_TYPE_KATA_FRAME, KATA_ISSUE_KEY } from "./kataframe";
 import { DifitFrameView, VIEW_TYPE_DIFIT_FRAME } from "./difitframe";
 import { WfClient, WfError } from "./wf";
-import type { WfReview, WfTask } from "./wf";
+import type { WfReview, WfShow, WfTask } from "./wf";
+import { applyBlock } from "./taskblock";
 
 export interface WfSettings {
     /** Path to the wf binary, which fronts the agent work queue. */
@@ -168,12 +169,15 @@ export default class WfPlugin extends Plugin {
             }),
         );
 
-        // Opt-in: opening a bound note brings its issue up beside it.
+        // Opening a bound note refreshes its task block unconditionally,
+        // and — opt-in — brings its issue up beside it.
         this.registerEvent(
             this.app.workspace.on("file-open", (file) => {
-                if (!this.settings.autoOpenFrame || !file) return;
+                if (!file) return;
                 const ref = this.boundTask(file);
-                if (ref) void this.showTaskInFrame(ref);
+                if (!ref) return;
+                void this.refreshTaskBlock(file, ref);
+                if (this.settings.autoOpenFrame) void this.showTaskInFrame(ref);
             }),
         );
 
@@ -223,6 +227,12 @@ export default class WfPlugin extends Plugin {
             id: "save-review-comments",
             name: "Save review comments to the task",
             callback: () => void this.saveReviewComments(),
+        });
+
+        this.addCommand({
+            id: "refresh-note-task-block",
+            name: "Refresh this note's task block",
+            callback: () => void this.refreshNoteTaskBlockCommand(),
         });
     }
 
@@ -436,6 +446,7 @@ export default class WfPlugin extends Plugin {
                 } else if (result.closed) {
                     new Notice(`${result.task.shortId} closed.`);
                 }
+                void this.refreshTaskBlockForTask(result.task);
             }
         } catch (err) {
             new Notice(err instanceof Error ? err.message : String(err), 8000);
@@ -450,6 +461,50 @@ export default class WfPlugin extends Plugin {
             const view = leaf.view;
             if (view instanceof WfQueueView) await view.refresh();
         }
+    }
+
+    /**
+     * Re-renders a note's managed task block from `wf show <ref> --json`,
+     * writing it only when the bytes actually change. Called on opening a
+     * bound note and after a dispatch; a fetch or render failure is a
+     * console.warn, never a Notice — the note is still usable without the
+     * block, and a subprocess hiccup on every open would be worse than a
+     * stale block.
+     */
+    async refreshTaskBlock(file: TFile, ref: string): Promise<void> {
+        let shown: WfShow;
+        try {
+            shown = await this.wf().show(ref);
+        } catch (err) {
+            console.warn(`wf: could not fetch task ${ref} for its note block`, err);
+            return;
+        }
+
+        try {
+            const current = await this.app.vault.read(file);
+            const next = applyBlock(current, shown);
+            if (next === current) return;
+            await this.app.vault.process(file, (text) => applyBlock(text, shown));
+        } catch (err) {
+            console.warn(`wf: could not render the task block for ${ref}`, err);
+        }
+    }
+
+    /** Refresh the note bound to a dispatched task, if it has one open in the vault. */
+    private async refreshTaskBlockForTask(task: WfTask): Promise<void> {
+        if (!task.note) return;
+        const file = this.app.vault.getAbstractFileByPath(task.note);
+        if (file instanceof TFile) await this.refreshTaskBlock(file, task.shortId || task.id);
+    }
+
+    private async refreshNoteTaskBlockCommand(): Promise<void> {
+        const file = this.app.workspace.getActiveFile();
+        const ref = file ? this.boundTask(file) : null;
+        if (!file || !ref) {
+            new Notice("This note is not bound to a task.");
+            return;
+        }
+        await this.refreshTaskBlock(file, ref);
     }
 
     /**

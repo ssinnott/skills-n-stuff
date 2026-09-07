@@ -1,7 +1,32 @@
 ---
-status: implemented
+status: superseded
+superseded-by: DESIGN-slim.md
 supersedes: —
 ---
+
+## What was rolled back and why
+
+The multi-host clobber and the re-run-blocked-by-kept-checkout findings
+below were correct, and their fix — a local ledger of machine-local
+bindings, keyed to a run, holding what the tracker has no field for —
+stays. What did not survive:
+
+- **wf-minted identity and handles** (`wf task new`, `wf task adopt`, a
+  resolver across two id spaces): the tracker's id is the task's only
+  id now. (DESIGN-slim.md stage 5)
+- **The dual write of shareable facts** to both tracker and ledger: a
+  fact lives in exactly one place. (DESIGN-slim.md stage 5)
+- **The note renderer** (`wf note sync`, the vault index, filename
+  slugging): the Obsidian plugin renders the block itself, from `wf
+  show --json`. (DESIGN-slim.md stage 2)
+- **PR refresh** (`wf pr refresh`, the `gh` client): nothing consumed
+  the state it recorded. (DESIGN-slim.md stage 1)
+- **The review-pane binding** (`KindReview` on the ledger record): the
+  pane was already recorded in `review.json`; keeping both violated
+  rule 2, one fact one place. (DESIGN-slim.md stage 4)
+- **The wider `gc`** (worktree, branch and pane sweeps, `--fix`,
+  `--before`): git already answers what those swept; only ledger
+  bindings need a ledger-shaped gc. (DESIGN-slim.md stage 3)
 
 # The task object: bindings as a first-class concept
 
@@ -262,6 +287,8 @@ Five concrete failures follow from that shape, and none of them is stylistic:
   dead. Found in a smoke run rather than in review. Retention reads only
   timestamps the work itself carries — `Created`, binding `At`, run
   `Started`/`Ended` — and a record carrying none is never prunable.
+  (Collapsed to report / --delete in DESIGN-slim.md stage 3; no retention
+  window.)
 
 - **`gc` has three modes, not two.** Bare reports and writes nothing;
   `--fix` repairs recorded state (a workspace whose directory is gone
@@ -269,7 +296,8 @@ Five concrete failures follow from that shape, and none of them is stylistic:
   stale records. Marking a binding `missing` is a repair, not a deletion,
   and putting it behind a flag called `--delete` would make the two
   indistinguishable to whoever runs it. Deleting a record never deletes the
-  artifact it points at.
+  artifact it points at. (Collapsed to report / --delete in DESIGN-slim.md
+  stage 3; no retention window.)
 
 - **Half of `gc` is only valid on the host that recorded a binding.** An
   `os.Stat` here proves nothing about a checkout on another machine, which
@@ -513,14 +541,15 @@ Each of these is currently either impossible or a special case:
   already holds it, which is the same reason `Apply` returns bindings rather
   than writing them. A failed write never fails a review — the viewer is up
   and a human is already looking at it, so losing the record costs `gc` a
-  hint, not the work.
+  hint, not the work. (Reverted in DESIGN-slim.md stage 4: the pane is
+  recorded only in review.json.)
 
 - **Refreshed PR state is never republished to the tracker.** Dispatch
   dual-writes, but a merge discovered later by `wf pr refresh` lands only in
   the ledger, so kata's `wf.pr` keeps saying whatever the run said. This is
   consistent with "publication is derived output, never read back" — and it
   still means the tracker's copy silently ages, and nothing here says who
-  republishes it.
+  republishes it. (`wf pr refresh` removed in DESIGN-slim.md stage 1.)
 
 - **Pruning a record drops the doc→task join** for every document it bound.
   Acceptable under "not an artifact store", but the retention question above
@@ -547,6 +576,8 @@ Named rather than quietly decided, because each could go the other way:
   produce would otherwise be the wrong file every time. And the note must
   not link to itself — its own binding is dropped before rendering, or the
   block puts a self-edge in the graph the doc→task backlinks exist for.
+  (Moved to the Obsidian plugin in DESIGN-slim.md stage 2; wf no longer
+  creates or renders notes.)
 - **Reconciliation.** A tracker row closed by a human while the ledger holds
   a live worktree. The disjointness rule says the tracker wins on work state
   and the worktree is then garbage — but "closed remotely" is probably worth
@@ -577,7 +608,8 @@ Staged so that each stage is shippable and the risky one is last.
       local-first. `review.json` folds into it. Runs become the middle layer
       and `Apply` writes bindings tagged `via: <run-id>` instead of flat
       keys. Record the branch. Fixes the multi-host clobber, and makes a
-      re-run possible while a kept checkout is still on disk.
+      re-run possible while a kept checkout is still on disk. (dual write
+      removed in DESIGN-slim.md stage 5)
 - [x] **4 — Standalone identity and explicit dispatch.** wf-minted ids,
       `wf task new`, adopt into a tracker, ref resolution across both id
       spaces, `wf run <ref> --workflow <name>`. `wf review --pr` becomes a

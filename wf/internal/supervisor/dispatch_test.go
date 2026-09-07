@@ -99,15 +99,15 @@ func TestNamedWorkflowThatIsNotLoadedFailsWithoutEscalating(t *testing.T) {
 	if attention := q.meta("01HZ", wf.AttentionKey); attention != nil {
 		t.Errorf("attention = %v, want the task left alone", attention)
 	}
-	if _, err := ledger.Resolve("01HZ"); err == nil {
+	if _, err := ledger.Load("01HZ"); err == nil {
 		t.Error("a dispatch that never started must not leave a run behind")
 	}
 }
 
-func TestDispatchMintsWfsOwnIDAndFindsItAgain(t *testing.T) {
-	// The inversion stage 4 is for: the record is found by the tracker row
-	// through its queue binding, not keyed on it. A second dispatch has to
-	// land on the record the first one minted rather than mint another.
+func TestDispatchRecordsUnderTheTasksOwnID(t *testing.T) {
+	// kata's ULID is the task's only id now: the ledger record lives at
+	// exactly that id, with nothing to look up and nothing to mint. A second
+	// dispatch has to land on the same file rather than a second one.
 	q := newQueue(wf.Task{ID: "01HZ", ShortID: "abc4", Title: "Twice-run work"})
 	r := &fakeRunner{transcript: "I stopped and need a decision.\n"}
 	s := newSupervisor(q, r, &fakeProvider{}, nil)
@@ -117,8 +117,8 @@ func TestDispatchMintsWfsOwnIDAndFindsItAgain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first RunOnce() error = %v", err)
 	}
-	if first.TaskID == "" || first.TaskID == "01HZ" || first.TaskID == "abc4" {
-		t.Fatalf("TaskID = %q, want wf's own minted id", first.TaskID)
+	if first.TaskID != "01HZ" {
+		t.Fatalf("TaskID = %q, want the tracker's own id", first.TaskID)
 	}
 
 	second, err := s.RunOnce(context.Background(), "01HZ")
@@ -126,8 +126,7 @@ func TestDispatchMintsWfsOwnIDAndFindsItAgain(t *testing.T) {
 		t.Fatalf("second RunOnce() error = %v", err)
 	}
 	if second.TaskID != first.TaskID {
-		t.Errorf("second dispatch filed under %q, want the record %q that already existed",
-			second.TaskID, first.TaskID)
+		t.Errorf("second dispatch filed under %q, want %q", second.TaskID, first.TaskID)
 	}
 
 	recs, err := ledger.List()
@@ -137,15 +136,10 @@ func TestDispatchMintsWfsOwnIDAndFindsItAgain(t *testing.T) {
 	if len(recs) != 1 {
 		t.Fatalf("ledger holds %d records for one tracker row: %+v", len(recs), recs)
 	}
+	if recs[0].ID != "01HZ" {
+		t.Errorf("record id = %q, want the tracker's own id", recs[0].ID)
+	}
 	if len(recs[0].Runs) != 2 {
 		t.Errorf("runs = %+v, want both on the one record", recs[0].Runs)
-	}
-	// The tracker id never becomes the key, and never stops being a ref.
-	if recs[0].ID == "01HZ" {
-		t.Error("the record is still keyed by the tracker id")
-	}
-	found, err := ledger.Resolve("01HZ")
-	if err != nil || found.ID != recs[0].ID {
-		t.Errorf("Resolve(01HZ) = %+v, %v", found, err)
 	}
 }

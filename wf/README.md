@@ -6,7 +6,7 @@ A workflow CLI that runs agent work off a queue.
 worktree, runs a coding agent under a canned workflow, parses the agent's
 outcome verbs, and writes the results back as comments, links, and
 evidence-backed closes. Documents the agent produces land in your Obsidian
-vault, linked to the task in both directions.
+vault, and the plugin renders the task into the note it is bound to.
 
 The interactive agent session is a client of this CLI, not its host —
 restarting your TUI means nothing to running work.
@@ -27,56 +27,54 @@ No dependencies beyond the standard library.
 ## Usage
 
 ```sh
-wf ready --limit 10          # actionable work, top of queue first
-wf show neck                 # one task: its runs and what each produced
-wf workflows                 # canned workflows that are loaded
-wf task new "Add the parser" # start a task with no tracker row at all
-wf task adopt neck --queue 01M1S…    # file it into the tracker later
-wf task list                 # every task wf has recorded
-wf run --once                # dispatch the top claimable task
-wf run --ref abc4            # dispatch one specific task
-wf run neck --workflow plan-to-pr    # run a named recipe on a named task
-wf run --max 3               # drain the queue, three agents at a time
-wf escalations               # what needs a human
-wf attach abc4               # reopen the pi session that ran this task
-wf bind abc4 notes/plan.md   # bind a task to a note by hand
-wf note sync abc4            # write the task's managed block into its note
-wf note sync --all           # refresh every note the ledger already knows
-wf ui abc4                   # deep link into kata's web UI
-wf ui                        # the daemon's origin, for a framed UI
-wf review abc4               # resolve the task's diff and open it in difit
-wf review --pr <url>         # review any PR directly, no task required
-wf review abc4 --stop        # stop the running viewer
-wf review comment abc4       # read a pasted review prompt from stdin
-wf review comment abc4 --format difit   # ingest difit's own comment store
-wf pr refresh                # ask GitHub what every recorded PR did
-wf pr refresh abc4           # just this task's
-wf gc                        # report ledger bindings whose referent is gone
-wf gc --fix                  # correct their recorded state
-wf gc --delete --before 30d  # drop records that point at nothing, and are old
+wf ready [--limit N]                                         # actionable work, top of queue first
+wf show <ref>                                                # one task: its runs and what each produced
+wf escalations                                               # tasks flagged needs-human
+wf workflows                                                 # canned workflows loaded from the workflow dir
+wf run [<ref>] [--once] [--max N] [--repo P] [--workflow W]  # dispatch work to agents
+wf attach <ref>                                              # open the task's pi session
+wf bind <ref> <note.md>                                      # bind a task to an Obsidian note, both ways
+wf ui [<ref>]                                                # print the web UI deep link for a task
+wf review <ref> | --pr <url> [--repo P] | <ref> --stop       # resolve the task's diff and open it in difit, or stop the viewer
+wf review comment <ref> [--format difit]                     # read a pasted review prompt from stdin
+wf gc [--delete]                                             # report ledger bindings whose referent is gone; --delete drops dead records
 ```
 
-A `<ref>` is any of four: wf's own task id, its short handle, the tracker's
-id, or the tracker's short id. wf mints the first two; the tracker row is a
-binding on the task rather than the task's identity, which is what lets work
-start before it is filed. An ambiguous ref names its candidates and picks
-nothing.
+A `<ref>` is anything `kata show` accepts: the issue's ULID or its short id.
+There is no listing command of wf's own beyond `ready` and `escalations`;
+run `kata list` directly for a full listing.
 
-Add `--json` to `ready`, `show`, `escalations`, `workflows`, `task`, `run`,
-`review` and `note sync` for machine-readable output. That is the protocol both clients
+Add `--json` to `ready`, `show`, `escalations`, `workflows`, `run` and
+`review` for machine-readable output. That is the protocol both clients
 speak — the pi extension and the Obsidian plugin talk to wf, never to kata
 directly, so the queue backend can change without touching either.
 
-`wf show --json` carries both: `task` is the tracker row as it always was,
-and `record` is wf's own object — the task's own bindings, then each run
-with what that run produced.
+`wf show --json` emits one object. The tracker row's own fields — id,
+title, priority, labels, state, lease, and so on — sit at the top level, the
+same shape `ready` and `run --json` emit. Alongside them, `bindings` is the
+task's own — everything no run produced — and `runs` is the ledger's history
+for the task, each entry carrying what that run produced. `session` and
+`cwd` are the one field pair that only `show` fills in: a session is
+machine-local and lives in the local ledger, never on the tracker, so
+`ready`, `escalations` and `run --json` — which never load the ledger —
+leave both empty.
+
+`wf ready --json`:
 
 ```json
 { "tasks": [ { "id": "01M1S…", "shortId": "neck", "title": "Add the parser",
               "priority": 1, "workflow": "plan-to-pr",
               "lease": { "actor": "wf-laptop", "stale": false },
-              "session": "/home/me/.wf/sessions/neck-….jsonl",
               "note": "Research/plan.md", "needsHuman": false } ] }
+```
+
+`wf show neck --json` — one object, no `tasks` wrapper, `session`/`cwd` filled
+in, and the two fields no other command emits:
+
+```json
+{ "id": "01M1S…", "shortId": "neck", "title": "Add the parser", "session": "~/.wf/sessions/neck.jsonl",
+  "bindings": [ { "kind": "repo", "ref": "app" }, { "kind": "doc", "ref": "Research/plan.md" } ],
+  "runs": [ { "id": "01M2X…", "workflow": "plan-to-pr", "outcome": "closed", "bindings": [ { "kind": "pr", "ref": "https://github.com/…/pull/9" } ] } ] }
 ```
 
 ## Config
@@ -88,7 +86,6 @@ with what that run produced.
   "actor": "wf-laptop",
   "repo": "~/code/app",
   "vault": "~/vault",
-  "noteDir": "Tasks",
   "worktreeRoot": "~/.wf/worktrees",
   "workflowDir": "~/.wf/workflows",
   "profiles": { "coding": "~/.pi/profiles/coding", "writer": "~/.pi/profiles/writer" },
@@ -99,34 +96,29 @@ with what that run produced.
 }
 ```
 
-`KATA_BIN`, `PI_BIN`, `DIFIT_BIN` and `GH_BIN` override binaries that are
+`KATA_BIN`, `PI_BIN` and `DIFIT_BIN` override binaries that are
 off `PATH` —
 they usually are under a launchd or systemd unit. `difitCommand` (default
 `npx difit`) is a shell-style command line rather than a bare binary, since
 the default itself is two words; `DIFIT_BIN` replaces the whole thing.
 
-## Pull request state, and collecting the dead
+**Upgrading.** The ledger is now keyed by the tracker's id. After upgrading
+run `wf migrate-ledger` once, or delete `~/.wf/tasks` if nothing in it
+matters; the pre-slim build is tagged in git history. `wf migrate-ledger` is
+hidden from `wf help` — it is a one-off tool, not part of the surface — and
+will be removed in the next release.
 
-`wf pr refresh [<ref>]` asks `gh` what happened to the pull requests a task
-opened and records the answer on the binding. A task whose PRs have all
-merged is reported as **completable**; it is not closed here. Closing lives
-in one place, gated on the typed evidence a run produced, and a refresh holds
-none of that — see `internal/wf/completion.go`.
+## Collecting the dead
 
-A lookup that fails degrades to *state unknown*, never to a wrong answer. A
-missing `gh`, an unauthenticated one, a network failure, a 404: the binding
-keeps the state it had, the report says it was not refreshed, and the exit
-code is 2. Nothing is marked merged on a guess.
-
-`wf gc` reports bindings whose referent is gone: checkouts recorded live that
-are no longer on disk, sessions that would fail to reattach, dead review
-panes, `wf/` branches no task claims, and whole records that point at nothing
-and have not moved inside `--before` (default 30d). It writes nothing by
-default — `--fix` corrects recorded states, `--delete` drops stale records —
-and it never deletes the artifact a record points at: a leftover checkout may
-hold uncommitted work, and a branch is work. Bindings stamped with another
-host are reported by that host, not this one; a path from another machine is
-not a path this one can check.
+`wf gc` answers the one question only the ledger can answer: which recorded
+workspace and session bindings point at nothing on this host — a checkout
+removed by hand, a session file that would fail to reattach. `--delete` marks
+those bindings missing and drops any record whose local bindings are all
+missing or disposed, as long as no binding on it belongs to another host; a
+bare run only reports and writes nothing. It never deletes the artifact a
+record points at — a leftover checkout may hold uncommitted work. Worktrees
+and branches are git's own bookkeeping: `git worktree prune` and `git branch
+--list 'wf/*'` answer those questions directly.
 
 ## Canned workflows
 
@@ -168,35 +160,30 @@ default.
 
 ## How the pieces bind
 
-**Task ↔ session.** Every run records `wf.session` (the session file path),
-`wf.session_id`, `wf.workspace`, and appends to a `wf.session_history` array.
-These are written *at spawn*, before the agent produces anything, so a crashed
-or hung run is still attachable — those are the runs you most need to read.
-`wf attach` resolves them and execs `pi --session <path>`.
+A fact lives in exactly one place, and which place follows from what kind of
+fact it is.
 
-The keys name roles, not products: *which* runner produced a session is a
-value on the binding, not half of a key name, so a second runner is a new
-value rather than a parallel set of keys. The `pi.*` names these replaced are
-still read for one release, and never written.
+**Shareable facts** — the repo, PRs, filed issues, produced documents,
+`wf.state`, the lease, `work.attention` — live on the tracker as plain
+metadata keys. The run loop is what writes them, and nothing reads them back
+from anywhere but the tracker itself.
 
-**Task ↔ note.** The note's frontmatter carries `wf-task: <id>` — the durable
-half, since it survives a rename in Obsidian — alongside `kata-issue: <ULID>`
-naming the tracker row. The task carries the note as a `doc` binding with
-`store: vault` (and `wf.doc: <path>` on the tracker, formerly `obsidian.note`,
-still read). Workflows with `bind-docs` do this automatically for every
-document produced. Nothing is mirrored: titles and status live in the tracker,
-prose lives in the note, and the only shared state is the id pair.
+**Machine-local facts** — a run's worktree checkout, its session file — live
+in the local ledger, one JSON record per task at `~/.wf/tasks/<ulid>.json`.
+They are written at spawn, before the agent produces anything, so a crashed
+or hung run is still attachable through `wf attach`. A binding like this is a
+fact about one host, and is never published anywhere a second host would
+read it back from — a binding recorded by another host is annotated with it
+and left alone.
 
-`wf note sync <ref>` renders the task — its runs and what each produced — into
-a managed block in that note, delimited by `%% wf:begin %%` and `%% wf:end %%`.
-Everything outside the block is yours and is never touched; the block is
-regenerated wholesale, so deleting it loses nothing. A task with no note gets
-one under `noteDir` (default `Tasks`), named for its title and joined by
-frontmatter rather than by its filename, so renaming or moving it in Obsidian
-is safe — the next sync finds it again and repoints the binding. `--all`
-sweeps the ledger, refreshing the notes that exist and creating none: a note
-per task is a choice a human makes one task at a time. Nothing is written when
-nothing changed, because the note lives in a synced vault.
+**Task ↔ note.** The join is the id pair: the note's frontmatter carries
+`wf-task: <id>`, the durable half since it survives a rename in Obsidian,
+alongside `kata-issue: <ULID>` naming the tracker row; `wf.doc: <path>` on
+the tracker is the other half, written by `wf bind` or by a workflow with
+`bind-docs`. Nothing else is mirrored — titles and status live in the
+tracker, prose lives in the note — and the Obsidian plugin renders the
+task's managed block, its runs and what each produced, straight from `wf
+show --json`.
 
 **Agent ↔ tracker.** The seed prompt names the agent's issue, so it can read
 context and comment progress itself. But claim, close and lease transitions
@@ -238,11 +225,12 @@ tries, in order, the first rung that matches:
 1. **A PR.** If the task recorded one (`wf.pr` metadata, written when a run
    reports `PR:`), difit opens `--pr <url>` — the shipped truth once one
    exists.
-2. **A live worktree.** If the run's checkout (`wf.workspace`) is still on
-   disk, difit opens it directly with `--include-untracked` — this is the
-   rung that matters most, because an escalated run that produced no PR is
-   exactly what a human needs to look at, and its checkout is the only place
-   the agent's untracked and uncommitted state still lives.
+2. **A live worktree.** If the run's checkout (its workspace binding in the
+   local ledger) is still on disk, difit opens it directly with
+   `--include-untracked` — this is the rung that matters most, because an
+   escalated run that produced no PR is exactly what a human needs to look
+   at, and its checkout is the only place the agent's untracked and
+   uncommitted state still lives.
 3. **A surviving branch.** If the worktree was disposed but its branch is
    still around, difit diffs it against the repo's base branch with
    `--merge-base`.
@@ -251,14 +239,13 @@ tries, in order, the first rung that matches:
 
 `wf review --pr <url> [--repo <path>]` reviews any PR directly, with no kata
 running at all. Use it for a PR a human opened by hand, or one that predates
-`wf.pr` metadata ever being recorded. It is no longer a bypass: the URL
-becomes a task carrying exactly one `pr` binding and goes through the same
-ladder, so reviewing that PR again finds the task rather than filing a
-second one — which is what keeps its remembered port, and difit's comments
-with it. `--repo` defaults to `config.Repo`. It participates in the same
+`wf.pr` metadata ever being recorded. `--pr` needs no task and no kata: it
+builds the review target from the URL alone, and its remembered port is
+keyed by the URL's handle (`owner/repo#123`) so difit's comments come back
+on reopen. `--repo` defaults to `config.Repo`. It participates in the same
 one-viewer-at-a-time lifecycle as a task review, and the positional `<ref>`
-and `--pr` are mutually exclusive — passing both is a usage error. A task
-with one binding has no filed issues, so nothing is seeded.
+and `--pr` are mutually exclusive — passing both is a usage error. A URL
+with no task behind it has no filed issues, so nothing is seeded.
 
 Findings the run filed as `ISSUE:` outcomes seed the viewer as difit review
 threads (`--comment`), when the issue's own title names a file and line
@@ -339,7 +326,9 @@ Obsidian side because
 an embedded page cannot tell the host what you clicked; clicking a queue row
 opens the bound note and points the frame at the task. Renaming a bound note
 rewrites `wf.doc` through `wf bind`, so bindings survive a
-reorganization.
+reorganization. The plugin also owns the note's managed task block: it
+renders a bound note's runs and bindings straight from `wf show --json` on
+open, so wf itself never writes prose into your vault.
 
 ## Layout
 
@@ -347,11 +336,13 @@ reorganization.
 cmd/wf/                command dispatch
 internal/wf/           task model, outcome protocol, leases, sessions, apply
 internal/supervisor/   the dispatch loop
+internal/store/        the local ledger: runs and machine-local bindings
+internal/gc/           sweeps the ledger for dead local bindings
 internal/workflow/     canned workflows
 internal/kata/         kata queue backend (the only wire-format assumptions)
 internal/runner/       pi runner
 internal/workspace/    git worktrees
-internal/note/         Obsidian frontmatter binding
+internal/note/         frontmatter read/write only — the plugin renders the note
 internal/review/       target ladder, difit lifecycle, finding seeds
 internal/config/       settings
 workflows/             example workflows to copy into ~/.wf/workflows
@@ -360,3 +351,13 @@ workflows/             example workflows to copy into ~/.wf/workflows
 Leases and the work-state vocabulary live in `internal/wf`, deliberately
 above the backend interface: no tracker in scope implements either, so
 pushing them down would mean writing them once per adapter.
+
+## Design
+
+[DESIGN.md](DESIGN.md) says what wf is and where the seams sit — kata,
+pi, and git worktrees as the three adapters, and the non-goals that keep
+it a wrapper rather than a platform. [DESIGN-task.md](DESIGN-task.md) is
+superseded: it is where the local ledger came from, and it still holds the
+multi-host and re-run findings that justified keeping one. [DESIGN-slim.md](DESIGN-slim.md)
+is the plan that cut wf back down to size — what got deleted at each stage
+and why, and what the numbers looked like before and after.

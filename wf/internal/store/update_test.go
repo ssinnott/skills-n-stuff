@@ -19,7 +19,7 @@ import (
 
 func TestUpdateAppliesToAnExistingRecord(t *testing.T) {
 	s := New(t.TempDir())
-	if err := s.Save(sample("01M1S", "neck")); err != nil {
+	if err := s.Save(sample("01M1S")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -43,7 +43,7 @@ func TestUpdateAppliesToAnExistingRecord(t *testing.T) {
 	}
 	// The rest of the record is untouched: Update mutates, it does not
 	// replace.
-	if got.Handle != "neck" || len(got.Bindings) != len(sample("01M1S", "neck").Bindings) {
+	if len(got.Bindings) != len(sample("01M1S").Bindings) {
 		t.Errorf("Update lost part of the record: %+v", got)
 	}
 }
@@ -64,7 +64,7 @@ func TestUpdateCreatesAMissingRecord(t *testing.T) {
 		if len(rec.Runs) != 0 || len(rec.Bindings) != 0 {
 			t.Errorf("a fresh record should be empty: %+v", rec)
 		}
-		rec.Handle = "fr1"
+		rec.Runs = append(rec.Runs, wf.Run{ID: "run-1", Started: time.Now().UTC()})
 		return nil
 	})
 	if err != nil {
@@ -75,20 +75,20 @@ func TestUpdateCreatesAMissingRecord(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Update did not create the record: %v", err)
 	}
-	if got.Handle != "fr1" || got.Created.IsZero() || got.Updated.IsZero() {
+	if len(got.Runs) != 1 || got.Created.IsZero() || got.Updated.IsZero() {
 		t.Errorf("created record = %+v", got)
 	}
 }
 
 func TestUpdateAbandonsTheWriteOnError(t *testing.T) {
 	s := New(t.TempDir())
-	if err := s.Save(sample("01M1S", "neck")); err != nil {
+	if err := s.Save(sample("01M1S")); err != nil {
 		t.Fatal(err)
 	}
 
 	sentinel := errors.New("nothing to do")
 	err := s.Update("01M1S", func(rec *wf.Record) error {
-		rec.Handle = "clobbered"
+		rec.Runs = append(rec.Runs, wf.Run{ID: "clobbered"})
 		return sentinel
 	})
 	// Unwrapped, so a caller can decide mid-flight that there is nothing to
@@ -101,8 +101,8 @@ func TestUpdateAbandonsTheWriteOnError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Handle != "neck" {
-		t.Errorf("Handle = %q — an aborted Update must not land", got.Handle)
+	if len(got.Runs) != 2 {
+		t.Errorf("runs = %+v — an aborted Update must not land", got.Runs)
 	}
 }
 
@@ -260,7 +260,7 @@ func TestUpdateAndSaveDoNotInterleave(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for i := 0; i < rounds; i++ {
-			if err := s.Save(sample("hot", fmt.Sprintf("save-%d", i))); err != nil {
+			if err := s.Save(sample("hot")); err != nil {
 				t.Errorf("save: %v", err)
 				return
 			}
@@ -270,9 +270,8 @@ func TestUpdateAndSaveDoNotInterleave(t *testing.T) {
 		defer wg.Done()
 		for i := 0; i < rounds; i++ {
 			err := s.Update("hot", func(rec *wf.Record) error {
-				// A Save landing mid-mutation would show up as a record
-				// whose runs and handle disagree about which write made it.
-				rec.Handle = fmt.Sprintf("update-%d", i)
+				// A Save landing mid-mutation would show up as a partially
+				// overwritten record.
 				rec.Runs = append(rec.Runs, wf.Run{ID: fmt.Sprintf("u-%d", i)})
 				return nil
 			})

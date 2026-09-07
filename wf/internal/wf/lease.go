@@ -7,27 +7,15 @@ import (
 	"time"
 )
 
-// Leases are owned by the core, not by any backend.
-//
-// No tracker in scope has lease semantics. kata documents `claim` but no
-// expiry and no release verb at all; GitHub Projects and Linear have
-// neither. `claim` records ownership, which is not liveness: a killed
-// worker holds its issue forever and the queue quietly drains to nothing.
-//
-// So wf keeps its own record and asks a backend only to store a string for
-// it. Reclaiming is explicit — a lease is stale when it has not been
-// renewed within its TTL, and taking one is a decision the caller makes,
-// never a side effect of reading.
+// Leases are owned by the core, not by any backend; see DESIGN.md. Taking a stale lease is a decision the caller makes, never a side effect of reading.
 
 // LeaseKey is the metadata key the lease record is stored under.
 const LeaseKey = "wf.lease"
 
-// DefaultTTL is long enough to survive a slow agent turn and short enough
-// that a dead worker's task returns to the queue within a coffee break.
+// DefaultTTL survives a slow agent turn but returns a dead worker's task soon.
 const DefaultTTL = 15 * time.Minute
 
-// Lease records which wf instance holds a task, and when it last proved it
-// was alive.
+// Lease records which wf instance holds a task, and when it last proved alive.
 type Lease struct {
 	// Actor identifies a wf instance, not a human.
 	Actor    string    `json:"actor"`
@@ -35,8 +23,7 @@ type Lease struct {
 	PID      int       `json:"pid"`
 	Acquired time.Time `json:"acquired"`
 	Renewed  time.Time `json:"renewed"`
-	// TTLSeconds is carried in the record so a holder with a different
-	// configuration is still judged by its own terms.
+	// TTLSeconds lets a holder with a different config be judged by its own terms.
 	TTLSeconds int `json:"ttl_seconds"`
 }
 
@@ -59,8 +46,7 @@ func NewLease(actor string, ttl time.Duration, now time.Time) Lease {
 	}
 }
 
-// Renew stamps liveness. Renewal is driven by the worker actually running,
-// not by a fixed deadline, so a long task is not stolen for being slow.
+// Renew stamps liveness so a long-running task is not stolen for being slow.
 func (l Lease) Renew(now time.Time) Lease {
 	l.Renewed = now.UTC()
 	return l
@@ -109,8 +95,7 @@ func (l Lease) Describe(now time.Time) string {
 }
 
 // ParseLease reads a lease out of a metadata value. Absent, malformed and
-// foreign values all read as unheld rather than as an error: a lease we
-// cannot understand must not be able to wedge the queue.
+// foreign values all read as unheld, so a lease we cannot understand cannot wedge the queue.
 func ParseLease(value any) (Lease, bool) {
 	var raw []byte
 
@@ -148,9 +133,8 @@ func ParseLease(value any) (Lease, bool) {
 	return l, true
 }
 
-// Claimable reports whether actor may take the task. Its own lease is
-// always takeable — that is a resume, not a steal — and anyone else's only
-// once stale.
+// Claimable reports whether actor may take the task: its own lease always
+// (a resume, not a steal), anyone else's only once stale.
 func Claimable(value any, actor string, now time.Time) bool {
 	l, ok := ParseLease(value)
 	if !ok {

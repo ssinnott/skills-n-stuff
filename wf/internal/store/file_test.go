@@ -17,12 +17,11 @@ import (
 // sample is a record with the shape the ledger actually has to survive: two
 // runs, and bindings that hang off each of them plus one that predates any
 // run at all.
-func sample(id, handle string) wf.Record {
+func sample(id string) wf.Record {
 	started := time.Date(2025, 3, 1, 10, 0, 0, 0, time.UTC)
 	ended := started.Add(20 * time.Minute)
 	return wf.Record{
 		ID:      id,
-		Handle:  handle,
 		Created: started.Add(-time.Hour),
 		Runs: []wf.Run{
 			{
@@ -43,14 +42,6 @@ func sample(id, handle string) wf.Record {
 			},
 		},
 		Bindings: wf.Bindings{
-			{
-				Kind:  wf.KindQueue,
-				Ref:   "01M1SABCDEFGHJKMNPQRSTVWXY",
-				Label: "Add the parser",
-				State: wf.BindingLive,
-				At:    started.Add(-time.Hour),
-				Meta:  map[string]string{wf.MetaBackend: "kata"},
-			},
 			{
 				Kind:  wf.KindWorkspace,
 				Ref:   "/home/me/.wf/worktrees/neck-add-parser",
@@ -78,7 +69,7 @@ func sample(id, handle string) wf.Record {
 
 func TestRoundTrip(t *testing.T) {
 	s := New(t.TempDir())
-	want := sample("01WFAAAAAAAAAAAAAAAAAAAAAA", "neck")
+	want := sample("01WFAAAAAAAAAAAAAAAAAAAAAA")
 
 	if err := s.Save(want); err != nil {
 		t.Fatalf("save: %v", err)
@@ -113,9 +104,6 @@ func TestRoundTrip(t *testing.T) {
 	pr, ok := got.Bindings.Current(wf.KindPR)
 	if !ok || pr.Via != "run-2" || pr.Ref != "https://github.com/me/app/pull/412" {
 		t.Errorf("pr binding did not survive: %+v", pr)
-	}
-	if q, ok := got.QueueRef(); !ok || q != "01M1SABCDEFGHJKMNPQRSTVWXY" {
-		t.Errorf("queue ref = %q, %v", q, ok)
 	}
 }
 
@@ -180,9 +168,6 @@ func TestMissingDirectoryIsAnEmptyStore(t *testing.T) {
 	if _, err := s.Load("x"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("Load over a missing dir = %v, want not-found", err)
 	}
-	if _, err := s.Resolve("x"); !errors.Is(err, ErrNotFound) {
-		t.Errorf("Resolve over a missing dir = %v, want not-found", err)
-	}
 	if err := s.Delete("x"); err != nil {
 		t.Errorf("Delete over a missing dir = %v, want nil", err)
 	}
@@ -215,11 +200,6 @@ func TestListSkipsCorruptFileAndKeepsSiblings(t *testing.T) {
 	}
 	if !strings.Contains(skip.Error(), "bbb.json") {
 		t.Errorf("error message %q does not name the bad file", skip.Error())
-	}
-
-	// The corrupt file must not take Resolve down with it either.
-	if got, err := s.Resolve("ccc"); err != nil || got.ID != "ccc" {
-		t.Errorf("Resolve past a corrupt sibling = %+v, %v", got, err)
 	}
 }
 
@@ -273,110 +253,6 @@ func TestInvalidIDsAreRefused(t *testing.T) {
 	}
 }
 
-func TestResolveByEachRefForm(t *testing.T) {
-	s := New(t.TempDir())
-	rec := sample("01WFAAAAAAAAAAAAAAAAAAAAAA", "neck")
-	if err := s.Save(rec); err != nil {
-		t.Fatalf("save: %v", err)
-	}
-	// A second task so a resolver that just returns the only record fails.
-	other := sample("01WFZZZZZZZZZZZZZZZZZZZZZZ", "shin")
-	other.Bindings[0].Ref = "01M1SZZZZZZZZZZZZZZZZZZZZZ"
-	if err := s.Save(other); err != nil {
-		t.Fatalf("save other: %v", err)
-	}
-
-	cases := []struct{ name, ref string }{
-		{"wf id", "01WFAAAAAAAAAAAAAAAAAAAAAA"},
-		{"wf id, lowercased by a copy-paste", "01wfaaaaaaaaaaaaaaaaaaaaaa"},
-		{"wf id prefix", "01WFA"},
-		{"handle", "neck"},
-		{"queue binding ref (kata ULID)", "01M1SABCDEFGHJKMNPQRSTVWXY"},
-		{"queue short id (the ULID's tail)", "wxy"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got, err := s.Resolve(tc.ref)
-			if err != nil {
-				t.Fatalf("Resolve(%q): %v", tc.ref, err)
-			}
-			if got.ID != rec.ID {
-				t.Errorf("Resolve(%q) = %s, want %s", tc.ref, got.ID, rec.ID)
-			}
-		})
-	}
-
-	if _, err := s.Resolve("no-such-ref"); !errors.Is(err, ErrNotFound) {
-		t.Errorf("Resolve of an unknown ref = %v, want not-found", err)
-	}
-	if _, err := s.Resolve(""); !errors.Is(err, ErrNotFound) {
-		t.Errorf("Resolve(\"\") = %v, want not-found", err)
-	}
-}
-
-func TestResolveAmbiguousNamesCandidates(t *testing.T) {
-	s := New(t.TempDir())
-	for _, r := range []wf.Record{
-		{ID: "01WFAAAA", Handle: "neck"},
-		{ID: "01WFBBBB", Handle: "next"},
-		{ID: "01WFCCCC", Handle: "shin"},
-	} {
-		if err := s.Save(r); err != nil {
-			t.Fatalf("save %s: %v", r.ID, err)
-		}
-	}
-
-	_, err := s.Resolve("ne")
-	if err == nil {
-		t.Fatal("an ambiguous ref resolved silently")
-	}
-	var amb *AmbiguousError
-	if !errors.As(err, &amb) {
-		t.Fatalf("err = %v, want an *AmbiguousError", err)
-	}
-	if len(amb.Candidates) != 2 {
-		t.Fatalf("candidates = %v, want the two matches", amb.Candidates)
-	}
-	msg := amb.Error()
-	for _, want := range []string{"01WFAAAA", "neck", "01WFBBBB", "next"} {
-		if !strings.Contains(msg, want) {
-			t.Errorf("message %q does not name %q", msg, want)
-		}
-	}
-	if strings.Contains(msg, "shin") {
-		t.Errorf("message %q names a task that did not match", msg)
-	}
-}
-
-// A ref that hits one task exactly must not be dragged into ambiguity by a
-// longer task it happens to prefix.
-func TestResolveExactBeatsPartial(t *testing.T) {
-	s := New(t.TempDir())
-	for _, r := range []wf.Record{{ID: "a1", Handle: "neck"}, {ID: "a2", Handle: "necklace"}} {
-		if err := s.Save(r); err != nil {
-			t.Fatalf("save: %v", err)
-		}
-	}
-	got, err := s.Resolve("neck")
-	if err != nil {
-		t.Fatalf("Resolve: %v", err)
-	}
-	if got.ID != "a1" {
-		t.Errorf("Resolve(\"neck\") = %s, want the exact match a1", got.ID)
-	}
-}
-
-// A single stray character must not resolve a lone task.
-func TestResolveRejectsAOneCharacterRef(t *testing.T) {
-	s := New(t.TempDir())
-	if err := s.Save(wf.Record{ID: "abcdef", Handle: "neck"}); err != nil {
-		t.Fatalf("save: %v", err)
-	}
-	if _, err := s.Resolve("a"); !errors.Is(err, ErrNotFound) {
-		t.Errorf("Resolve(\"a\") = %v, want not-found", err)
-	}
-}
-
 // `wf run --max 3` puts several runs in one process. Different tasks are
 // different files and never contend; two writers on the *same* task must
 // still leave one whole record. Run this under -race.
@@ -391,12 +267,12 @@ func TestConcurrentSaveSameID(t *testing.T) {
 			defer wg.Done()
 			for i := 0; i < rounds; i++ {
 				rec := wf.Record{
-					ID:     "hot",
-					Handle: fmt.Sprintf("writer-%d", w),
+					ID: "hot",
 					Bindings: wf.Bindings{{
-						Kind: wf.KindPR,
-						Ref:  fmt.Sprintf("https://example.test/pull/%d-%d", w, i),
-						At:   time.Now().UTC(),
+						Kind:  wf.KindPR,
+						Ref:   fmt.Sprintf("https://example.test/pull/%d-%d", w, i),
+						Label: fmt.Sprintf("writer-%d", w),
+						At:    time.Now().UTC(),
 					}},
 				}
 				if err := s.Save(rec); err != nil {
@@ -434,7 +310,7 @@ func TestConcurrentSaveSameID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("final load: %v", err)
 	}
-	if !strings.HasPrefix(got.Handle, "writer-") || len(got.Bindings) != 1 {
+	if len(got.Bindings) != 1 || !strings.HasPrefix(got.Bindings[0].Label, "writer-") {
 		t.Errorf("final record is not one whole write: %+v", got)
 	}
 	// One task is one file, plus nothing: every temp file was renamed away
@@ -462,7 +338,7 @@ func TestConcurrentSaveDifferentIDs(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			id := fmt.Sprintf("task-%02d", i)
-			if err := s.Save(wf.Record{ID: id, Handle: id}); err != nil {
+			if err := s.Save(wf.Record{ID: id}); err != nil {
 				t.Errorf("save %s: %v", id, err)
 			}
 		}(i)
@@ -484,7 +360,7 @@ func TestConcurrentSaveDifferentIDs(t *testing.T) {
 // behind is invisible to the ledger.
 func TestCrashMidWriteLeavesNoPartialRecord(t *testing.T) {
 	s := New(t.TempDir())
-	original := sample("01WFAAAA", "neck")
+	original := sample("01WFAAAA")
 	if err := s.Save(original); err != nil {
 		t.Fatalf("save: %v", err)
 	}
@@ -539,7 +415,7 @@ func TestCrashMidWriteLeavesNoPartialRecord(t *testing.T) {
 // impossible for any reader holding the old file open.
 func TestSaveReplacesRatherThanTruncates(t *testing.T) {
 	s := New(t.TempDir())
-	if err := s.Save(wf.Record{ID: "x", Handle: "first"}); err != nil {
+	if err := s.Save(wf.Record{ID: "x"}); err != nil {
 		t.Fatalf("save: %v", err)
 	}
 	path := filepath.Join(s.Dir(), "x.json")
@@ -549,7 +425,7 @@ func TestSaveReplacesRatherThanTruncates(t *testing.T) {
 	}
 	defer open.Close()
 
-	big := wf.Record{ID: "x", Handle: "second"}
+	big := wf.Record{ID: "x"}
 	for i := 0; i < 200; i++ {
 		big.Bindings = append(big.Bindings, wf.Binding{Kind: wf.KindDoc, Ref: fmt.Sprintf("doc-%d", i)})
 	}
@@ -568,8 +444,8 @@ func TestSaveReplacesRatherThanTruncates(t *testing.T) {
 	if err := json.Unmarshal(raw, &held); err != nil {
 		t.Fatalf("the file a reader held open was truncated under it: %v", err)
 	}
-	if held.Handle != "first" {
-		t.Errorf("held record handle = %q, want the pre-rename %q", held.Handle, "first")
+	if len(held.Bindings) != 0 {
+		t.Errorf("held record bindings = %+v, want the pre-rename empty record", held.Bindings)
 	}
 }
 
@@ -592,14 +468,14 @@ func TestRootDefaultsBesideConfig(t *testing.T) {
 // wf writes beside it.
 func TestRecordOnDiskIsPlainIndentedJSON(t *testing.T) {
 	s := New(t.TempDir())
-	if err := s.Save(sample("01WFAAAA", "neck")); err != nil {
+	if err := s.Save(sample("01WFAAAA")); err != nil {
 		t.Fatalf("save: %v", err)
 	}
 	raw, err := os.ReadFile(filepath.Join(s.Dir(), "01WFAAAA.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(raw), "\n  \"handle\": \"neck\"") {
+	if !strings.Contains(string(raw), "\n  \"runs\": [") {
 		t.Errorf("file is not indented JSON:\n%s", raw)
 	}
 	if !strings.HasSuffix(string(raw), "}\n") {
@@ -611,78 +487,5 @@ func TestRecordOnDiskIsPlainIndentedJSON(t *testing.T) {
 	}
 	if perm := info.Mode().Perm(); perm != 0o644 {
 		t.Errorf("mode = %v, want 0644 like the rest of what wf writes", perm)
-	}
-}
-
-// A tracker's short ref resolves when the queue binding recorded it. kata
-// derives its short id from the ULID's last four characters, so this is the
-// case no prefix rule can reach and the reason MetaShortID exists.
-func TestResolveByRecordedShortID(t *testing.T) {
-	s := New(t.TempDir())
-
-	rec := wf.Record{
-		ID:     "01JQZK9T7WPX3RMBVCN8YD4EFG",
-		Handle: "parser",
-		Bindings: wf.Bindings{{
-			Kind: wf.KindQueue,
-			Ref:  "01M1SZXQ9V4KBHT2NPRDWCF7EG",
-			Meta: map[string]string{
-				wf.MetaBackend: "kata",
-				wf.MetaShortID: "f7eg",
-			},
-		}},
-	}
-	if err := s.Save(rec); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-
-	got, err := s.Resolve("f7eg")
-	if err != nil {
-		t.Fatalf("Resolve(f7eg): %v", err)
-	}
-	if got.ID != rec.ID {
-		t.Errorf("Resolve(f7eg).ID = %q, want %q", got.ID, rec.ID)
-	}
-
-	// And in whichever case the surface it was copied from displayed it —
-	// kata lowercases its short ids where its web UI does not.
-	got, err = s.Resolve("F7EG")
-	if err != nil {
-		t.Fatalf("Resolve(F7EG): %v", err)
-	}
-	if got.ID != rec.ID {
-		t.Errorf("Resolve(F7EG).ID = %q, want %q", got.ID, rec.ID)
-	}
-}
-
-// The recorded short id must not out-rank a record whose own id is what was
-// typed: an exact id is never ambiguous with someone else's short ref.
-func TestResolveShortIDDoesNotShadowAnExactID(t *testing.T) {
-	s := New(t.TempDir())
-
-	if err := s.Save(wf.Record{ID: "abcd", Handle: "direct"}); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-	other := wf.Record{
-		ID: "01JQZK9T7WPX3RMBVCN8YD4EFG",
-		Bindings: wf.Bindings{{
-			Kind: wf.KindQueue,
-			Ref:  "01M1SZXQ9V4KBHT2NPRDWCABCD",
-			Meta: map[string]string{wf.MetaShortID: "abcd"},
-		}},
-	}
-	if err := s.Save(other); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-
-	// Both match in the strict pass, so this is a genuine collision and
-	// must be reported rather than silently picked.
-	_, err := s.Resolve("abcd")
-	var amb *AmbiguousError
-	if !errors.As(err, &amb) {
-		t.Fatalf("Resolve(abcd) err = %v, want AmbiguousError naming both", err)
-	}
-	if len(amb.Candidates) != 2 {
-		t.Errorf("candidates = %v, want both records named", amb.Candidates)
 	}
 }

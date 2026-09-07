@@ -3,60 +3,41 @@ package main
 
 import (
 	"context"
-	"errors"
+	"flag"
 	"fmt"
 	"os"
-	"os/exec"
 	"os/signal"
-	"strconv"
 	"strings"
 	"syscall"
-	"time"
 
 	"github.com/ssinnott/skills-n-stuff/wf/internal/config"
 	"github.com/ssinnott/skills-n-stuff/wf/internal/kata"
-	"github.com/ssinnott/skills-n-stuff/wf/internal/runner"
 	"github.com/ssinnott/skills-n-stuff/wf/internal/store"
-	"github.com/ssinnott/skills-n-stuff/wf/internal/supervisor"
 	"github.com/ssinnott/skills-n-stuff/wf/internal/wf"
 	"github.com/ssinnott/skills-n-stuff/wf/internal/workflow"
-	"github.com/ssinnott/skills-n-stuff/wf/internal/workspace"
 )
 
 const usage = `wf — workflow CLI over pluggable queues
 
-  wf ready [--limit N]         actionable work, top of queue first
-  wf show <ref>                one task: its runs and what each produced
-  wf escalations               tasks flagged needs-human
-  wf workflows                 canned workflows loaded from the workflow dir
-  wf task new "<title>"        start a task with no tracker row at all
-  wf task adopt <ref>          file an existing task into the tracker
-         --queue <tracker-id>
-  wf task list                 every task wf has recorded
-  wf run [--once] [--ref R]    dispatch work to agents
-         [--max N] [--repo P]
-         [--workflow W]
-  wf attach <ref>              open the task's pi session
-  wf bind <ref> <note.md>      bind a task to an Obsidian note, both ways
-  wf note sync <ref>           write the task's managed block into its note
-  wf note sync --all           refresh every note the ledger knows about
-  wf ui <ref>                  print the web UI deep link for a task
-  wf review <ref>              resolve the task's diff and open it in difit
-  wf review <ref> --stop       stop the running viewer
-  wf review comment <ref>      read a pasted review prompt from stdin
-  wf pr refresh [<ref>]        ask GitHub what a task's pull requests did
-  wf gc [--before 30d]         report ledger bindings whose referent is gone
-        [--fix] [--delete]
+  wf ready [--limit N]                                         actionable work, top of queue first
+  wf show <ref>                                                one task: its runs and what each produced
+  wf escalations                                               tasks flagged needs-human
+  wf workflows                                                 canned workflows loaded from the workflow dir
+  wf run [<ref>] [--once] [--max N] [--repo P] [--workflow W]  dispatch work to agents
+  wf attach <ref>                                              open the task's pi session
+  wf bind <ref> <note.md>                                      bind a task to an Obsidian note, both ways
+  wf ui [<ref>]                                                print the web UI deep link for a task
+  wf review <ref> | --pr <url> [--repo P] | <ref> --stop       resolve the task's diff and open it in difit, or stop the viewer
+  wf review comment <ref> [--format difit]                     read a pasted review prompt from stdin
+  wf gc [--delete]                                             report ledger bindings whose referent is gone; --delete drops dead records
 
-A <ref> is any of four: wf's own task id, its short handle, the tracker's id
-or the tracker's short id. Ambiguity names the candidates rather than picking.
+A <ref> is anything ` + "`kata show`" + ` accepts: the issue's ULID or its short id.
 
-Add --json to ready, show, escalations, workflows, task, run, review and
-note sync for machine-readable output; that is the protocol both the pi
-extension and the Obsidian plugin speak.
+Add --json to any subcommand for machine-readable output; that is the
+protocol both the pi extension and the Obsidian plugin speak.
 
-Config: ~/.wf/config.json (override with --config). KATA_BIN, PI_BIN,
-DIFIT_BIN and GH_BIN override binaries that are off PATH.`
+Config: ~/.wf/config.json (override with --config). KATA_BIN, PI_BIN and
+DIFIT_BIN override binaries that are off PATH.`
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -80,8 +61,68 @@ type app struct {
 	workflows *workflow.Set
 }
 
+// commonFlags are the two flags every subcommand's FlagSet registers.
+// --config is also read out of argv before any FlagSet exists (see
+// configFlagValue), since newApp needs it before dispatch picks a command.
+type commonFlags struct {
+	json   bool
+	config string
+}
+
+// newFlagSet builds one subcommand's FlagSet, wired the way every wf
+// subcommand needs: errors reported rather than panicking or exiting, usage
+// text to stderr, and --json/--config registered so neither is ever an
+// "unknown flag" no matter which subcommand sees it.
+func newFlagSet(name string) (*flag.FlagSet, *commonFlags) {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	cf := &commonFlags{}
+	fs.BoolVar(&cf.json, "json", false, "machine-readable output")
+	fs.StringVar(&cf.config, "config", "", "path to config.json (default ~/.wf/config.json)")
+	return fs, cf
+}
+
+// parseFlags parses fs against args and returns the positionals, wherever
+// they fall. Go's flag package stops at the first non-flag argument, which
+// would make `wf run <ref> --workflow W` treat --workflow as a positional;
+// this loop instead peels off one positional at a time and keeps parsing
+// whatever comes after it, so flags may appear before or after positionals
+// interchangeably. Any argument flag.Parse does not recognize is still a
+// hard error — that is the whole point of moving off the old scanner.
+func parseFlags(fs *flag.FlagSet, args []string) ([]string, error) {
+	var positionals []string
+	for {
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
+		rem := fs.Args()
+		if len(rem) == 0 {
+			return positionals, nil
+		}
+		positionals = append(positionals, rem[0])
+		args = rem[1:]
+	}
+}
+
+// configFlagValue picks --config out of raw argv without a FlagSet, since
+// newApp has to open the config before any subcommand's FlagSet exists to
+// declare the flag properly. Every subcommand still registers --config
+// itself (via newFlagSet) so it is a recognized flag once real parsing
+// happens, rather than an error there.
+func configFlagValue(args []string) string {
+	for i, a := range args {
+		if a == "--config" && i+1 < len(args) {
+			return args[i+1]
+		}
+		if v, ok := strings.CutPrefix(a, "--config="); ok {
+			return v
+		}
+	}
+	return ""
+}
+
 func newApp(args []string) (*app, error) {
-	cfg, err := config.Load(flagValue(args, "--config"))
+	cfg, err := config.Load(configFlagValue(args))
 	if err != nil {
 		return nil, err
 	}
@@ -93,9 +134,6 @@ func newApp(args []string) (*app, error) {
 	}
 	if v := os.Getenv("DIFIT_BIN"); v != "" {
 		cfg.DifitCommand = v
-	}
-	if v := os.Getenv("GH_BIN"); v != "" {
-		cfg.GhBin = v
 	}
 
 	cwd, err := os.Getwd()
@@ -143,49 +181,49 @@ func run(ctx context.Context, argv []string) (int, error) {
 		return a.cmdAttach(ctx, rest)
 	case "bind":
 		return a.cmdBind(ctx, rest)
-	case "note":
-		return a.cmdNote(rest)
 	case "ui":
 		return a.cmdUI(ctx, rest)
 	case "review":
 		return a.cmdReview(ctx, rest)
-	case "pr":
-		return a.cmdPR(ctx, rest)
 	case "gc":
 		return a.cmdGC(ctx, rest)
-	case "task":
-		return a.cmdTask(ctx, rest)
+	case "migrate-ledger":
+		// Hidden: a one-off migration, not part of the command surface.
+		// See cmd/wf/migrate.go.
+		return a.cmdMigrateLedger(ctx, rest)
 	default:
 		return 1, fmt.Errorf("unknown command: %s\n\n%s", cmd, usage)
 	}
 }
 
 func (a *app) cmdReady(ctx context.Context, args []string) (int, error) {
-	limit := 20
-	if v := flagValue(args, "--limit"); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil {
-			return 1, fmt.Errorf("--limit: %w", err)
-		}
-		limit = n
+	fs, cf := newFlagSet("ready")
+	limit := fs.Int("limit", 20, "max tasks to list")
+	if _, err := parseFlags(fs, args); err != nil {
+		return 1, err
 	}
 
-	tasks, err := a.queue.Ready(ctx, limit)
+	tasks, err := a.queue.Ready(ctx, *limit)
 	if err != nil {
 		return 1, err
 	}
-	if hasFlag(args, "--json") {
+	if cf.json {
 		return 0, emit("tasks", a.tasksToJSON(tasks))
 	}
 	return a.printTasks(tasks, "nothing ready"), nil
 }
 
 func (a *app) cmdEscalations(ctx context.Context, args []string) (int, error) {
+	fs, cf := newFlagSet("escalations")
+	if _, err := parseFlags(fs, args); err != nil {
+		return 1, err
+	}
+
 	tasks, err := a.queue.Escalations(ctx)
 	if err != nil {
 		return 1, err
 	}
-	if hasFlag(args, "--json") {
+	if cf.json {
 		return 0, emit("tasks", a.tasksToJSON(tasks))
 	}
 	return a.printTasks(tasks, "no escalations"), nil
@@ -203,8 +241,13 @@ func (a *app) printTasks(tasks []wf.Task, empty string) int {
 }
 
 func (a *app) cmdWorkflows(args []string) (int, error) {
+	fs, cf := newFlagSet("workflows")
+	if _, err := parseFlags(fs, args); err != nil {
+		return 1, err
+	}
+
 	flows := a.workflows.All()
-	if hasFlag(args, "--json") {
+	if cf.json {
 		return 0, emit("workflows", workflowsToJSON(flows))
 	}
 	if len(flows) == 0 {
@@ -221,186 +264,6 @@ func (a *app) cmdWorkflows(args []string) (int, error) {
 	return 0, nil
 }
 
-func (a *app) cmdRun(ctx context.Context, args []string) (int, error) {
-	repo := flagValue(args, "--repo")
-	if repo == "" {
-		repo = a.cfg.Repo
-	}
-	repo = config.Expand(repo)
-
-	sup := &supervisor.Supervisor{
-		Queue:     a.queue,
-		Runner:    &runner.Pi{Bin: a.cfg.PiBin, SessionRoot: a.cfg.SessionRoot},
-		Workflows: a.workflows,
-		Config:    a.cfg,
-		Store:     a.ledger,
-		Log:       func(format string, v ...any) { fmt.Printf(format+"\n", v...) },
-		Workspaces: func(w workflow.Workflow) wf.WorkspaceProvider {
-			r := repo
-			if w.Repo != "" {
-				r = config.Expand(w.Repo)
-			}
-			base := a.cfg.Base
-			if w.Base != "" {
-				base = w.Base
-			}
-			return &workspace.Provider{Repo: r, Root: a.cfg.WorktreeRoot, Base: base}
-		},
-	}
-
-	asJSON := hasFlag(args, "--json")
-	if asJSON {
-		// Progress goes to stderr so stdout stays a single JSON document.
-		sup.Log = func(format string, v ...any) { fmt.Fprintf(os.Stderr, format+"\n", v...) }
-	}
-
-	// Two ways to name a task and one meaning: `wf run <ref>` is the form
-	// the design settled on, `--ref` is what already exists and what the
-	// clients call.
-	ref := flagValue(args, "--ref")
-	if ref == "" {
-		ref = firstPositional(args)
-	}
-
-	if hasFlag(args, "--once") || ref != "" {
-		dispatchRef, err := a.dispatchRef(ctx, ref)
-		if err != nil {
-			return 1, err
-		}
-		result, err := sup.RunOnceWith(ctx, dispatchRef,
-			supervisor.Dispatch{Workflow: flagValue(args, "--workflow")})
-		if errors.Is(err, supervisor.ErrNothingReady) {
-			if asJSON {
-				return 0, emit("results", []jsonRunResult{})
-			}
-			fmt.Println("nothing ready")
-			return 0, nil
-		}
-		if err != nil {
-			return 1, err
-		}
-		if asJSON {
-			return 0, emit("results", []jsonRunResult{a.runResultToJSON(result)})
-		}
-		report(result)
-		return 0, nil
-	}
-
-	max := a.cfg.MaxConcurrent
-	if v := flagValue(args, "--max"); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil {
-			return 1, fmt.Errorf("--max: %w", err)
-		}
-		max = n
-	}
-
-	results, err := sup.Run(ctx, max)
-	if err != nil && !errors.Is(err, context.Canceled) {
-		return 1, err
-	}
-	if asJSON {
-		out := make([]jsonRunResult, 0, len(results))
-		for _, result := range results {
-			out = append(out, a.runResultToJSON(result))
-		}
-		return 0, emit("results", out)
-	}
-	for _, result := range results {
-		report(result)
-	}
-	fmt.Printf("%d task(s) dispatched\n", len(results))
-	return 0, nil
-}
-
-// now is a variable so output formatting stays testable.
-var now = time.Now
-
-func report(r supervisor.Result) {
-	switch {
-	case r.Applied.Escalated:
-		fmt.Printf("%s escalated: %s\n", r.Task.ShortID, r.Applied.Reason)
-		fmt.Printf("   wf attach %s\n", r.Task.ShortID)
-	case r.Applied.Closed:
-		fmt.Printf("%s closed\n", r.Task.ShortID)
-	}
-	for _, doc := range r.Applied.Bound {
-		fmt.Printf("   note: %s\n", doc.VaultPath)
-	}
-	for _, ref := range r.Applied.Created {
-		fmt.Printf("   follow-on: %s\n", ref)
-	}
-}
-
-func (a *app) cmdAttach(ctx context.Context, args []string) (int, error) {
-	ref := firstPositional(args)
-	if ref == "" {
-		return 1, errors.New("wf attach <ref>")
-	}
-
-	// The ledger answers first, and for a session it is the better answer:
-	// its bindings carry the run that spawned each one and the host that
-	// owns it, where flat metadata has nowhere to put either. A task the
-	// ledger never saw still resolves through the tracker, whose metadata
-	// LoadBindings reads inside a.resolve.
-	found, err := a.resolve(ctx, ref)
-	if err != nil {
-		return 1, err
-	}
-	session, ok := found.Record.Bindings.Current(wf.KindSession)
-	if !ok {
-		if session, ok = a.sessionFromMeta(ctx, found); !ok {
-			return 1, fmt.Errorf("%s has no bound session yet", ref)
-		}
-	}
-	if session.Host != "" && session.Host != a.cfg.Actor {
-		// A session file is a fact about one machine. Handing over a path
-		// that will not resolve here reads as a broken install; saying
-		// whose it is reads as the truth.
-		return 1, fmt.Errorf("%s ran on %s — its session lives there, not here", ref, session.Host)
-	}
-
-	dir := session.Get(wf.MetaCwd)
-	if dir == "" {
-		dir, _ = os.Getwd()
-	}
-	bin := a.cfg.PiBin
-	if bin == "" {
-		bin = "pi"
-	}
-
-	// Hand the terminal to pi; wf has nothing further to do.
-	pi := exec.CommandContext(ctx, bin, wf.AttachArgs(session)...)
-	pi.Dir = dir
-	pi.Stdin, pi.Stdout, pi.Stderr = os.Stdin, os.Stdout, os.Stderr
-	if err := pi.Run(); err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			return exitErr.ExitCode(), nil
-		}
-		return 1, fmt.Errorf("attach to %s: %w", ref, err)
-	}
-	return 0, nil
-}
-
-// cmdUI prints a deep link for a task, or the daemon's origin when no ref is
-// given — a framed UI needs the origin before it has anything selected, and
-// the port is not fixed.
-func (a *app) cmdUI(ctx context.Context, args []string) (int, error) {
-	origin, err := a.queue.WebUIOrigin(ctx)
-	if err != nil {
-		return 1, fmt.Errorf("%w (is the daemon running?)", err)
-	}
-
-	ref := firstPositional(args)
-	if ref == "" {
-		fmt.Println(origin)
-		return 0, nil
-	}
-	fmt.Printf("%s/issues/%s\n", origin, ref)
-	return 0, nil
-}
-
 func (a *app) summary(t wf.Task) string {
 	var extra string
 	if flow, ok := a.workflows.Select(t); ok {
@@ -413,55 +276,4 @@ func (a *app) summary(t wf.Task) string {
 		extra += " (" + lease.Actor + ")"
 	}
 	return fmt.Sprintf("%-6s P%d  %s%s", t.ShortID, t.Priority, t.Title, extra)
-}
-
-// knownFlags take a value, so positional arguments can be told apart from
-// flag values without a full flag parser.
-var knownFlags = map[string]bool{
-	"--limit": true, "--max": true, "--repo": true, "--ref": true, "--config": true,
-	"--vault": true, "--pr": true, "--format": true, "--before": true,
-	"--handle": true, "--queue": true, "--workflow": true,
-}
-
-func flagValue(args []string, flag string) string {
-	for i, a := range args {
-		if a == flag && i+1 < len(args) {
-			return args[i+1]
-		}
-		if strings.HasPrefix(a, flag+"=") {
-			return strings.TrimPrefix(a, flag+"=")
-		}
-	}
-	return ""
-}
-
-func hasFlag(args []string, flag string) bool {
-	for _, a := range args {
-		if a == flag {
-			return true
-		}
-	}
-	return false
-}
-
-func positionals(args []string) []string {
-	var out []string
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		if strings.HasPrefix(a, "-") {
-			if knownFlags[a] {
-				i++
-			}
-			continue
-		}
-		out = append(out, a)
-	}
-	return out
-}
-
-func firstPositional(args []string) string {
-	if p := positionals(args); len(p) > 0 {
-		return p[0]
-	}
-	return ""
 }

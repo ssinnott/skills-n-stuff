@@ -5,10 +5,8 @@ import (
 	"strings"
 )
 
-// The outcome protocol. Agents end a run with verb lines; wf turns those
-// into tracker writes. These six verbs are the entire vocabulary a runner
-// needs to speak and the only thing a queue backend has to know how to
-// apply — which is what keeps the backend interface at seven methods.
+// The outcome protocol: agents end a run with verb lines, wf turns those
+// into tracker writes.
 //
 //	DONE                       DONE — review: notes/plan.md
 //	PR: <url> — <title>        ISSUE: <url> — <title>
@@ -23,8 +21,7 @@ const (
 	VerbRepo  = "REPO"
 )
 
-// Outcome is one reported result. Which fields are meaningful depends on
-// Verb; the constructors in ParseOutcomes are the only writers.
+// Outcome is one reported result; which fields matter depends on Verb.
 type Outcome struct {
 	Verb string
 	// URL for PR and ISSUE.
@@ -37,9 +34,8 @@ type Outcome struct {
 	Message string
 }
 
-// Verbs must be uppercase at line start. The verb is strict because prose
-// like "Next: we should…" would otherwise parse as an outcome; separators
-// are tolerant because models are inconsistent about dashes.
+// Verbs must be uppercase at line start, or prose like "Next: we should…"
+// would parse as an outcome; separators stay tolerant of dash style.
 var (
 	verbRe      = regexp.MustCompile(`^(DONE|PR|ISSUE|NEXT|DOC|REPO)\b[:\s]?\s*(.*)$`)
 	separatorRe = regexp.MustCompile(`\s+(?:—|–|--|-)\s+`)
@@ -49,8 +45,7 @@ var (
 	quoteRe     = regexp.MustCompile(`^>\s*`)
 )
 
-// unwrap strips list bullets, blockquote marks and bold so a verb still
-// matches when an agent formats its summary as a list.
+// unwrap strips list bullets, blockquote marks and bold from a line.
 func unwrap(line string) string {
 	s := strings.TrimSpace(line)
 	s = quoteRe.ReplaceAllString(s, "")
@@ -69,9 +64,8 @@ func split(rest string) (string, string) {
 	return strings.TrimSpace(rest[:loc[0]]), strings.TrimSpace(rest[loc[1]:])
 }
 
-// ParseOutcomes scans text for verb lines. It reads the whole text rather
-// than only the last line: a runner that appends its own footer must not
-// be able to hide the agent's report.
+// ParseOutcomes scans the whole text for verb lines, not just the last line:
+// a runner that appends its own footer must not hide the agent's report.
 func ParseOutcomes(text string) []Outcome {
 	var found []Outcome
 
@@ -137,8 +131,7 @@ func IsComplete(outcomes []Outcome) bool {
 }
 
 // ToCloseResult folds outcomes into the evidence a close needs. PRs are
-// recorded as evidence, not treated as gates: whether a task may close
-// while its PRs are open is caller policy, not the parser's.
+// recorded as evidence, not treated as gates.
 func ToCloseResult(outcomes []Outcome) CloseResult {
 	result := CloseResult{Message: "Completed by agent"}
 
@@ -161,8 +154,7 @@ func ToCloseResult(outcomes []Outcome) CloseResult {
 	return result
 }
 
-// Spawned splits out the outcomes that create sibling work rather than
-// closing this task.
+// Spawned splits out the outcomes that create sibling work.
 func Spawned(outcomes []Outcome) (issues, next []Outcome) {
 	for _, o := range outcomes {
 		switch o.Verb {
@@ -185,8 +177,7 @@ func ReportedRepo(outcomes []Outcome) string {
 	return ""
 }
 
-// appendUnique keeps evidence lists free of duplicates: a document named
-// by both DONE and DOC is one artifact, not two.
+// appendUnique keeps evidence lists free of duplicates.
 func appendUnique(list []string, v string) []string {
 	for _, existing := range list {
 		if existing == v {

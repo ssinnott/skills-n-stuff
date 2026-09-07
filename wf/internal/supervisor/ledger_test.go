@@ -27,15 +27,13 @@ func withLedger(t *testing.T, s *Supervisor) store.Store {
 	return ledger
 }
 
-// loadRecord finds a task's record by the tracker id, which since stage 4 is
-// a *ref* rather than the key: wf mints its own id and the tracker row is a
-// queue binding on the record it names. Every assertion below is unchanged by
-// that; only the lookup is.
-func loadRecord(t *testing.T, ledger store.Store, ref string) wf.Record {
+// loadRecord finds a task's record by the tracker's own id — the only id
+// there is, and the key the ledger files it under.
+func loadRecord(t *testing.T, ledger store.Store, id string) wf.Record {
 	t.Helper()
-	rec, err := ledger.Resolve(ref)
+	rec, err := ledger.Load(id)
 	if err != nil {
-		t.Fatalf("no ledger record for %s: %v", ref, err)
+		t.Fatalf("no ledger record for %s: %v", id, err)
 	}
 	return rec
 }
@@ -60,7 +58,7 @@ func TestRunIsRecordedBeforeTheAgentProducesAnything(t *testing.T) {
 	// run that never gets written down.
 	deadline := time.After(2 * time.Second)
 	for {
-		rec, err := ledger.Resolve("01HZ")
+		rec, err := ledger.Load("01HZ")
 		if err == nil && len(rec.Runs) == 1 {
 			run := rec.Runs[0]
 			if run.Started.IsZero() {
@@ -254,7 +252,7 @@ func TestRerunTakesOverAsCurrentWhileTheFirstStays(t *testing.T) {
 	}
 }
 
-func TestEveryBindingARunProducedCarriesTheRun(t *testing.T) {
+func TestEveryLocalBindingARunProducedCarriesTheRun(t *testing.T) {
 	q := newQueue(wf.Task{ID: "01HZ", ShortID: "abc4", Title: "Productive work"})
 	r := &fakeRunner{transcript: "" +
 		"REPO: /code/app\n" +
@@ -280,39 +278,38 @@ func TestEveryBindingARunProducedCarriesTheRun(t *testing.T) {
 	for _, b := range produced {
 		kinds[b.Kind] = b
 	}
-	for _, want := range []wf.Kind{wf.KindWorkspace, wf.KindSession, wf.KindPR, wf.KindIssue, wf.KindDoc, wf.KindTask} {
+	// Only what is machine-local goes on the run: a workspace and a
+	// session. PRs, issues, documents, repos and the NEXT follow-on are all
+	// shareable and have no place in the ledger at all.
+	for _, want := range []wf.Kind{wf.KindWorkspace, wf.KindSession} {
 		if _, ok := kinds[want]; !ok {
 			t.Errorf("no %s binding tagged with the run: %+v", want, produced)
 		}
 	}
-	if pr := kinds[wf.KindPR]; pr.Ref != "https://example.test/pull/412" || pr.Label != "Add the parser" {
-		t.Errorf("pr binding = %+v", pr)
+	for _, unwanted := range []wf.Kind{wf.KindPR, wf.KindIssue, wf.KindDoc, wf.KindTask, wf.KindRepo} {
+		if b, ok := kinds[unwanted]; ok {
+			t.Errorf("%s is a shareable fact and must not be in the ledger: %+v", unwanted, b)
+		}
 	}
-	if next := kinds[wf.KindTask]; next.Get(wf.MetaRelation) != wf.RelationNext {
-		t.Errorf("follow-on binding = %+v, want relation next", next)
-	}
-
-	// The repo is context the run named rather than something it produced,
-	// so it reads as the task's own and renders above the runs.
-	repo, ok := rec.Bindings.Current(wf.KindRepo)
-	if !ok || repo.Ref != "/code/app" {
-		t.Fatalf("repo binding = %+v", repo)
-	}
-	if repo.Via != "" {
-		t.Errorf("repo binding Via = %q, want the task's own", repo.Via)
+	if _, ok := rec.Bindings.Current(wf.KindRepo); ok {
+		t.Error("the repo is a shareable fact and must not be in the ledger at all")
 	}
 
-	// The tracker still carries every one of those facts as flat metadata.
-	// Publication is one way and unchanged; the ledger is additional, not a
-	// replacement.
+	// The tracker carries every one of those facts as flat metadata — their
+	// only home now — and a client reads them back through LoadBindings.
 	if q.meta("01HZ", wf.RepoKey) != "/code/app" {
-		t.Errorf("tracker repo metadata = %v, want it still published", q.meta("01HZ", wf.RepoKey))
+		t.Errorf("tracker repo metadata = %v, want it published", q.meta("01HZ", wf.RepoKey))
 	}
 	if q.meta("01HZ", wf.PRsKey) == nil {
 		t.Error("tracker PR metadata was dropped")
 	}
 	if q.meta("01HZ", wf.IssuesKey) == nil {
 		t.Error("tracker issue metadata was dropped")
+	}
+
+	published := wf.LoadBindings(wf.Task{ID: "01HZ", Meta: q.tasks["01HZ"].Meta})
+	if pr, ok := published.Current(wf.KindPR); !ok || pr.Ref != "https://example.test/pull/412" {
+		t.Errorf("published pr binding = %+v", pr)
 	}
 }
 
@@ -362,10 +359,14 @@ func TestWorkspaceBindingRecordsTheBranchAndTheHost(t *testing.T) {
 		t.Errorf("runner = %q, want the runner that actually ran", got)
 	}
 
-	// A PR URL resolves from any machine, so it carries no host at all.
-	pr, ok := rec.Bindings.Current(wf.KindPR)
-	if !ok {
-		t.Fatal("no pr binding")
+	// A PR is shareable and resolves from any machine, so it has no place
+	// in the ledger at all — it lives on the tracker, published by Apply.
+	if _, ok := rec.Bindings.Current(wf.KindPR); ok {
+		t.Error("a PR binding must not be in the ledger — it is a shareable fact")
+	}
+	pr, ok := wf.LoadBindings(wf.Task{ID: "01HZ", Meta: q.tasks["01HZ"].Meta}).Current(wf.KindPR)
+	if !ok || pr.Ref != "https://a/1" {
+		t.Fatalf("published pr binding = %+v", pr)
 	}
 	if pr.Host != "" {
 		t.Errorf("pr host = %q, want none — a URL is not machine-local", pr.Host)
@@ -402,60 +403,10 @@ func TestLedgerBindingsCarryRealTimestamps(t *testing.T) {
 	}
 }
 
-func TestQueueBindingNamesTheTrackerRow(t *testing.T) {
-	// The tracker row is a binding, not the identity — which is what lets a
-	// task exist before one does.
-	q := newQueue(wf.Task{ID: "01HZ", ShortID: "abc4", Title: "Filed work"})
-	r := &fakeRunner{transcript: "PR: https://a/1 — x\nDONE Landed it and covered it.\n"}
-	s := newSupervisor(q, r, &fakeProvider{}, nil)
-	ledger := withLedger(t, s)
-
-	if _, err := s.RunOnce(context.Background(), ""); err != nil {
-		t.Fatalf("RunOnce() error = %v", err)
-	}
-
-	rec := loadRecord(t, ledger, "01HZ")
-	if rec.Handle != "abc4" {
-		t.Errorf("handle = %q", rec.Handle)
-	}
-	row, ok := rec.Bindings.Current(wf.KindQueue)
-	if !ok {
-		t.Fatal("no queue binding")
-	}
-	if row.Ref != "01HZ" || row.Label != "Filed work" {
-		t.Errorf("queue binding = %+v", row)
-	}
-	if row.Via != "" {
-		t.Errorf("queue binding Via = %q — filing work and doing it are different acts", row.Via)
-	}
-	if got := row.Get(wf.MetaBackend); got != "fake" {
-		t.Errorf("backend = %q, want the queue's own name as a value", got)
-	}
-	if got := row.Get(wf.MetaShortID); got != "abc4" {
-		t.Errorf("short id = %q — it cannot be derived, so it has to be recorded", got)
-	}
-
-	// The tracker's short id resolves the record, which is what a human
-	// types. It is not the record's id — that is wf's own, minted here
-	// because this is the first wf saw of the row — and the whole point of
-	// the queue binding is that the two spaces meet at it.
-	if rec.ID == "01HZ" || rec.ID == "abc4" {
-		t.Errorf("record id = %q, want wf's own id rather than the tracker's", rec.ID)
-	}
-	found, err := ledger.Resolve("abc4")
-	if err != nil {
-		t.Fatalf("Resolve(abc4) error = %v", err)
-	}
-	if found.ID != rec.ID {
-		t.Errorf("Resolve(abc4) = %q, want %q", found.ID, rec.ID)
-	}
-}
-
-func TestARenamedTaskRefreshesItsRowWithoutMovingTheRecord(t *testing.T) {
-	// A title moves when a human renames the task; the row it names does
-	// not. The record renders into a synced vault, so an unchanged task has
-	// to re-render to the same bytes — which means the timestamp holds still
-	// even when the label does not.
+func TestARenamedTaskDoesNotDisturbItsLedgerRecord(t *testing.T) {
+	// The record is keyed by the tracker's id, which does not move when a
+	// human renames the task — only kata's own row does, and wf never
+	// mirrors a title into the ledger.
 	task := wf.Task{ID: "01HZ", ShortID: "abc4", Title: "Original title"}
 	q := newQueue(task)
 	r := &fakeRunner{transcript: "I stopped.\n"}
@@ -465,7 +416,6 @@ func TestARenamedTaskRefreshesItsRowWithoutMovingTheRecord(t *testing.T) {
 	if _, err := s.RunOnce(context.Background(), ""); err != nil {
 		t.Fatalf("RunOnce() error = %v", err)
 	}
-	before, _ := loadRecord(t, ledger, "01HZ").Bindings.Current(wf.KindQueue)
 
 	q.tasks["01HZ"].Title = "Renamed in the tracker"
 	if _, err := s.RunOnce(context.Background(), "01HZ"); err != nil {
@@ -473,15 +423,8 @@ func TestARenamedTaskRefreshesItsRowWithoutMovingTheRecord(t *testing.T) {
 	}
 
 	rec := loadRecord(t, ledger, "01HZ")
-	rows := rec.Bindings.ByKind(wf.KindQueue)
-	if len(rows) != 1 {
-		t.Fatalf("queue bindings = %+v, want one row, not one per run", rows)
-	}
-	if rows[0].Label != "Renamed in the tracker" {
-		t.Errorf("label = %q, want the new title", rows[0].Label)
-	}
-	if !rows[0].At.Equal(before.At) {
-		t.Errorf("At moved from %v to %v on a rename", before.At, rows[0].At)
+	if len(rec.Runs) != 2 {
+		t.Fatalf("runs = %+v, want both dispatches on the one record", rec.Runs)
 	}
 
 	// And the branch each run cut is still on its own binding, so a rename

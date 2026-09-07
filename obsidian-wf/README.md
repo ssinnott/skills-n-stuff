@@ -21,6 +21,13 @@ Everything here is a projection: the plugin stores nothing itself. Every
 row in the queue comes from `wf --json`, every action writes back through
 `wf`, and the plugin can be closed and reopened without losing anything.
 
+This includes a bound note's task block: opening the note, and dispatching
+its task, renders `wf show --json`'s single object into the region between
+`%% wf:begin %%` and `%% wf:end %%` (see `src/taskblock.ts`). Everything outside
+those two lines is the user's — the plugin never touches it — and the block
+itself can be deleted at any time; it comes back, unchanged, the next time
+the note is opened or its task runs again.
+
 ## Prerequisites
 
 - **Desktop Obsidian** (the plugin spawns the `wf` binary; mobile is not
@@ -107,6 +114,9 @@ place.)
 - **Save review comments to the task** — harvest whatever comments are
   sitting in the open difit pane and send them to the task, without
   stopping the review. Only works on the webview frame path (see below).
+- **Refresh this note's task block** — re-render the active note's managed
+  task block from `wf show --json` on demand, without waiting for the next
+  open or dispatch.
 
 ## Settings
 
@@ -122,9 +132,9 @@ There is exactly one join, in both directions:
 
 - `kata-issue: <ref>` in a note's frontmatter — the note-side half, read by
   this plugin to know which task a note belongs to.
-- `obsidian.note: <vault path>` in the task's own metadata — the task-side
-  half, written by wf itself when a `DOC:` artifact lands in the vault (see
-  `wf`'s `ObsidianNoteKey`).
+- `wf.doc: <vault path>` in the task's own metadata — the task-side half,
+  written by `wf bind` and by wf itself when a `DOC:` artifact lands in the
+  vault.
 
 Binding a note through this plugin (or through a workflow's own DOC
 artifact) writes both halves. Renaming a bound note updates the tracker

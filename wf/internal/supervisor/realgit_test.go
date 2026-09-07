@@ -159,7 +159,7 @@ func TestRealGitRerunKeepsTheEscalatedCheckout(t *testing.T) {
 		t.Fatalf("Applied = %+v, want the re-run to close", second.Applied)
 	}
 
-	rec, err := h.ledger.Resolve("01HZ")
+	rec, err := h.ledger.Load("01HZ")
 	if err != nil {
 		t.Fatalf("no ledger record: %v", err)
 	}
@@ -229,7 +229,7 @@ func TestRealGitRunSurvivesADeadAgent(t *testing.T) {
 		t.Fatalf("Applied = %+v, want escalated", result.Applied)
 	}
 
-	rec, err := h.ledger.Resolve("01HZ")
+	rec, err := h.ledger.Load("01HZ")
 	if err != nil {
 		t.Fatalf("no ledger record: %v", err)
 	}
@@ -279,7 +279,7 @@ func TestRealGitBranchSurvivesARenamedTask(t *testing.T) {
 		t.Fatalf("RunOnce() error = %v", err)
 	}
 
-	rec, err := h.ledger.Resolve("01HZ")
+	rec, err := h.ledger.Load("01HZ")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -326,13 +326,13 @@ func TestRealGitNamedWorkflowRunsAndIsRecordedOnTheRun(t *testing.T) {
 		t.Fatalf("RunOnceWith() error = %v", err)
 	}
 
-	rec, err := h.ledger.Resolve("01HZ")
+	rec, err := h.ledger.Load("01HZ")
 	if err != nil {
 		t.Fatalf("no ledger record: %v", err)
 	}
-	// Identity is wf's own now; the tracker id is the ref that found it.
-	if rec.ID == "01HZ" {
-		t.Error("the record must be keyed by wf's own id, not the tracker's")
+	// kata's ULID is the task's only id; the record is filed under it.
+	if rec.ID != "01HZ" {
+		t.Error("the record must be keyed by the tracker's own id")
 	}
 	if len(rec.Runs) != 1 {
 		t.Fatalf("runs = %+v, want one", rec.Runs)

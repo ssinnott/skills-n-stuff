@@ -64,9 +64,21 @@ interface Task {
 	lease?: Lease;
 	session?: string;
 	cwd?: string;
-	runs?: number;
 	note?: string;
 	needsHuman?: boolean;
+}
+
+/**
+ * `wf show <ref> --json`: the task's own fields at the top level, plus its
+ * bindings, its runs (chronological, oldest first), and the ledger record's
+ * last-update time. No `task` / `record` wrapper. This extension only
+ * renders the run count, so bindings are left untyped rather than mirrored
+ * in full.
+ */
+interface ShowTask extends Task {
+	runs?: unknown[];
+	bindings?: unknown[];
+	updated?: string;
 }
 
 interface RunResult {
@@ -155,7 +167,7 @@ function renderTasks(tasks: Task[], empty: string): string {
 	return tasks.map(describeTask).join("\n");
 }
 
-function renderDetail(task: Task): string {
+function renderDetail(task: ShowTask): string {
 	const lines = [
 		`${task.shortId}  ${task.title}`,
 		`id        ${task.id}`,
@@ -167,7 +179,7 @@ function renderDetail(task: Task): string {
 	if (task.owner) lines.push(`owner     ${task.owner}`);
 	lines.push(`lease     ${task.lease ? `${task.lease.actor}${task.lease.stale ? " (stale)" : ""}` : "unheld"}`);
 	lines.push(`session   ${task.session || "none"}`);
-	if (task.runs && task.runs > 1) lines.push(`runs      ${task.runs}`);
+	if (task.runs && task.runs.length > 1) lines.push(`runs      ${task.runs.length}`);
 	if (task.note) lines.push(`note      ${task.note}`);
 	if (task.session) lines.push("", `Attach with: /wf attach ${task.shortId}`);
 	if (task.body) lines.push("", task.body);
@@ -248,17 +260,17 @@ export default function wfExtension(pi: ExtensionAPI): void {
 
 				case "show": {
 					if (rest.length === 0) return "usage: /wf show <ref>";
-					const out = await wfJSON<{ task: Task }>(["show", rest[0]], cwd);
+					const out = await wfJSON<ShowTask>(["show", rest[0]], cwd);
 					if (typeof out === "string") return out;
-					return renderDetail(out.task);
+					return renderDetail(out);
 				}
 
 				case "attach": {
 					if (rest.length === 0) return "usage: /wf attach <ref>";
-					const out = await wfJSON<{ task: Task }>(["show", rest[0]], cwd);
+					const out = await wfJSON<Task>(["show", rest[0]], cwd);
 					if (typeof out === "string") return out;
 
-					const task = out.task;
+					const task = out;
 					if (!task.session) {
 						return `${task.shortId} has no agent session yet — it has not been dispatched.`;
 					}

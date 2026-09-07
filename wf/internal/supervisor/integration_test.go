@@ -157,14 +157,12 @@ func (h *harness) supervisor() *Supervisor {
 	}
 }
 
-// record reads the task's ledger entry. wf mints the id now, so the tracker
-// id is a ref that finds the record through its queue binding rather than
-// the key the record is filed under.
-func (h *harness) record(t *testing.T, ref string) wf.Record {
+// record reads the task's ledger entry, keyed by the tracker's own id.
+func (h *harness) record(t *testing.T, id string) wf.Record {
 	t.Helper()
-	rec, err := h.ledger.Resolve(ref)
+	rec, err := h.ledger.Load(id)
 	if err != nil {
-		t.Fatalf("no ledger record for %s: %v", ref, err)
+		t.Fatalf("no ledger record for %s: %v", id, err)
 	}
 	return rec
 }
@@ -214,23 +212,25 @@ func TestE2EClosesRealIssue(t *testing.T) {
 		}
 	}
 
-	// The session binding survives in kata, so attach works afterwards.
+	// The session binding survives in wf's own ledger — never in kata — so
+	// attach works afterwards.
+	rec := h.record(t, created.ID)
+	binding, ok := rec.Bindings.Current(wf.KindSession)
+	if !ok {
+		t.Fatal("no session bound to the closed task")
+	}
+	if binding.Ref == "" || !strings.HasSuffix(binding.Ref, ".jsonl") {
+		t.Errorf("session path = %q", binding.Ref)
+	}
+	if len(rec.Runs) != 1 {
+		t.Errorf("runs = %v, want one run", rec.Runs)
+	}
+
+	// The lease and the owner are both cleared once the run settles.
 	meta, err := h.queue.GetMeta(ctx, created.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	binding, ok := wf.BindingFromMeta(meta)
-	if !ok {
-		t.Fatal("no session bound to the closed task")
-	}
-	if binding.Path == "" || !strings.HasSuffix(binding.Path, ".jsonl") {
-		t.Errorf("session path = %q", binding.Path)
-	}
-	if len(wf.HistoryFromMeta(meta)) != 1 {
-		t.Errorf("history = %v, want one run", wf.HistoryFromMeta(meta))
-	}
-
-	// The lease and the owner are both cleared once the run settles.
 	if _, held := wf.ParseLease(meta[wf.LeaseKey]); held {
 		t.Error("the lease outlived the run")
 	}
@@ -702,6 +702,9 @@ func TestE2EBindingsCarryTheirRunID(t *testing.T) {
 		t.Fatalf("Applied = %+v, want closed", result.Applied)
 	}
 
+	// Only what is machine-local lands on the ledger: a workspace and a
+	// session. PRs, issues, documents and the repo are shareable and live
+	// only on the tracker, checked below.
 	rec := h.record(t, created.ID)
 	produced := rec.Produced(result.Run)
 	byKind := map[wf.Kind]wf.Binding{}
@@ -711,36 +714,22 @@ func TestE2EBindingsCarryTheirRunID(t *testing.T) {
 		}
 		byKind[b.Kind] = b
 	}
-	for _, kind := range []wf.Kind{wf.KindWorkspace, wf.KindSession, wf.KindPR, wf.KindIssue, wf.KindDoc} {
+	for _, kind := range []wf.Kind{wf.KindWorkspace, wf.KindSession} {
 		if _, ok := byKind[kind]; !ok {
 			t.Errorf("no %s binding tagged with run %s: %+v", kind, result.Run, produced)
 		}
 	}
-	if pr := byKind[wf.KindPR]; pr.Ref != "https://example.com/pr/42" {
-		t.Errorf("pr binding = %+v", pr)
+	for _, kind := range []wf.Kind{wf.KindPR, wf.KindIssue, wf.KindDoc, wf.KindRepo} {
+		if _, ok := byKind[kind]; ok {
+			t.Errorf("%s is a shareable fact and must not be in the ledger: %+v", kind, byKind[kind])
+		}
+	}
+	if _, ok := rec.Bindings.Current(wf.KindRepo); ok {
+		t.Error("the repo is a shareable fact and must not be in the ledger at all")
 	}
 
-	// The document binding names where the file actually ended up, not where
-	// the agent wrote it inside a checkout that is now gone.
-	doc := byKind[wf.KindDoc]
-	if doc.Get(wf.MetaStore) != "vault" {
-		t.Errorf("doc binding = %+v, want it marked as living in the vault", doc)
-	}
-	if _, err := os.Stat(filepath.Join(h.vault, doc.Ref)); err != nil {
-		t.Errorf("doc binding does not point at the bound document: %v", err)
-	}
-
-	// The repo the run named is the task's own, not one run's output.
-	repo, ok := rec.Bindings.Current(wf.KindRepo)
-	if !ok || repo.Ref != "/code/app" {
-		t.Fatalf("repo binding = %+v", repo)
-	}
-	if repo.Via != "" {
-		t.Errorf("repo binding Via = %q, want the task's own", repo.Via)
-	}
-
-	// Publication to the tracker is unchanged: the same flat keys, still
-	// written, still what kata's own surfaces render.
+	// Publication to the tracker is where every one of those facts lives,
+	// and LoadBindings reads them back from there.
 	meta, err := h.queue.GetMeta(ctx, created.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -756,5 +745,26 @@ func TestE2EBindingsCarryTheirRunID(t *testing.T) {
 	}
 	if meta[wf.DocKey] == nil {
 		t.Error("tracker doc metadata was dropped")
+	}
+
+	task, err := h.queue.Get(ctx, created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindings := wf.LoadBindings(task)
+	if pr, ok := bindings.Current(wf.KindPR); !ok || pr.Ref != "https://example.com/pr/42" {
+		t.Errorf("LoadBindings PR = %+v", pr)
+	}
+	// The document binding names where the file actually ended up, not
+	// where the agent wrote it inside a checkout that is now gone.
+	doc, ok := bindings.Current(wf.KindDoc)
+	if !ok || doc.Get(wf.MetaStore) != "vault" {
+		t.Errorf("LoadBindings doc = %+v, want it marked as living in the vault", doc)
+	}
+	if _, err := os.Stat(filepath.Join(h.vault, doc.Ref)); err != nil {
+		t.Errorf("doc binding does not point at the bound document: %v", err)
+	}
+	if repo, ok := bindings.Current(wf.KindRepo); !ok || repo.Ref != "/code/app" {
+		t.Errorf("LoadBindings repo = %+v", repo)
 	}
 }
