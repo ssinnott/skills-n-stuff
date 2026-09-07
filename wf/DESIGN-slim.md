@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: implemented (stages 1 to 7; stage 8 optional, not taken)
 supersedes: parts of DESIGN-task.md (named per stage)
 ---
 
@@ -329,8 +329,10 @@ Non-test Go lines after each stage's commit landed:
 | 4 | `2024ccc` | 8,391 |
 | 5, identity | `c1324d1` | 7,638 |
 | 5, no dual write | `4fcc86e` | 7,227 |
-| 6 | in progress | — |
-| 7 | in progress | — |
+| 6 | `597aee4` | 7,310 |
+| 7, design docs | `0d17481` | 7,310 |
+| 7, README | `1acd9cb` | 7,310 |
+| 7, comments | `ef9ff14`, `44bf5ce`, `9255f24` | 6,457 |
 
 Where the outcome differed from the plan text above:
 
@@ -343,28 +345,34 @@ Where the outcome differed from the plan text above:
   the commit after; it stays until the next release.
 - **Stage 5** also dropped `session` and `cwd` from `ready`,
   `escalations` and `run --json`; they are on `show` only.
+- **Stage 6** added 83 lines: standard-library flag sets cost more than
+  the scanner they replaced, and `run` and `attach` moved to their own
+  files to keep `main.go` under 300 lines.
+- **Stage 7** left every package at 14% comment lines or below (was 27%
+  overall). Test code went from 10,895 to 7,795 lines.
 
 ## Projected size
 
-Non-test lines, before and after stages 1 to 7:
+Non-test lines before, as projected, and as landed after stages 1 to 7:
 
-| Package | Before | After |
-| :-- | --: | --: |
-| `cmd/wf` | 2,466 | ~1,100 |
-| `internal/wf` | 2,368 | ~1,400 |
-| `internal/store` | 630 | ~250 |
-| `internal/supervisor` | 834 | ~700 |
-| `internal/review` | 1,053 | ~950 |
-| `internal/gc` | 677 | ~150 |
-| `internal/gh` | 423 | 0 |
-| `internal/notesync` + `note/taskblock` | 1,180 | 0 |
-| `internal/note` | 76 | 76 |
-| unchanged: kata, runner, workspace, workflow, config | 1,394 | 1,394 |
-| **Total** | **11,101** | **~6,000** |
+| Package | Before | Projected | Actual |
+| :-- | --: | --: | --: |
+| `cmd/wf` | 2,466 | ~1,100 | 1,718 |
+| `internal/wf` | 2,368 | ~1,400 | 1,442 |
+| `internal/store` | 630 | ~250 | 338 |
+| `internal/supervisor` | 834 | ~700 | 631 |
+| `internal/review` | 1,053 | ~950 | 811 |
+| `internal/gc` | 677 | ~150 | 159 |
+| `internal/gh` | 423 | 0 | 0 |
+| `internal/notesync` + `note/taskblock` | 1,180 | 0 | 0 |
+| `internal/note` | 76 | 76 | 59 |
+| kata, runner, workspace, workflow, config | 1,394 | 1,394 | 1,299 |
+| **Total** | **11,101** | **~6,000** | **6,457** |
 
-Roughly 45% smaller, with the wrapper going from a third of the binary to
-two thirds. Tests should fall by a similar fraction since most of what goes
-is tested in proportion.
+42% smaller. `cmd/wf` landed above projection because the standard
+library flag sets and the JSON contract types stayed there; comment
+trimming took the rest below projection. Tests went from 10,895 to 7,795
+lines.
 
 ## Risks
 
