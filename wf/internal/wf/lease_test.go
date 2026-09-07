@@ -59,10 +59,14 @@ func TestIsStale(t *testing.T) {
 	if !lease.IsStale(base.Add(90 * time.Second)) {
 		t.Error("a lease past its TTL is stale")
 	}
-	// Renewal is what proves liveness, so a long task is not stolen.
-	renewed := lease.Renew(base.Add(50 * time.Second))
+	// Renewal mints a fresh lease; that is what proves liveness, so a long
+	// task is not stolen.
+	renewed := NewLease("wf-1", time.Minute, base.Add(50*time.Second))
 	if renewed.IsStale(base.Add(90 * time.Second)) {
 		t.Error("a renewed lease must not be stale")
+	}
+	if !renewed.HeldBy("wf-1") {
+		t.Error("renewal must keep the holder")
 	}
 }
 

@@ -1,15 +1,21 @@
 # wf
 
-A workflow CLI that runs agent work off a queue.
+A workflow CLI that runs agent workflows against tracker tasks.
 
-`wf` reads ready work from a tracker, leases it, gives it an isolated
-worktree, runs a coding agent under a canned workflow, parses the agent's
-outcome verbs, and writes the results back as comments, links, and
-evidence-backed closes. Documents the agent produces land in your Obsidian
-vault, and the plugin renders the task into the note it is bound to.
+A task is a unit of work — a bug, a question, a change — that lives in the
+tracker from the moment it is filed until a human closes it. Along the way
+you run workflows against it, one at a time, each by hand: reproduce the
+bug, file it upstream, open the PR, address the review. For each run `wf`
+leases the task, gives the agent a checkout (or the vault), runs it under
+the workflow's prompt, parses the agent's outcome verbs, and writes what it
+produced back to the task as comments and links. When the work is done,
+`wf close` closes the task with the evidence those runs recorded. Documents
+the agent produces land in your Obsidian vault, and the plugin renders the
+task into the note it is bound to.
 
-The interactive agent session is a client of this CLI, not its host —
-restarting your TUI means nothing to running work.
+There is no daemon and no queue-picking: every run is a human's choice of
+task and workflow. The interactive agent session is a client of this CLI,
+not its host.
 
 kata is the first queue backend, pi the first runner, git worktrees the first
 workspace. See [DESIGN.md](DESIGN.md) for why the seams sit where they do,
@@ -31,7 +37,8 @@ wf ready [--limit N]                                         # actionable work, 
 wf show <ref>                                                # one task: its runs and what each produced
 wf escalations                                               # tasks flagged needs-human
 wf workflows                                                 # canned workflows loaded from the workflow dir
-wf run [<ref>] [--once] [--max N] [--repo P] [--workflow W]  # dispatch work to agents
+wf run <ref> [--workflow W] [--repo P]                       # run one workflow against a task
+wf close <ref> [--message M]                                 # close a task with the evidence its runs recorded
 wf attach <ref>                                              # open the task's pi session
 wf bind <ref> <note.md>                                      # bind a task to an Obsidian note, both ways
 wf ui [<ref>]                                                # print the web UI deep link for a task
@@ -44,8 +51,8 @@ A `<ref>` is anything `kata show` accepts: the issue's ULID or its short id.
 There is no listing command of wf's own beyond `ready` and `escalations`;
 run `kata list` directly for a full listing.
 
-Add `--json` to `ready`, `show`, `escalations`, `workflows`, `run` and
-`review` for machine-readable output. That is the protocol both clients
+Add `--json` to `ready`, `show`, `escalations`, `workflows`, `run`, `close`
+and `review` for machine-readable output. That is the protocol both clients
 speak — the pi extension and the Obsidian plugin talk to wf, never to kata
 directly, so the queue backend can change without touching either.
 
@@ -53,11 +60,10 @@ directly, so the queue backend can change without touching either.
 title, priority, labels, state, lease, and so on — sit at the top level, the
 same shape `ready` and `run --json` emit. Alongside them, `bindings` is the
 task's own — everything no run produced — and `runs` is the ledger's history
-for the task, each entry carrying what that run produced. `session` and
-`cwd` are the one field pair that only `show` fills in: a session is
-machine-local and lives in the local ledger, never on the tracker, so
-`ready`, `escalations` and `run --json` — which never load the ledger —
-leave both empty.
+for the task, each entry carrying what that run produced. `session` is the
+one field only `show` fills in: a session is machine-local and lives in the
+local ledger, never on the tracker, so `ready`, `escalations` and
+`run --json` — which never load the ledger — leave it empty.
 
 `wf ready --json`:
 
@@ -68,14 +74,21 @@ leave both empty.
               "note": "Research/plan.md", "needsHuman": false } ] }
 ```
 
-`wf show neck --json` — one object, no `tasks` wrapper, `session`/`cwd` filled
-in, and the two fields no other command emits:
+`wf show neck --json` — one object, no `tasks` wrapper, `session` filled in,
+and `runs`, which no other command emits:
 
 ```json
-{ "id": "01M1S…", "shortId": "neck", "title": "Add the parser", "session": "~/.wf/sessions/neck.jsonl",
-  "bindings": [ { "kind": "repo", "ref": "app" }, { "kind": "doc", "ref": "Research/plan.md" } ],
-  "runs": [ { "id": "01M2X…", "workflow": "plan-to-pr", "outcome": "closed", "bindings": [ { "kind": "pr", "ref": "https://github.com/…/pull/9" } ] } ] }
+{ "id": "01M1S…", "shortId": "neck", "title": "Add the parser", "state": "review",
+  "session": "~/.wf/sessions/neck-20260907T101956-3a1f.jsonl",
+  "runs": [ { "id": "r20260907T101956-38b3", "workflow": "repro", "outcome": "done",
+              "bindings": [ { "kind": "workspace", "ref": "~/.wf/worktrees/neck-add-the-parser", "state": "disposed", "meta": { "branch": "wf/neck-add-the-parser" } } ] },
+            { "id": "r20260907T113012-9c0e", "workflow": "plan-to-pr", "outcome": "done" } ] }
 ```
+
+`wf run neck --workflow plan-to-pr --json` emits `{ "results": [ { "task": …,
+"completed": true } ] }` — or `"escalated": true` with a `reason`. A run
+never closes the task; `wf close neck --json` does, emitting the evidence it
+closed with.
 
 ## Config
 
@@ -91,7 +104,6 @@ in, and the two fields no other command emits:
   "profiles": { "coding": "~/.pi/profiles/coding", "writer": "~/.pi/profiles/writer" },
   "defaultProfile": "coding",
   "defaultModel": "claude-sonnet-5",
-  "maxConcurrent": 3,
   "leaseTTLSeconds": 900
 }
 ```
@@ -102,20 +114,13 @@ they usually are under a launchd or systemd unit. `difitCommand` (default
 `npx difit`) is a shell-style command line rather than a bare binary, since
 the default itself is two words; `DIFIT_BIN` replaces the whole thing.
 
-**Upgrading.** The ledger is now keyed by the tracker's id. After upgrading
-run `wf migrate-ledger` once, or delete `~/.wf/tasks` if nothing in it
-matters; the pre-slim build is tagged in git history. `wf migrate-ledger` is
-hidden from `wf help` — it is a one-off tool, not part of the surface — and
-will be removed in the next release.
-
 ## Collecting the dead
 
 `wf gc` answers the one question only the ledger can answer: which recorded
 workspace and session bindings point at nothing on this host — a checkout
 removed by hand, a session file that would fail to reattach. `--delete` marks
 those bindings missing and drops any record whose local bindings are all
-missing or disposed, as long as no binding on it belongs to another host; a
-bare run only reports and writes nothing. It never deletes the artifact a
+missing or disposed; a bare run only reports and writes nothing. It never deletes the artifact a
 record points at — a leftover checkout may hold uncommitted work. Worktrees
 and branches are git's own bookkeeping: `git worktree prune` and `git branch
 --list 'wf/*'` answer those questions directly.
@@ -148,9 +153,19 @@ Placeholders: `{{TASK_REF}}`, `{{TASK_ID}}`, `{{TASK_TITLE}}`,
 
 A workflow is dispatch wiring, not expertise — which profile, which model,
 which prompt, which resources, where artifacts land. The judgment lives in
-the skills the profile loads. Selection is `wf.workflow` metadata first, then
-label match; a task naming a workflow that is not loaded escalates rather
-than running under a default.
+the skills the profile loads. `wf run <ref> --workflow W` names the recipe
+outright; without `--workflow`, selection is `wf.workflow` metadata first,
+then label match. A task naming a workflow that is not loaded, or one
+nothing routes, is a plain error — a human is at the terminal for every
+run, and running the wrong recipe quietly under some default would be worse
+than not running.
+
+The workflows in [`workflows/`](workflows/) are the steps a task tends to
+go through, and the same task runs several of them over its life:
+`repro`, `file-issue`, `plan-to-pr`, `address-comments`, `pr-review`,
+`diagnose-build`, `research`. Each ends in a `PR:`, a `DOC:` or an `ISSUE:`
+— that is what a run has to show — and a later run on the same task picks
+up the branch an earlier one pushed from.
 
 Model lives on the workflow rather than the profile because the two vary
 independently: a plan-and-implement step and a one-line triage step often
@@ -165,56 +180,71 @@ fact it is.
 
 **Shareable facts** — the repo, PRs, filed issues, produced documents,
 `wf.state`, the lease, `work.attention` — live on the tracker as plain
-metadata keys. The run loop is what writes them, and nothing reads them back
-from anywhere but the tracker itself.
+metadata keys. A run writes them, lists accumulating across every run on
+the task, and `wf close` reads them back from there and nowhere else.
 
 **Machine-local facts** — a run's worktree checkout, its session file — live
-in the local ledger, one JSON record per task at `~/.wf/tasks/<ulid>.json`.
-They are written at spawn, before the agent produces anything, so a crashed
-or hung run is still attachable through `wf attach`. A binding like this is a
-fact about one host, and is never published anywhere a second host would
-read it back from — a binding recorded by another host is annotated with it
-and left alone.
+in the local ledger, one JSON record per task at `~/.wf/tasks/<ulid>.json`,
+along with the record of each run: which workflow, which model, when, and
+how it ended. They are written at spawn, before the agent produces
+anything, so a crashed or hung run is still attachable through `wf attach`.
+A binding like this is a fact about one machine, and is never published
+anywhere another would read it back from.
 
 **Task ↔ note.** The join is the id pair: the note's frontmatter carries
-`wf-task: <id>`, the durable half since it survives a rename in Obsidian,
-alongside `kata-issue: <ULID>` naming the tracker row; `wf.doc: <path>` on
-the tracker is the other half, written by `wf bind` or by a workflow with
-`bind-docs`. Nothing else is mirrored — titles and status live in the
+`kata-issue: <ULID>`, the half that survives a rename in Obsidian, and
+`wf.doc: <path>` on the tracker is the other, written by `wf bind` or by the
+first run that produces a document when the task has no note yet. Later
+documents are recorded under `wf.docs` without displacing the note. Nothing
+else is mirrored — titles and status live in the
 tracker, prose lives in the note — and the Obsidian plugin renders the
 task's managed block, its runs and what each produced, straight from `wf
 show --json`.
 
 **Agent ↔ tracker.** The seed prompt names the agent's issue, so it can read
-context and comment progress itself. But claim, close and lease transitions
-belong to `wf` alone — two writers on a terminal transition produces
-double-closes and dropped evidence.
+context and comment progress itself. But claim and lease transitions belong
+to `wf` alone, and the close belongs to a human — two writers on a terminal
+transition produces double-closes and dropped evidence.
 
 ## What happens to a run
 
 | Outcome | Result |
 | :-- | :-- |
-| Reported `DONE` **with evidence** | Task closed with PR/commit/document evidence; worktree disposed |
+| Reported `DONE` **with something to show** | Run complete: output recorded on the task, worktree disposed, task left open in `review` for your next move |
+| `PR:` lines | Recorded on the task; the pull request this run opened or worked on |
 | `NEXT:` lines | Follow-on tasks created, linked to the parent, not launched |
-| `ISSUE:` lines | Recorded on the task; never gates the close |
+| `ISSUE:` lines | Recorded on the task; enough to complete a run, never evidence for a close |
 | `DOC:` lines | Moved into the vault and bound, if the workflow says so |
-| `DONE` with **no** evidence | Escalated — see below |
+| `DONE` with **nothing** to show | Escalated — see below |
 | No `DONE` | Escalated: flagged `needs-human`, worktree **kept**, transcript excerpted onto the task |
 | Agent crashed | Same escalation path, with the failure output |
 
-Two rules make it safe to leave running.
+Then you decide: `wf run <ref> --workflow <next>` for the next step, or
+`wf close <ref>` when the work is done. A flagged task runs again the same
+way; the flag clears when the run starts.
 
-**Silence is never success.** A run that stopped talking does not close a task.
+**Silence is never success.** A run that stopped talking is not complete.
 
-**A completion with nothing to show for it is not a completion.** An agent
-that reports `DONE` having produced no PR, commit, document, or test either
-did nothing or forgot to say what it did, and a human should look before the
-ledger records it as finished. A filed `ISSUE:` does not count — it says work
-moved elsewhere, not that this task's work exists.
+**A run with nothing to show for it is not complete.** An agent that reports
+`DONE` having produced no PR, document, or issue either did nothing or forgot
+to say what it did, and a human should look. The bar for a run is lower than
+the bar for a close: filing an issue is a whole run's job when the workflow
+was "file the issue", but it says work moved elsewhere, not that this task's
+work exists, so `wf close` counts only pull requests and documents.
 
 kata enforces the same rule independently, refusing an evidence-free close.
-wf does not synthesize evidence to get past it: invented evidence is precisely
-what would make a closed task worthless.
+`wf close` refuses too, rather than synthesizing evidence: invented evidence
+is precisely what would make a closed task worthless.
+
+## Worktrees across runs
+
+A task's first run with a checkout cuts a branch, `wf/<short-id>-<title>`.
+The branch outlives the checkout: a completed run disposes its worktree and
+the next run on the task — the fix after the repro, the comment round after
+the PR — gets a fresh checkout of that same branch, so it lands where the
+earlier run pushed from. An escalated run keeps its checkout, and the next
+run continues in it, half-done state and all. `git branch --list 'wf/*'`
+lists what is left once a task is closed.
 
 ## Review
 
@@ -231,8 +261,8 @@ tries, in order, the first rung that matches:
    escalated run that produced no PR is exactly what a human needs to look
    at, and its checkout is the only place the agent's untracked and
    uncommitted state still lives.
-3. **A surviving branch.** If the worktree was disposed but its branch is
-   still around, difit diffs it against the repo's base branch with
+3. **A surviving branch.** If the worktree was disposed, difit diffs the
+   branch its binding recorded against the repo's base branch with
    `--merge-base`.
 4. **A bound note.** A workflow that only produced a document has no diff at
    all; `wf review` reports the vault path and opens nothing.
@@ -291,10 +321,11 @@ Unit tests run anywhere. The integration tests need the real `kata` binary on
   create/get/ready, metadata round-trips, lease survival through kata's JSON,
   claim conflicts, release, close with multiple pieces of evidence,
   escalation queries, idempotent follow-on creates.
-- **`internal/supervisor`** runs the whole loop against real kata, real git
-  worktrees, and a stub agent — closing a real issue, escalating and keeping
-  the worktree, moving a produced document into a vault and binding it both
-  ways, spawning a linked follow-on, and four concurrent runs.
+- **`internal/supervisor`** runs whole dispatches against real kata, real
+  git worktrees, and a stub agent — completing a run and closing the real
+  issue, escalating and keeping the worktree, continuing a re-run in that
+  kept checkout, moving a produced document into a vault and binding it
+  both ways, and spawning a linked follow-on.
 - **`internal/review`** never needs difit, kata or a real repo installed:
   the target ladder is a pure function over already-resolved inputs, and
   difit's own process is stubbed behind a `Spawner` the same way pi is
@@ -335,7 +366,7 @@ open, so wf itself never writes prose into your vault.
 ```
 cmd/wf/                command dispatch
 internal/wf/           task model, outcome protocol, leases, sessions, apply
-internal/supervisor/   the dispatch loop
+internal/supervisor/   one dispatch: lease, workspace, agent, outcomes, release
 internal/store/        the local ledger: runs and machine-local bindings
 internal/gc/           sweeps the ledger for dead local bindings
 internal/workflow/     canned workflows

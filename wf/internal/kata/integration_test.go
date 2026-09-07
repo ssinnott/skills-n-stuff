@@ -76,10 +76,8 @@ func TestIntegrationCreateAndGet(t *testing.T) {
 	ctx := context.Background()
 
 	created := mustCreate(t, b, wf.CreateInput{
-		Title:    "Add the parser",
-		Body:     "It should be tolerant of separators.",
-		Labels:   []string{"plan-to-pr"},
-		Priority: 1,
+		Title: "Add the parser",
+		Body:  "It should be tolerant of separators.",
 	})
 
 	// The regression this whole adapter turns on: kata issues carry BOTH a
@@ -105,9 +103,6 @@ func TestIntegrationCreateAndGet(t *testing.T) {
 	if got.Priority != 1 {
 		t.Errorf("Priority = %d, want 1", got.Priority)
 	}
-	if got.Rev == "" {
-		t.Error("Rev is empty; kata's integer revision should be carried through")
-	}
 
 	// Labels arrive as objects from `show` and as bare strings from `list`.
 	if len(got.Labels) != 1 || got.Labels[0] != "plan-to-pr" {
@@ -117,7 +112,7 @@ func TestIntegrationCreateAndGet(t *testing.T) {
 
 func TestIntegrationReadyListsLabels(t *testing.T) {
 	b := newProject(t)
-	mustCreate(t, b, wf.CreateInput{Title: "Ready work", Labels: []string{"research"}, Priority: 2})
+	mustCreate(t, b, wf.CreateInput{Title: "Ready work"})
 
 	tasks, err := b.Ready(context.Background(), 10)
 	if err != nil {
@@ -287,9 +282,8 @@ func TestIntegrationCloseWithMultipleEvidence(t *testing.T) {
 		Message: "Shipped both halves of the parser change; unit tests green.",
 		PRs:     []string{"https://example.com/pr/1", "https://example.com/pr/2"},
 		Docs:    []string{"Research/plan.md"},
-		Tests:   []string{"go test ./..."},
 	}
-	if err := b.Close(ctx, task.ID, result, "wf-close-key"); err != nil {
+	if err := b.Close(ctx, task.ID, result); err != nil {
 		t.Fatalf("Close() error = %v", err)
 	}
 
@@ -319,7 +313,7 @@ func TestIntegrationCloseRequiresMessage(t *testing.T) {
 
 	// wf never sends an empty message — ToCloseResult defaults it — and this
 	// pins the reason why.
-	err := b.Close(context.Background(), task.ID, wf.CloseResult{}, "")
+	err := b.Close(context.Background(), task.ID, wf.CloseResult{})
 	if err == nil {
 		t.Error("Close() with no message succeeded; kata should demand one")
 	}
@@ -365,7 +359,6 @@ func TestIntegrationCreateLinkedFollowOn(t *testing.T) {
 		Title:          "Follow-on work",
 		Body:           "Spawned by a NEXT outcome.",
 		RelatedTo:      parent.ID,
-		Meta:           map[string]string{"wf.origin": parent.ID},
 		IdempotencyKey: "wf-next-" + parent.ID,
 	})
 	if err != nil {
@@ -386,7 +379,6 @@ func TestIntegrationCreateLinkedFollowOn(t *testing.T) {
 		Title:          "Follow-on work",
 		Body:           "Spawned by a NEXT outcome.",
 		RelatedTo:      parent.ID,
-		Meta:           map[string]string{"wf.origin": parent.ID},
 		IdempotencyKey: "wf-next-" + parent.ID,
 	}
 	again, err := b.Create(ctx, retry)

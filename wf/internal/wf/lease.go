@@ -7,7 +7,8 @@ import (
 	"time"
 )
 
-// Leases are owned by the core, not by any backend; see DESIGN.md. Taking a stale lease is a decision the caller makes, never a side effect of reading.
+// Leases are owned by the core, not by any backend; see DESIGN.md. Taking a
+// stale lease is a decision the caller makes, never a side effect of reading.
 
 // LeaseKey is the metadata key the lease record is stored under.
 const LeaseKey = "wf.lease"
@@ -15,14 +16,14 @@ const LeaseKey = "wf.lease"
 // DefaultTTL survives a slow agent turn but returns a dead worker's task soon.
 const DefaultTTL = 15 * time.Minute
 
-// Lease records which wf instance holds a task, and when it last proved alive.
+// Lease records which wf instance holds a task, and when it last proved
+// alive. Renewal mints a fresh lease, so Renewed is the only timestamp.
 type Lease struct {
 	// Actor identifies a wf instance, not a human.
-	Actor    string    `json:"actor"`
-	Host     string    `json:"host"`
-	PID      int       `json:"pid"`
-	Acquired time.Time `json:"acquired"`
-	Renewed  time.Time `json:"renewed"`
+	Actor   string    `json:"actor"`
+	Host    string    `json:"host"`
+	PID     int       `json:"pid"`
+	Renewed time.Time `json:"renewed"`
 	// TTLSeconds lets a holder with a different config be judged by its own terms.
 	TTLSeconds int `json:"ttl_seconds"`
 }
@@ -40,16 +41,9 @@ func NewLease(actor string, ttl time.Duration, now time.Time) Lease {
 		Actor:      actor,
 		Host:       host,
 		PID:        os.Getpid(),
-		Acquired:   now.UTC(),
 		Renewed:    now.UTC(),
 		TTLSeconds: int(ttl.Seconds()),
 	}
-}
-
-// Renew stamps liveness so a long-running task is not stolen for being slow.
-func (l Lease) Renew(now time.Time) Lease {
-	l.Renewed = now.UTC()
-	return l
 }
 
 // Encode renders the lease for storage in backend metadata.
@@ -79,7 +73,7 @@ func (l Lease) HeldBy(actor string) bool {
 	return l.Actor == actor
 }
 
-// String describes the holder for `wf status` and escalation comments.
+// String describes the holder for `wf show` and escalation comments.
 func (l Lease) String() string {
 	return l.Describe(time.Now())
 }
@@ -95,7 +89,8 @@ func (l Lease) Describe(now time.Time) string {
 }
 
 // ParseLease reads a lease out of a metadata value. Absent, malformed and
-// foreign values all read as unheld, so a lease we cannot understand cannot wedge the queue.
+// foreign values all read as unheld, so a lease we cannot understand cannot
+// wedge the queue.
 func ParseLease(value any) (Lease, bool) {
 	var raw []byte
 
@@ -126,9 +121,6 @@ func ParseLease(value any) (Lease, bool) {
 	}
 	if l.Host == "" {
 		l.Host = "unknown"
-	}
-	if l.Acquired.IsZero() {
-		l.Acquired = l.Renewed
 	}
 	return l, true
 }

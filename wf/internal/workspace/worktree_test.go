@@ -54,17 +54,17 @@ func initRepo(t *testing.T) string {
 		{"config", "user.email", "wf@example.com"},
 		{"config", "user.name", "wf"},
 	} {
-		if _, err := runGit(ctx, "git", dir, args...); err != nil {
+		if _, err := runGit(ctx, dir, args...); err != nil {
 			t.Fatalf("git %v: %v", args, err)
 		}
 	}
 	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("seed\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := runGit(ctx, "git", dir, "add", "."); err != nil {
+	if _, err := runGit(ctx, dir, "add", "."); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := runGit(ctx, "git", dir, "commit", "-m", "seed"); err != nil {
+	if _, err := runGit(ctx, dir, "commit", "-m", "seed"); err != nil {
 		t.Fatal(err)
 	}
 	return dir
@@ -78,7 +78,7 @@ func TestProviderCreateAndDispose(t *testing.T) {
 	p := &Provider{Repo: repo, Root: filepath.Join(root, "worktrees")}
 	task := wf.Task{ShortID: "abc4", Title: "Add the parser"}
 
-	space, err := p.Create(ctx, task)
+	space, err := p.Create(ctx, task, "")
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
@@ -102,6 +102,104 @@ func TestProviderCreateAndDispose(t *testing.T) {
 	if _, err := os.Stat(space.Path()); !os.IsNotExist(err) {
 		t.Error("Dispose() left the worktree on disk")
 	}
+	// The branch outlives the checkout: it is what the next run on the
+	// task picks up, and what a pull request was pushed from.
+	if !BranchExists(ctx, repo, wt.Branch()) {
+		t.Errorf("Dispose() deleted branch %q", wt.Branch())
+	}
+}
+
+// A task runs under several workflows over its life. A later run asked to
+// continue an earlier run's branch checks that branch out rather than
+// cutting a new one, in a directory of its own.
+func TestProviderReusesTheBranchALaterRunIsHanded(t *testing.T) {
+	repo := initRepo(t)
+	ctx := context.Background()
+
+	p := &Provider{Repo: repo, Root: t.TempDir()}
+	task := wf.Task{ShortID: "abc4", Title: "Fix the bug"}
+
+	first, err := p.Create(ctx, task, "")
+	if err != nil {
+		t.Fatalf("first Create() error = %v", err)
+	}
+	if err := first.Dispose(ctx); err != nil {
+		t.Fatalf("Dispose() error = %v", err)
+	}
+
+	second, err := p.Create(ctx, task, first.Branch())
+	if err != nil {
+		t.Fatalf("second Create() error = %v", err)
+	}
+	if second.Branch() != first.Branch() {
+		t.Errorf("Branch() = %q, want the first run's %q", second.Branch(), first.Branch())
+	}
+	if _, err := os.Stat(filepath.Join(second.Path(), "README.md")); err != nil {
+		t.Errorf("the checkout is not real: %v", err)
+	}
+	out, err := runGit(ctx, second.Path(), "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil || out != first.Branch() {
+		t.Errorf("HEAD = %q (%v), want %q", out, err, first.Branch())
+	}
+}
+
+// An escalated run keeps its checkout, still on the task's branch. The next
+// run continues in that checkout rather than failing on git's refusal to
+// check one branch out twice — the state left in it is the point.
+func TestProviderContinuesInAKeptCheckout(t *testing.T) {
+	repo := initRepo(t)
+	ctx := context.Background()
+
+	p := &Provider{Repo: repo, Root: t.TempDir()}
+	task := wf.Task{ShortID: "abc4", Title: "Stuck work"}
+
+	first, err := p.Create(ctx, task, "")
+	if err != nil {
+		t.Fatalf("first Create() error = %v", err)
+	}
+	first.(*Worktree).Keep()
+	if err := first.Dispose(ctx); err != nil {
+		t.Fatal(err)
+	}
+	leftover := filepath.Join(first.Path(), "half-done.txt")
+	if err := os.WriteFile(leftover, []byte("wip\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	second, err := p.Create(ctx, task, first.Branch())
+	if err != nil {
+		t.Fatalf("second Create() error = %v", err)
+	}
+	if second.Path() != first.Path() || second.Branch() != first.Branch() {
+		t.Fatalf("second = %s on %s, want the kept checkout %s on %s",
+			second.Path(), second.Branch(), first.Path(), first.Branch())
+	}
+	if _, err := os.Stat(leftover); err != nil {
+		t.Error("the kept checkout's state must survive being picked back up")
+	}
+	// And a clean finish this time disposes it as usual.
+	if err := second.Dispose(ctx); err != nil {
+		t.Fatalf("Dispose() error = %v", err)
+	}
+	if _, err := os.Stat(second.Path()); !os.IsNotExist(err) {
+		t.Error("Dispose() left the continued checkout on disk")
+	}
+}
+
+// A branch hint that names nothing in the repo is not an error: the run
+// starts fresh, as a first run would.
+func TestProviderFallsBackWhenTheHandedBranchIsGone(t *testing.T) {
+	repo := initRepo(t)
+	ctx := context.Background()
+
+	p := &Provider{Repo: repo, Root: t.TempDir()}
+	space, err := p.Create(ctx, wf.Task{ShortID: "abc4", Title: "Work"}, "wf/nope")
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if space.Branch() == "wf/nope" || !strings.HasPrefix(space.Branch(), "wf/") {
+		t.Errorf("Branch() = %q, want a fresh wf/ branch", space.Branch())
+	}
 }
 
 func TestProviderNeverReusesAnExistingDirectory(t *testing.T) {
@@ -124,7 +222,7 @@ func TestProviderNeverReusesAnExistingDirectory(t *testing.T) {
 	// Handing an agent someone else's checkout is the failure this package
 	// exists to prevent. Taking the next free name is how that is avoided
 	// without also refusing to run.
-	space, err := p.Create(ctx, task)
+	space, err := p.Create(ctx, task, "")
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
@@ -150,11 +248,11 @@ func TestProviderGivesARerunItsOwnCheckoutAndBranch(t *testing.T) {
 	p := &Provider{Repo: repo, Root: t.TempDir()}
 	task := wf.Task{ShortID: "abc4", Title: "Ambiguous work"}
 
-	first, err := p.Create(ctx, task)
+	first, err := p.Create(ctx, task, "")
 	if err != nil {
 		t.Fatalf("first Create() error = %v", err)
 	}
-	second, err := p.Create(ctx, task)
+	second, err := p.Create(ctx, task, "")
 	if err != nil {
 		t.Fatalf("second Create() error = %v", err)
 	}
@@ -169,36 +267,34 @@ func TestProviderGivesARerunItsOwnCheckoutAndBranch(t *testing.T) {
 	if _, err := os.Stat(first.Path()); err != nil {
 		t.Errorf("the first checkout was destroyed: %v", err)
 	}
-	if !BranchExists(ctx, "", repo, first.Branch()) {
+	if !BranchExists(ctx, repo, first.Branch()) {
 		t.Errorf("the first run's branch %q is gone", first.Branch())
 	}
-	if !BranchExists(ctx, "", repo, second.Branch()) {
+	if !BranchExists(ctx, repo, second.Branch()) {
 		t.Errorf("the re-run's branch %q was never created", second.Branch())
 	}
 }
 
 func TestProviderSkipsANameWhoseBranchOutlivedItsCheckout(t *testing.T) {
-	// Dispose removes the branch best effort, so a branch can outlive the
-	// directory. `git worktree add -b` refuses a name that is already a ref,
-	// so a free directory is not on its own a free name.
+	// A branch outlives its checkout by design. `git worktree add -b`
+	// refuses a name that is already a ref, so when no branch is handed in,
+	// a free directory is not on its own a free name.
 	repo := initRepo(t)
 	ctx := context.Background()
 
 	p := &Provider{Repo: repo, Root: t.TempDir()}
 	task := wf.Task{ShortID: "abc4", Title: "Work"}
 
-	first, err := p.Create(ctx, task)
+	first, err := p.Create(ctx, task, "")
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
 	branch := first.Branch()
-	// Remove the checkout but leave the branch, which is what a failed
-	// `branch -D` during Dispose leaves behind.
-	if _, err := runGit(ctx, "git", repo, "worktree", "remove", "--force", first.Path()); err != nil {
+	if err := first.Dispose(ctx); err != nil {
 		t.Fatal(err)
 	}
 
-	second, err := p.Create(ctx, task)
+	second, err := p.Create(ctx, task, "")
 	if err != nil {
 		t.Fatalf("second Create() error = %v", err)
 	}
@@ -212,7 +308,7 @@ func TestKeepSurvivesDispose(t *testing.T) {
 	ctx := context.Background()
 
 	p := &Provider{Repo: repo, Root: t.TempDir()}
-	space, err := p.Create(ctx, wf.Task{ShortID: "abc4", Title: "Escalated work"})
+	space, err := p.Create(ctx, wf.Task{ShortID: "abc4", Title: "Escalated work"}, "")
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
@@ -229,10 +325,10 @@ func TestKeepSurvivesDispose(t *testing.T) {
 
 func TestProviderRequiresConfiguration(t *testing.T) {
 	ctx := context.Background()
-	if _, err := (&Provider{Root: t.TempDir()}).Create(ctx, wf.Task{ShortID: "a"}); err == nil {
+	if _, err := (&Provider{Root: t.TempDir()}).Create(ctx, wf.Task{ShortID: "a"}, ""); err == nil {
 		t.Error("Create() without a repo must fail")
 	}
-	if _, err := (&Provider{Repo: t.TempDir()}).Create(ctx, wf.Task{ShortID: "a"}); err == nil {
+	if _, err := (&Provider{Repo: t.TempDir()}).Create(ctx, wf.Task{ShortID: "a"}, ""); err == nil {
 		t.Error("Create() without a root must fail")
 	}
 }
@@ -241,22 +337,13 @@ func TestBranchExists(t *testing.T) {
 	repo := initRepo(t)
 	ctx := context.Background()
 
-	if BranchExists(ctx, "git", repo, "no-such-branch") {
+	if BranchExists(ctx, repo, "no-such-branch") {
 		t.Error("BranchExists() = true for a branch that was never created")
 	}
-	if _, err := runGit(ctx, "git", repo, "branch", "wf/task-1"); err != nil {
+	if _, err := runGit(ctx, repo, "branch", "wf/task-1"); err != nil {
 		t.Fatal(err)
 	}
-	if !BranchExists(ctx, "git", repo, "wf/task-1") {
+	if !BranchExists(ctx, repo, "wf/task-1") {
 		t.Error("BranchExists() = false for a branch that exists")
-	}
-}
-
-func TestIsRepo(t *testing.T) {
-	if !IsRepo(context.Background(), "git", initRepo(t)) {
-		t.Error("IsRepo() = false for a real repository")
-	}
-	if IsRepo(context.Background(), "git", t.TempDir()) {
-		t.Error("IsRepo() = true for a plain directory")
 	}
 }

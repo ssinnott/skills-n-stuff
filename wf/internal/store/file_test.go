@@ -21,15 +21,13 @@ func sample(id string) wf.Record {
 	started := time.Date(2025, 3, 1, 10, 0, 0, 0, time.UTC)
 	ended := started.Add(20 * time.Minute)
 	return wf.Record{
-		ID:      id,
-		Created: started.Add(-time.Hour),
+		ID: id,
 		Runs: []wf.Run{
 			{
 				ID:       "run-1",
 				Workflow: "plan-to-pr",
 				Profile:  "coding",
 				Model:    "sonnet-5",
-				Host:     "wf-laptop",
 				Started:  started,
 				Ended:    &ended,
 				Outcome:  wf.SessionEscalated,
@@ -45,14 +43,11 @@ func sample(id string) wf.Record {
 			{
 				Kind:  wf.KindWorkspace,
 				Ref:   "/home/me/.wf/worktrees/neck-add-parser",
-				State: wf.BindingSuperseded,
+				State: wf.BindingDisposed,
 				At:    started,
 				Via:   "run-1",
-				Host:  "wf-laptop",
 				Meta: map[string]string{
 					wf.MetaBranch: "wf/neck-add-parser",
-					wf.MetaBase:   "main",
-					wf.MetaRepo:   "/home/me/code/app",
 				},
 			},
 			{
@@ -195,8 +190,8 @@ func TestListSkipsCorruptFileAndKeepsSiblings(t *testing.T) {
 	if !errors.As(err, &skip) {
 		t.Fatalf("err = %v, want a *SkipError", err)
 	}
-	if len(skip.Paths()) != 1 || skip.Paths()[0] != bad {
-		t.Errorf("skipped = %v, want just %s", skip.Paths(), bad)
+	if len(skip.Skipped) != 1 || skip.Skipped[0].Path != bad {
+		t.Errorf("skipped = %v, want just %s", skip.Skipped, bad)
 	}
 	if !strings.Contains(skip.Error(), "bbb.json") {
 		t.Errorf("error message %q does not name the bad file", skip.Error())

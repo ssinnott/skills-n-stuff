@@ -31,7 +31,7 @@ func TestCurrentSkipsDeadBindings(t *testing.T) {
 	bs := Bindings{
 		ws("/w/kept", 10, BindingLive, "run-1"),
 		ws("/w/gone", 30, BindingDisposed, "run-2"),
-		ws("/w/old", 20, BindingSuperseded, "run-3"),
+		ws("/w/old", 20, BindingMissing, "run-3"),
 	}
 	got, ok := bs.Current(KindWorkspace)
 	if !ok || got.Ref != "/w/kept" {
@@ -55,47 +55,49 @@ func TestCurrentAbsentKind(t *testing.T) {
 	}
 }
 
-// The re-run bug this whole model exists to fix: a second run takes over
-// without destroying what the first left on disk for a human to inspect.
-func TestSupersedeKeepsTheNewRunAndDemotesTheOld(t *testing.T) {
+// The re-run case: a second run's checkout takes over as current without
+// destroying what the first left on disk for a human to inspect. Which one
+// is current is a matter of timestamp, answered at read time.
+func TestRerunCheckoutIsCurrentWhileTheFirstStays(t *testing.T) {
 	bs := Bindings{
 		ws("/w/escalated", 10, BindingLive, "run-1"),
 		ws("/w/retry", 20, BindingLive, "run-2"),
 	}
-	bs = bs.Supersede(KindWorkspace, "run-2")
-
-	if bs[0].State != BindingSuperseded {
-		t.Errorf("run-1 workspace state = %q, want superseded", bs[0].State)
+	got, ok := bs.Current(KindWorkspace)
+	if !ok || got.Ref != "/w/retry" {
+		t.Fatalf("Current = %q, want the re-run's checkout", got.Ref)
 	}
-	if bs[0].Ref != "/w/escalated" {
-		t.Error("superseding must not drop the older binding — it is the evidence")
-	}
-	if bs[1].State != BindingLive {
-		t.Errorf("run-2 workspace state = %q, want live", bs[1].State)
+	if len(bs.Live(KindWorkspace)) != 2 {
+		t.Error("the older checkout must stay recorded and live — it is the evidence")
 	}
 }
 
-func TestSupersedeLeavesOtherKindsAlone(t *testing.T) {
+// Last answers "what did the most recent run leave", disposed or not: the
+// branch a later run should pick up is on a checkout that is usually gone.
+func TestLastIgnoresState(t *testing.T) {
 	bs := Bindings{
 		ws("/w/one", 10, BindingLive, "run-1"),
-		{Kind: KindPR, Ref: "https://example/pr/1", At: at(10), State: BindingLive, Via: "run-1"},
+		ws("/w/two", 20, BindingDisposed, "run-2"),
 	}
-	bs = bs.Supersede(KindWorkspace, "run-2")
-	if bs[1].State != BindingLive {
-		t.Errorf("PR state = %q, want untouched live", bs[1].State)
+	got, ok := bs.Last(KindWorkspace)
+	if !ok || got.Ref != "/w/two" {
+		t.Fatalf("Last = %q, want /w/two even though it is disposed", got.Ref)
+	}
+	if _, ok := bs.Last(KindSession); ok {
+		t.Error("Last reported a kind that was never recorded")
 	}
 }
 
-// Re-recording a PR is a state refresh, not a duplicate row.
+// Re-recording a binding is a state refresh, not a duplicate row.
 func TestUpsertReplacesSameKindAndRef(t *testing.T) {
-	bs := Bindings{{Kind: KindPR, Ref: "u/1", State: BindingLive, At: at(10)}}
-	bs = bs.Upsert(Binding{Kind: KindPR, Ref: "u/1", State: BindingMerged, At: at(20)})
+	bs := Bindings{{Kind: KindWorkspace, Ref: "/w/one", State: BindingLive, At: at(10)}}
+	bs = bs.Upsert(Binding{Kind: KindWorkspace, Ref: "/w/one", State: BindingDisposed, At: at(20)})
 
 	if len(bs) != 1 {
 		t.Fatalf("len = %d, want 1 — same kind and ref is one binding", len(bs))
 	}
-	if bs[0].State != BindingMerged {
-		t.Errorf("state = %q, want merged", bs[0].State)
+	if bs[0].State != BindingDisposed {
+		t.Errorf("state = %q, want disposed", bs[0].State)
 	}
 }
 
@@ -135,78 +137,35 @@ func TestFromGroupsByRun(t *testing.T) {
 	}
 }
 
-func TestRefsPreservesOrderAndIncludesDead(t *testing.T) {
-	bs := Bindings{
-		{Kind: KindPR, Ref: "u/1", At: at(10), State: BindingMerged},
-		{Kind: KindPR, Ref: "u/2", At: at(20), State: BindingLive},
-	}
-	got := bs.Refs(KindPR)
-	if len(got) != 2 || got[0] != "u/1" || got[1] != "u/2" {
-		t.Fatalf("Refs = %v, want [u/1 u/2] — a merged PR is still evidence", got)
-	}
-}
-
 func TestGetToleratesNilMeta(t *testing.T) {
 	if got := (Binding{}).Get(MetaBranch); got != "" {
 		t.Errorf("Get on nil Meta = %q, want empty", got)
 	}
 }
 
-func TestRecordLatestRunAndProduced(t *testing.T) {
+func TestRecordRunsAndWhatEachProduced(t *testing.T) {
 	ended := at(15)
 	rec := Record{
 		ID: "01ABC",
 		Runs: []Run{
-			{ID: "run-1", Workflow: "plan-to-pr", Started: at(10), Ended: &ended, Outcome: SessionEscalated},
+			{ID: "run-1", Workflow: "repro", Started: at(10), Ended: &ended, Outcome: SessionEscalated},
 			{ID: "run-2", Workflow: "plan-to-pr", Started: at(20)},
 		},
 		Bindings: Bindings{
-			ws("/w/one", 10, BindingSuperseded, "run-1"),
+			ws("/w/one", 10, BindingDisposed, "run-1"),
 			ws("/w/two", 20, BindingLive, "run-2"),
-			{Kind: KindPR, Ref: "u/1", At: at(21), Via: "run-2"},
+			{Kind: KindSession, Ref: "s2.jsonl", At: at(21), Via: "run-2"},
 		},
 	}
 
-	latest, ok := rec.LatestRun()
-	if !ok || latest.ID != "run-2" {
-		t.Fatalf("LatestRun = %q, want run-2", latest.ID)
-	}
-	if latest.Done() {
-		t.Error("run-2 has not ended; Done should be false")
-	}
-	if first, _ := rec.Run("run-1"); !first.Done() {
+	if !rec.Runs[0].Done() {
 		t.Error("run-1 ended; Done should be true")
 	}
-	if got := len(rec.Produced("run-2")); got != 2 {
-		t.Errorf("Produced(run-2) = %d, want 2", got)
+	if rec.Runs[1].Done() {
+		t.Error("run-2 has not ended; Done should be false")
 	}
-}
-
-// A live pull request is "open" to a human and "live" only to the type.
-// Every renderer must get that word from here rather than deciding it.
-func TestStateLabelSpeaksEachKindsLanguage(t *testing.T) {
-	cases := []struct {
-		name  string
-		kind  Kind
-		state BindingState
-		want  string
-	}{
-		{"live PR reads as open", KindPR, BindingLive, "open"},
-		{"live issue reads as open", KindIssue, BindingLive, "open"},
-		{"live worktree stays live", KindWorkspace, BindingLive, "live"},
-		{"live session stays live", KindSession, BindingLive, "live"},
-		{"merged PR is merged", KindPR, BindingMerged, "merged"},
-		{"closed issue is closed", KindIssue, BindingClosed, "closed"},
-		{"superseded worktree is superseded", KindWorkspace, BindingSuperseded, "superseded"},
-		{"unknown renders nothing at all", KindPR, BindingUnknown, ""},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			got := Binding{Kind: c.kind, State: c.state}.StateLabel()
-			if got != c.want {
-				t.Errorf("StateLabel = %q, want %q", got, c.want)
-			}
-		})
+	if got := len(rec.Bindings.From("run-2")); got != 2 {
+		t.Errorf("From(run-2) = %d, want 2", got)
 	}
 }
 
@@ -226,39 +185,5 @@ func TestCurrentTieBreaksToLastRecorded(t *testing.T) {
 	// And the ordering a report-order caller relies on is unchanged.
 	if live := bs.Live(KindPR); live[0].Ref != "pr/first" {
 		t.Errorf("Live[0] = %q, want pr/first — report order must survive", live[0].Ref)
-	}
-}
-
-// A document is portable only once it has landed in a store. An unbound
-// DOC: path is still inside a worktree that is usually disposed moments
-// later, so it is as machine-local as the checkout holding it.
-func TestMachineLocalDependsOnTheDocsStore(t *testing.T) {
-	bound := Binding{Kind: KindDoc, Ref: "Research/plan.md",
-		Meta: map[string]string{MetaStore: "vault"}}
-	if bound.MachineLocal() {
-		t.Error("a vault-relative doc resolves on any device holding the vault")
-	}
-
-	unbound := Binding{Kind: KindDoc, Ref: "/w/neck-add-parser/notes.md"}
-	if !unbound.MachineLocal() {
-		t.Error("an unbound doc path lives in a worktree and must carry a host")
-	}
-
-	// Asking the Kind alone cannot tell these apart, which is why the
-	// per-binding method exists.
-	if KindDoc.MachineLocal() {
-		t.Error("Kind.MachineLocal is the coarse answer and stays false for docs")
-	}
-
-	// The kinds that are machine-local regardless still are.
-	for _, k := range []Kind{KindWorkspace, KindSession} {
-		if !(Binding{Kind: k}).MachineLocal() {
-			t.Errorf("%s must be machine-local", k)
-		}
-	}
-	for _, k := range []Kind{KindPR, KindIssue, KindRepo} {
-		if (Binding{Kind: k}).MachineLocal() {
-			t.Errorf("%s resolves anywhere and must not carry a host", k)
-		}
 	}
 }

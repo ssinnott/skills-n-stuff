@@ -32,8 +32,8 @@ func newRunID(now time.Time) string {
 }
 
 // record applies fn to the task's ledger record under the store's per-id
-// lock. A nil store means no ledger, a supported configuration: the run loop
-// runs the same either way.
+// lock. A nil store means no ledger, a supported configuration: the run
+// goes ahead the same either way.
 func (s *Supervisor) record(task wf.Task, what string, fn func(*wf.Record)) {
 	if s.Store == nil || task.ID == "" {
 		return
@@ -47,15 +47,22 @@ func (s *Supervisor) record(task wf.Task, what string, fn func(*wf.Record)) {
 	}
 }
 
-// localBinding builds a binding whose referent lives on one machine,
-// stamping the actor that owns it: a worktree path or session file is
-// meaningless on another host.
-func (s *Supervisor) localBinding(kind wf.Kind, ref, runID string, at time.Time) wf.Binding {
-	b := wf.Binding{Kind: kind, Ref: ref, State: wf.BindingLive, At: at, Via: runID}
-	if b.MachineLocal() {
-		b.Host = s.actor()
+// previousBranch is the branch the task's most recent checkout was on,
+// whatever became of that checkout, so the next run can pick it up. Empty
+// when the ledger has none.
+func (s *Supervisor) previousBranch(task wf.Task) string {
+	if s.Store == nil || task.ID == "" {
+		return ""
 	}
-	return b
+	rec, err := s.Store.Load(task.ID)
+	if err != nil {
+		return ""
+	}
+	last, ok := rec.Bindings.Last(wf.KindWorkspace)
+	if !ok {
+		return ""
+	}
+	return last.Get(wf.MetaBranch)
 }
 
 // beginRun records the run before the agent has produced anything: the runs
@@ -69,48 +76,43 @@ func (s *Supervisor) beginRun(task wf.Task, flow workflow.Workflow, runID string
 			Profile:  flow.Profile,
 			// The resolved model, not the workflow's blank.
 			Model:   s.Config.ResolveModel(flow.Model),
-			Host:    s.actor(),
 			Started: started,
 		})
 	})
 }
 
-// recordWorkspace binds the checkout this run created, and supersedes rather
-// than overwrites whatever the previous run left: the old binding stays
-// recorded and findable, it just stops being current. The branch comes off
-// the workspace itself rather than being re-derived from the task's title.
+// recordWorkspace binds the checkout this run works in. A run that
+// continues in a checkout an earlier run kept takes it over: the binding
+// is now this run's. A run whose checkout merely lands on a path an earlier,
+// disposed checkout once had gets a binding of its own, so the earlier run
+// keeps its history. Which checkout is current is a matter of timestamp and
+// state, answered at read time by Bindings.Current. The branch comes off
+// the workspace itself rather than being re-derived from the title.
 func (s *Supervisor) recordWorkspace(task wf.Task, runID string, space wf.Workspace, at time.Time) {
-	b := s.localBinding(wf.KindWorkspace, space.Path(), runID, at)
-	meta := map[string]string{}
+	b := wf.Binding{Kind: wf.KindWorkspace, Ref: space.Path(), State: wf.BindingLive, At: at, Via: runID}
 	if branch := space.Branch(); branch != "" {
-		meta[wf.MetaBranch] = branch
+		b.Meta = map[string]string{wf.MetaBranch: branch}
 	}
-	if repo := space.Repo(); repo != "" {
-		meta[wf.MetaRepo] = repo
-	}
-	if len(meta) > 0 {
-		b.Meta = meta
-	}
-
 	s.record(task, "record workspace", func(rec *wf.Record) {
-		rec.Bindings = rec.Bindings.Supersede(wf.KindWorkspace, runID).Upsert(b)
+		for i := range rec.Bindings {
+			existing := &rec.Bindings[i]
+			if existing.Kind == wf.KindWorkspace && existing.Ref == b.Ref && existing.IsLive() {
+				*existing = b
+				return
+			}
+		}
+		rec.Bindings = append(rec.Bindings, b)
 	})
 }
 
-// recordSession binds the agent session this run spawned. Older sessions are
-// deliberately *not* superseded: a previous run's session file still exists
-// and `wf attach` still opens it, unlike a checkout, nothing about a second
-// session makes the first stop being a real place to look.
-func (s *Supervisor) recordSession(task wf.Task, runID string, session wf.SessionBinding) {
-	b := s.localBinding(wf.KindSession, session.Path, runID, session.Started)
-	b.Meta = map[string]string{wf.MetaRunner: s.Runner.Name()}
-	if session.ID != "" {
-		b.Meta[wf.MetaSessionID] = session.ID
+// recordSession binds the agent session this run spawned. Older sessions
+// stay live: a previous run's session file still exists and `wf attach`
+// still opens it.
+func (s *Supervisor) recordSession(task wf.Task, runID, sessionID, path string, at time.Time) {
+	b := wf.Binding{Kind: wf.KindSession, Ref: path, State: wf.BindingLive, At: at, Via: runID}
+	if sessionID != "" {
+		b.Meta = map[string]string{wf.MetaSessionID: sessionID}
 	}
-	if session.Cwd != "" {
-		b.Meta[wf.MetaCwd] = session.Cwd
-	}
-
 	s.record(task, "record session", func(rec *wf.Record) {
 		rec.Bindings = rec.Bindings.Upsert(b)
 	})

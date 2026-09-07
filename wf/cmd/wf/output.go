@@ -29,11 +29,10 @@ import (
 // emitting bare jsonTask; a client that wants the run count reads
 // len(runs) from `show`.
 //
-// jsonTask.Session and .Cwd are the one exception to "bare jsonTask": a
-// session is machine-local and lives only in the ledger, so only `show` —
-// which has a ledger record in hand — can fill them in. `ready`,
-// `escalations` and `run --json` build jsonTask from the tracker row alone
-// and leave both fields empty.
+// jsonTask.Session is the one exception to "bare jsonTask": a session is
+// machine-local and lives only in the ledger, so only `show` — which has a
+// ledger record in hand — can fill it in. `ready`, `escalations` and
+// `run --json` build jsonTask from the tracker row alone and leave it empty.
 
 type jsonLease struct {
 	Actor   string `json:"actor"`
@@ -54,7 +53,6 @@ type jsonTask struct {
 	Workflow string     `json:"workflow,omitempty"`
 	Lease    *jsonLease `json:"lease,omitempty"`
 	Session  string     `json:"session,omitempty"`
-	Cwd      string     `json:"cwd,omitempty"`
 	Note     string     `json:"note,omitempty"`
 	// NeedsHuman is the flag clients render as an escalation.
 	NeedsHuman bool `json:"needsHuman,omitempty"`
@@ -137,14 +135,24 @@ func reviewToJSON(r review.Result) jsonReview {
 	return out
 }
 
+// jsonRunResult is the `wf run` contract. Completed means the run reported
+// DONE with something to show and the task is in review; it is never
+// closed by a run — see jsonClosed.
 type jsonRunResult struct {
 	Task      jsonTask `json:"task"`
-	Closed    bool     `json:"closed"`
+	Completed bool     `json:"completed"`
 	Escalated bool     `json:"escalated"`
 	Reason    string   `json:"reason,omitempty"`
-	Session   string   `json:"session,omitempty"`
 	Notes     []string `json:"notes,omitempty"`
 	Created   []string `json:"created,omitempty"`
+}
+
+// jsonClosed is the `wf close` contract.
+type jsonClosed struct {
+	Task    jsonTask `json:"task"`
+	PRs     []string `json:"prs,omitempty"`
+	Docs    []string `json:"docs,omitempty"`
+	Message string   `json:"message"`
 }
 
 func (a *app) toJSON(t wf.Task) jsonTask {
@@ -176,8 +184,8 @@ func (a *app) toJSON(t wf.Task) jsonTask {
 		}
 	}
 	// The bound note is the tracker's own fact, read straight off its
-	// metadata rather than through a binding: wf.doc is written once, by
-	// `wf bind`, and is never a run's output.
+	// metadata: wf.doc is written by `wf bind`, or by the first run that
+	// produced a document when nothing was bound yet.
 	if doc, ok := t.Meta[wf.DocKey].(string); ok && doc != "" {
 		out.Note = doc
 	}
@@ -210,10 +218,9 @@ func workflowsToJSON(flows []workflow.Workflow) []jsonWorkflow {
 func (a *app) runResultToJSON(r supervisor.Result) jsonRunResult {
 	out := jsonRunResult{
 		Task:      a.toJSON(r.Task),
-		Closed:    r.Applied.Closed,
+		Completed: r.Applied.Completed,
 		Escalated: r.Applied.Escalated,
 		Reason:    r.Applied.Reason,
-		Session:   r.Session,
 		Created:   r.Applied.Created,
 	}
 	for _, doc := range r.Applied.Bound {
@@ -230,19 +237,16 @@ func (a *app) runResultToJSON(r supervisor.Result) jsonRunResult {
 // each of them is the whole reason `--json` exists. A consumer that wants
 // every binding regardless of provenance unions the two lists.
 
-// jsonBinding is one typed reference. State is the raw vocabulary and
-// StateLabel is the word to show a human — carried rather than derived,
-// because a client that translated for itself would drift from `wf show`.
+// jsonBinding is one typed reference; state is the vocabulary `wf show`
+// prints, so a client shows the same word.
 type jsonBinding struct {
-	Kind       string            `json:"kind"`
-	Ref        string            `json:"ref"`
-	Label      string            `json:"label,omitempty"`
-	State      string            `json:"state,omitempty"`
-	StateLabel string            `json:"stateLabel,omitempty"`
-	At         string            `json:"at,omitempty"`
-	Via        string            `json:"via,omitempty"`
-	Host       string            `json:"host,omitempty"`
-	Meta       map[string]string `json:"meta,omitempty"`
+	Kind  string            `json:"kind"`
+	Ref   string            `json:"ref"`
+	Label string            `json:"label,omitempty"`
+	State string            `json:"state,omitempty"`
+	At    string            `json:"at,omitempty"`
+	Via   string            `json:"via,omitempty"`
+	Meta  map[string]string `json:"meta,omitempty"`
 }
 
 // jsonRun is one dispatch and its output. Workflow, profile and model are on
@@ -253,7 +257,6 @@ type jsonRun struct {
 	Workflow string        `json:"workflow,omitempty"`
 	Profile  string        `json:"profile,omitempty"`
 	Model    string        `json:"model,omitempty"`
-	Host     string        `json:"host,omitempty"`
 	Started  string        `json:"started,omitempty"`
 	Ended    string        `json:"ended,omitempty"`
 	Outcome  string        `json:"outcome,omitempty"`
@@ -278,14 +281,12 @@ type jsonShow struct {
 
 func bindingToJSON(b wf.Binding) jsonBinding {
 	out := jsonBinding{
-		Kind:       string(b.Kind),
-		Ref:        b.Ref,
-		Label:      b.Label,
-		State:      string(b.State),
-		StateLabel: b.StateLabel(),
-		Via:        b.Via,
-		Host:       b.Host,
-		Meta:       b.Meta,
+		Kind:  string(b.Kind),
+		Ref:   b.Ref,
+		Label: b.Label,
+		State: string(b.State),
+		Via:   b.Via,
+		Meta:  b.Meta,
 	}
 	if !b.At.IsZero() {
 		out.At = stamp(b.At)
@@ -312,12 +313,11 @@ func (a *app) showToJSON(found resolved) jsonShow {
 		jsonTask: a.toJSON(found.Task),
 		Bindings: bindingsToJSON(sortBindings(taskOwnBindings(rec))),
 	}
-	// session and cwd are machine-local facts, so only `show` — which has
-	// loaded the ledger record — can answer them; ready, escalations and
+	// The session is a machine-local fact, so only `show` — which has
+	// loaded the ledger record — can answer it; ready, escalations and
 	// run --json carry none.
 	if session, ok := rec.Bindings.Current(wf.KindSession); ok {
 		out.Session = session.Ref
-		out.Cwd = session.Get(wf.MetaCwd)
 	}
 	if !rec.Updated.IsZero() {
 		out.Updated = stamp(rec.Updated)
@@ -328,9 +328,8 @@ func (a *app) showToJSON(found resolved) jsonShow {
 			Workflow: run.Workflow,
 			Profile:  run.Profile,
 			Model:    run.Model,
-			Host:     run.Host,
 			Outcome:  string(run.Outcome),
-			Bindings: bindingsToJSON(sortBindings(rec.Produced(run.ID))),
+			Bindings: bindingsToJSON(sortBindings(rec.Bindings.From(run.ID))),
 		}
 		if !run.Started.IsZero() {
 			entry.Started = stamp(run.Started)

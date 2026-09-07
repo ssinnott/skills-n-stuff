@@ -14,6 +14,7 @@ func TestLoadBindingsReadsEveryKeyShape(t *testing.T) {
 		PRsKey:    `["https://a/1","https://a/2"]`,
 		IssuesKey: `[{"url":"https://a/i1","title":"internal/foo.go:42 nil check"}]`,
 		DocKey:    "Research/plan.md",
+		DocsKey:   `["Research/plan.md","Research/review.md"]`,
 	})
 
 	bs := LoadBindings(task)
@@ -23,9 +24,9 @@ func TestLoadBindingsReadsEveryKeyShape(t *testing.T) {
 		t.Errorf("repo binding = %+v, want /code/app", repo)
 	}
 
-	prs := bs.Refs(KindPR)
-	if len(prs) != 2 || prs[0] != "https://a/1" || prs[1] != "https://a/2" {
-		t.Errorf("PR refs = %v, want both in report order", prs)
+	prs := bs.ByKind(KindPR)
+	if len(prs) != 2 || prs[0].Ref != "https://a/1" || prs[1].Ref != "https://a/2" {
+		t.Errorf("PR bindings = %v, want both in report order", prs)
 	}
 
 	issues := bs.ByKind(KindIssue)
@@ -36,12 +37,11 @@ func TestLoadBindingsReadsEveryKeyShape(t *testing.T) {
 		t.Errorf("issue label = %q, want the filed title", issues[0].Label)
 	}
 
-	doc, ok := bs.Current(KindDoc)
-	if !ok || doc.Ref != "Research/plan.md" {
-		t.Fatalf("doc binding = %+v", doc)
-	}
-	if got := doc.Get(MetaStore); got != "vault" {
-		t.Errorf("doc store = %q, want vault as a value", got)
+	// The note and the produced documents fold together: the note is one
+	// of the documents, so it appears once.
+	docs := bs.ByKind(KindDoc)
+	if len(docs) != 2 || docs[0].Ref != "Research/plan.md" || docs[1].Ref != "Research/review.md" {
+		t.Fatalf("doc bindings = %+v, want the note once and the second document", docs)
 	}
 }
 
@@ -70,6 +70,7 @@ func TestLoadBindingsMalformedValuesReadAsEmpty(t *testing.T) {
 		{IssuesKey: `["a bare string"]`},
 		{IssuesKey: map[string]any{"url": "https://a/1"}},
 		{DocKey: 7},
+		{DocsKey: "not json"},
 		{RepoKey: []any{"/code/app"}},
 	}
 

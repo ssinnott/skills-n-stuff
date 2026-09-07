@@ -1,7 +1,6 @@
 package supervisor
 
 import (
-	"context"
 	"errors"
 	"testing"
 	"time"
@@ -11,11 +10,12 @@ import (
 )
 
 // What the ledger has to get right, against the fakes: a run exists before
-// the agent produces anything, a re-run takes over without destroying its
-// predecessor, and everything a run made points back at it.
+// the agent produces anything, a later run picks up where the last one
+// left off without destroying what it left, and everything a run made
+// points back at it.
 //
-// The real-git, real-kata versions of the same three properties live in
-// integration_test.go. These are the ones that run everywhere.
+// The real-git versions of the same properties live in realgit_test.go,
+// and the real-kata ones in integration_test.go. These run everywhere.
 
 // withLedger gives a supervisor a real FileStore over a temp directory —
 // real because the thing under test is what lands on disk, and a fake store
@@ -42,13 +42,13 @@ func TestRunIsRecordedBeforeTheAgentProducesAnything(t *testing.T) {
 	q := newQueue(wf.Task{ID: "01HZ", ShortID: "abc4", Title: "Slow work"})
 	release := make(chan struct{})
 	r := &fakeRunner{transcript: "PR: https://a/1 — x\nDONE Landed it and covered it.\n", release: release}
-	s := newSupervisor(q, r, &fakeProvider{}, nil)
+	s := newSupervisor(q, r, &fakeProvider{}, basicFlows(t))
 	ledger := withLedger(t, s)
 
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		if _, err := s.RunOnce(context.Background(), ""); err != nil {
+		if _, err := run(s, "01HZ"); err != nil {
 			t.Errorf("RunOnce() error = %v", err)
 		}
 	}()
@@ -67,8 +67,8 @@ func TestRunIsRecordedBeforeTheAgentProducesAnything(t *testing.T) {
 			if run.Done() {
 				t.Error("a run still in flight must not be settled")
 			}
-			if run.Host != "wf-test" {
-				t.Errorf("run host = %q, want the actor", run.Host)
+			if run.Workflow != "work" {
+				t.Errorf("run workflow = %q, want the recipe it runs under", run.Workflow)
 			}
 			break
 		}
@@ -98,11 +98,10 @@ func TestCrashedAgentStillLeavesARecordedRun(t *testing.T) {
 	q := newQueue(wf.Task{ID: "01HZ", ShortID: "abc4", Title: "Doomed work"})
 	r := &fakeRunner{transcript: "boom\n", err: errors.New("process died")}
 	p := &fakeProvider{}
-	s := newSupervisor(q, r, p, nil)
+	s := newSupervisor(q, r, p, basicFlows(t))
 	ledger := withLedger(t, s)
 
-	result, err := s.RunOnce(context.Background(), "")
-	if err != nil {
+	if _, err := run(s, "01HZ"); err != nil {
 		t.Fatalf("RunOnce() error = %v", err)
 	}
 
@@ -111,9 +110,6 @@ func TestCrashedAgentStillLeavesARecordedRun(t *testing.T) {
 		t.Fatalf("runs = %+v, want the crashed run recorded", rec.Runs)
 	}
 	run := rec.Runs[0]
-	if run.ID != result.Run {
-		t.Errorf("run id = %q, want the dispatched %q", run.ID, result.Run)
-	}
 	if !run.Done() || run.Outcome != wf.SessionFailed {
 		t.Errorf("run = %+v, want settled as failed", run)
 	}
@@ -133,122 +129,129 @@ func TestCrashedAgentStillLeavesARecordedRun(t *testing.T) {
 	}
 }
 
-func TestRerunSupersedesTheCheckoutWithoutDestroyingIt(t *testing.T) {
-	// The concrete bug the whole design exists to fix: a re-run used to
-	// overwrite the single workspace key, taking with it the checkout an
-	// escalated run had been deliberately kept on disk for a human to open.
+func TestRerunContinuesInTheKeptCheckout(t *testing.T) {
+	// An escalated run keeps its checkout because the state in it is what
+	// a human, or the next run, picks up from. The re-run is handed that
+	// branch and continues in that checkout; when it completes, the
+	// checkout is disposed and the record says which run did so.
 	q := newQueue(wf.Task{ID: "01HZ", ShortID: "abc4", Title: "Twice-run work"})
 	r := &fakeRunner{transcript: "I could not decide and stopped.\n"}
 	p := &fakeProvider{}
-	s := newSupervisor(q, r, p, nil)
+	s := newSupervisor(q, r, p, basicFlows(t))
 	ledger := withLedger(t, s)
 
-	first, err := s.RunOnce(context.Background(), "")
+	first, err := run(s, "01HZ")
 	if err != nil {
 		t.Fatalf("first RunOnce() error = %v", err)
 	}
 	if !first.Applied.Escalated {
 		t.Fatalf("Applied = %+v, want the first run escalated", first.Applied)
 	}
+	if p.spaces[0].disposed {
+		t.Fatal("the escalated checkout was destroyed")
+	}
 
-	// The second dispatch names the task, the way `wf run --ref` does: an
-	// escalated task is flagged for a human, so the queue will not offer it
-	// up on its own.
 	r.transcript = "PR: https://a/2 — The fix\nDONE Resolved the ambiguity and landed it.\n"
-	second, err := s.RunOnce(context.Background(), "01HZ")
+	second, err := run(s, "01HZ")
 	if err != nil {
 		t.Fatalf("second RunOnce() error = %v", err)
 	}
-	if first.Run == second.Run {
-		t.Fatal("a second dispatch must be its own run")
+	if !second.Applied.Completed {
+		t.Fatalf("Applied = %+v, want the re-run completed", second.Applied)
 	}
 
 	rec := loadRecord(t, ledger, "01HZ")
 	if len(rec.Runs) != 2 {
 		t.Fatalf("runs = %+v, want two", rec.Runs)
 	}
+	if p.hints[1] != p.spaces[0].branch {
+		t.Errorf("re-run was handed %q, want the kept checkout's branch %q", p.hints[1], p.spaces[0].branch)
+	}
+	if len(p.spaces) != 1 {
+		t.Fatalf("checkouts = %d, want the re-run to continue in the kept one", len(p.spaces))
+	}
 
+	// One checkout, now the second run's: the binding is keyed by path, so
+	// continuing in it hands it to the run that finished the work.
+	spaces := rec.Bindings.ByKind(wf.KindWorkspace)
+	if len(spaces) != 1 {
+		t.Fatalf("workspace bindings = %+v, want the one continued checkout", spaces)
+	}
+	if spaces[0].Via != rec.Runs[1].ID {
+		t.Errorf("checkout Via = %q, want the re-run %q", spaces[0].Via, rec.Runs[1].ID)
+	}
+	if spaces[0].State != wf.BindingDisposed || !p.spaces[0].disposed {
+		t.Errorf("checkout state = %q, want disposed once the re-run completed", spaces[0].State)
+	}
+	// Both sessions stay: each is a real transcript worth attaching to.
+	if len(rec.Bindings.ByKind(wf.KindSession)) != 2 {
+		t.Errorf("session bindings = %+v, want one per run", rec.Bindings.ByKind(wf.KindSession))
+	}
+}
+
+func TestRerunAfterCompletionGetsItsOwnCheckoutOnTheSameBranch(t *testing.T) {
+	// A completed run disposed its checkout but left the branch. The next
+	// run, under whatever workflow, gets a new checkout of that branch —
+	// and the first checkout stays recorded as disposed, under its run.
+	q := newQueue(wf.Task{ID: "01HZ", ShortID: "abc4", Title: "Two steps"})
+	r := &fakeRunner{transcript: "PR: https://a/1 — Step one\nDONE Opened the PR.\n"}
+	p := &fakeProvider{}
+	s := newSupervisor(q, r, p, basicFlows(t))
+	ledger := withLedger(t, s)
+
+	if _, err := run(s, "01HZ"); err != nil {
+		t.Fatalf("first RunOnce() error = %v", err)
+	}
+	if _, err := run(s, "01HZ"); err != nil {
+		t.Fatalf("second RunOnce() error = %v", err)
+	}
+
+	rec := loadRecord(t, ledger, "01HZ")
 	spaces := rec.Bindings.ByKind(wf.KindWorkspace)
 	if len(spaces) != 2 {
-		t.Fatalf("workspace bindings = %+v, want both checkouts recorded", spaces)
+		t.Fatalf("workspace bindings = %+v, want one per run", spaces)
 	}
-
-	byRun := map[string]wf.Binding{}
-	for _, b := range spaces {
-		byRun[b.Via] = b
+	if spaces[0].Ref == spaces[1].Ref {
+		t.Error("the two runs must not share a checkout binding")
 	}
-	old, ok := byRun[first.Run]
-	if !ok {
-		t.Fatalf("the first run's checkout is gone: %+v", spaces)
+	if spaces[0].Get(wf.MetaBranch) != spaces[1].Get(wf.MetaBranch) {
+		t.Errorf("branches = %q and %q, want the second run on the first's branch",
+			spaces[0].Get(wf.MetaBranch), spaces[1].Get(wf.MetaBranch))
 	}
-	if old.State != wf.BindingSuperseded {
-		t.Errorf("first checkout state = %q, want superseded", old.State)
-	}
-	if old.Ref != p.spaces[0].path {
-		t.Errorf("first checkout ref = %q, want %q — it must stay findable", old.Ref, p.spaces[0].path)
-	}
-
-	fresh, ok := byRun[second.Run]
-	if !ok {
-		t.Fatalf("the second run's checkout was not recorded: %+v", spaces)
-	}
-	if fresh.Ref == old.Ref {
-		t.Error("the two runs must not share one checkout binding")
-	}
-	// The second run closed cleanly, so it tore its own checkout down and
-	// the record says so. Nothing is live afterwards, which is the honest
-	// answer rather than a missing one: the first checkout is still there,
-	// it is simply no longer what anyone should be looking at.
-	if fresh.State != wf.BindingDisposed {
-		t.Errorf("second checkout state = %q, want disposed", fresh.State)
-	}
-	if !p.spaces[1].disposed {
-		t.Error("a clean re-run should dispose its own checkout")
-	}
-
-	// The point of all of it: the escalated run's checkout is still on disk.
-	if p.spaces[0].disposed {
-		t.Error("the escalated run's checkout was destroyed by the re-run")
+	for i, b := range spaces {
+		if b.Via != rec.Runs[i].ID {
+			t.Errorf("checkout %d Via = %q, want run %q", i, b.Via, rec.Runs[i].ID)
+		}
+		if b.State != wf.BindingDisposed {
+			t.Errorf("checkout %d state = %q, want disposed", i, b.State)
+		}
 	}
 }
 
 func TestRerunTakesOverAsCurrentWhileTheFirstStays(t *testing.T) {
-	// Two runs that both escalate leave two live checkouts, and "the
-	// worktree" has to mean the newer one without the older having been
-	// deleted to make that true.
+	// Two runs that both escalate: the second continued in the first's
+	// kept checkout, so there is one live checkout and it is the current
+	// one, reachable from the run that last worked in it.
 	q := newQueue(wf.Task{ID: "01HZ", ShortID: "abc4", Title: "Stuck twice"})
 	r := &fakeRunner{transcript: "I could not decide and stopped.\n"}
 	p := &fakeProvider{}
-	s := newSupervisor(q, r, p, nil)
+	s := newSupervisor(q, r, p, basicFlows(t))
 	ledger := withLedger(t, s)
 
-	first, err := s.RunOnce(context.Background(), "")
-	if err != nil {
+	if _, err := run(s, "01HZ"); err != nil {
 		t.Fatalf("first RunOnce() error = %v", err)
 	}
-	second, err := s.RunOnce(context.Background(), "01HZ")
-	if err != nil {
+	if _, err := run(s, "01HZ"); err != nil {
 		t.Fatalf("second RunOnce() error = %v", err)
 	}
 
 	rec := loadRecord(t, ledger, "01HZ")
 	current, ok := rec.Bindings.Current(wf.KindWorkspace)
-	if !ok || current.Via != second.Run {
+	if !ok || current.Via != rec.Runs[1].ID {
 		t.Fatalf("Current(workspace) = %+v, want the second run's", current)
 	}
-	if len(rec.Bindings.Live(wf.KindWorkspace)) != 1 {
-		t.Errorf("live workspaces = %+v, want exactly the current one",
-			rec.Bindings.Live(wf.KindWorkspace))
-	}
-
-	// The first run's checkout is still recorded, still on disk, and still
-	// reachable through the run that made it.
-	produced := rec.Produced(first.Run).ByKind(wf.KindWorkspace)
-	if len(produced) != 1 || produced[0].State != wf.BindingSuperseded {
-		t.Fatalf("first run's workspace = %+v, want it kept and superseded", produced)
-	}
-	if p.spaces[0].disposed {
-		t.Error("the first escalated checkout was destroyed")
+	if current.State != wf.BindingLive || p.spaces[0].disposed {
+		t.Error("the checkout must still be live after a second escalation")
 	}
 }
 
@@ -261,19 +264,19 @@ func TestEveryLocalBindingARunProducedCarriesTheRun(t *testing.T) {
 		"DOC: notes/plan.md — The plan\n" +
 		"NEXT: fix the flaky test\n" +
 		"DONE Landed the parser and filed the flake separately.\n"}
-	s := newSupervisor(q, r, &fakeProvider{}, nil)
+	s := newSupervisor(q, r, &fakeProvider{}, basicFlows(t))
 	ledger := withLedger(t, s)
 
-	result, err := s.RunOnce(context.Background(), "")
+	result, err := run(s, "01HZ")
 	if err != nil {
 		t.Fatalf("RunOnce() error = %v", err)
 	}
-	if !result.Applied.Closed {
-		t.Fatalf("Applied = %+v, want closed", result.Applied)
+	if !result.Applied.Completed {
+		t.Fatalf("Applied = %+v, want completed", result.Applied)
 	}
 
 	rec := loadRecord(t, ledger, "01HZ")
-	produced := rec.Produced(result.Run)
+	produced := rec.Bindings.From(rec.Runs[0].ID)
 	kinds := map[wf.Kind]wf.Binding{}
 	for _, b := range produced {
 		kinds[b.Kind] = b
@@ -286,17 +289,14 @@ func TestEveryLocalBindingARunProducedCarriesTheRun(t *testing.T) {
 			t.Errorf("no %s binding tagged with the run: %+v", want, produced)
 		}
 	}
-	for _, unwanted := range []wf.Kind{wf.KindPR, wf.KindIssue, wf.KindDoc, wf.KindTask, wf.KindRepo} {
+	for _, unwanted := range []wf.Kind{wf.KindPR, wf.KindIssue, wf.KindDoc, wf.KindRepo} {
 		if b, ok := kinds[unwanted]; ok {
 			t.Errorf("%s is a shareable fact and must not be in the ledger: %+v", unwanted, b)
 		}
 	}
-	if _, ok := rec.Bindings.Current(wf.KindRepo); ok {
-		t.Error("the repo is a shareable fact and must not be in the ledger at all")
-	}
 
 	// The tracker carries every one of those facts as flat metadata — their
-	// only home now — and a client reads them back through LoadBindings.
+	// only home — and a client reads them back through LoadBindings.
 	if q.meta("01HZ", wf.RepoKey) != "/code/app" {
 		t.Errorf("tracker repo metadata = %v, want it published", q.meta("01HZ", wf.RepoKey))
 	}
@@ -306,6 +306,9 @@ func TestEveryLocalBindingARunProducedCarriesTheRun(t *testing.T) {
 	if q.meta("01HZ", wf.IssuesKey) == nil {
 		t.Error("tracker issue metadata was dropped")
 	}
+	if len(q.created) != 1 || q.created[0].RelatedTo != "01HZ" {
+		t.Errorf("follow-on = %+v, want one related to the parent", q.created)
+	}
 
 	published := wf.LoadBindings(wf.Task{ID: "01HZ", Meta: q.tasks["01HZ"].Meta})
 	if pr, ok := published.Current(wf.KindPR); !ok || pr.Ref != "https://example.test/pull/412" {
@@ -313,17 +316,17 @@ func TestEveryLocalBindingARunProducedCarriesTheRun(t *testing.T) {
 	}
 }
 
-func TestWorkspaceBindingRecordsTheBranchAndTheHost(t *testing.T) {
+func TestWorkspaceBindingRecordsTheBranch(t *testing.T) {
 	// The branch is recorded by the run that created it rather than
 	// re-derived from the task's title, which is what made a rename orphan
 	// the branch a run had already cut.
 	q := newQueue(wf.Task{ID: "01HZ", ShortID: "abc4", Title: "Branchy work"})
 	r := &fakeRunner{transcript: "PR: https://a/1 — x\nDONE Landed it and covered it.\n"}
 	p := &fakeProvider{}
-	s := newSupervisor(q, r, p, nil)
+	s := newSupervisor(q, r, p, basicFlows(t))
 	ledger := withLedger(t, s)
 
-	if _, err := s.RunOnce(context.Background(), ""); err != nil {
+	if _, err := run(s, "01HZ"); err != nil {
 		t.Fatalf("RunOnce() error = %v", err)
 	}
 
@@ -336,14 +339,8 @@ func TestWorkspaceBindingRecordsTheBranchAndTheHost(t *testing.T) {
 	if got := space.Get(wf.MetaBranch); got != "wf/abc4" {
 		t.Errorf("branch = %q, want the one the checkout is actually on", got)
 	}
-	if got := space.Get(wf.MetaRepo); got != "/repo" {
-		t.Errorf("repo = %q", got)
-	}
-	if space.Host != "wf-test" {
-		t.Errorf("host = %q — a checkout path is meaningless without one", space.Host)
-	}
-	// A clean run disposes the checkout, and the record says so rather than
-	// leaving `wf review` to find out by stat-ing the directory.
+	// A completed run disposes the checkout, and the record says so rather
+	// than leaving `wf review` to find out by stat-ing the directory.
 	if space.State != wf.BindingDisposed {
 		t.Errorf("state = %q, want disposed", space.State)
 	}
@@ -352,11 +349,8 @@ func TestWorkspaceBindingRecordsTheBranchAndTheHost(t *testing.T) {
 	if !ok {
 		t.Fatal("no session binding")
 	}
-	if session.Host != "wf-test" {
-		t.Errorf("session host = %q", session.Host)
-	}
-	if got := session.Get(wf.MetaRunner); got != "fake" {
-		t.Errorf("runner = %q, want the runner that actually ran", got)
+	if session.Get(wf.MetaSessionID) == "" {
+		t.Error("session binding lost its id")
 	}
 
 	// A PR is shareable and resolves from any machine, so it has no place
@@ -368,9 +362,6 @@ func TestWorkspaceBindingRecordsTheBranchAndTheHost(t *testing.T) {
 	if !ok || pr.Ref != "https://a/1" {
 		t.Fatalf("published pr binding = %+v", pr)
 	}
-	if pr.Host != "" {
-		t.Errorf("pr host = %q, want none — a URL is not machine-local", pr.Host)
-	}
 }
 
 func TestLedgerBindingsCarryRealTimestamps(t *testing.T) {
@@ -379,11 +370,11 @@ func TestLedgerBindingsCarryRealTimestamps(t *testing.T) {
 	// written here never has to.
 	q := newQueue(wf.Task{ID: "01HZ", ShortID: "abc4", Title: "Timed work"})
 	r := &fakeRunner{transcript: "PR: https://a/1 — x\nDONE Landed it and covered it.\n"}
-	s := newSupervisor(q, r, &fakeProvider{}, nil)
+	s := newSupervisor(q, r, &fakeProvider{}, basicFlows(t))
 	ledger := withLedger(t, s)
 
 	before := time.Now().UTC().Add(-time.Second)
-	if _, err := s.RunOnce(context.Background(), ""); err != nil {
+	if _, err := run(s, "01HZ"); err != nil {
 		t.Fatalf("RunOnce() error = %v", err)
 	}
 	after := time.Now().UTC().Add(time.Second)
@@ -410,15 +401,15 @@ func TestARenamedTaskDoesNotDisturbItsLedgerRecord(t *testing.T) {
 	task := wf.Task{ID: "01HZ", ShortID: "abc4", Title: "Original title"}
 	q := newQueue(task)
 	r := &fakeRunner{transcript: "I stopped.\n"}
-	s := newSupervisor(q, r, &fakeProvider{}, nil)
+	s := newSupervisor(q, r, &fakeProvider{}, basicFlows(t))
 	ledger := withLedger(t, s)
 
-	if _, err := s.RunOnce(context.Background(), ""); err != nil {
+	if _, err := run(s, "01HZ"); err != nil {
 		t.Fatalf("RunOnce() error = %v", err)
 	}
 
 	q.tasks["01HZ"].Title = "Renamed in the tracker"
-	if _, err := s.RunOnce(context.Background(), "01HZ"); err != nil {
+	if _, err := run(s, "01HZ"); err != nil {
 		t.Fatalf("second RunOnce() error = %v", err)
 	}
 
@@ -427,8 +418,8 @@ func TestARenamedTaskDoesNotDisturbItsLedgerRecord(t *testing.T) {
 		t.Fatalf("runs = %+v, want both dispatches on the one record", rec.Runs)
 	}
 
-	// And the branch each run cut is still on its own binding, so a rename
-	// cannot orphan either of them.
+	// And the branch the run cut is on its binding, so a rename cannot
+	// orphan it.
 	for _, b := range rec.Bindings.ByKind(wf.KindWorkspace) {
 		if b.Get(wf.MetaBranch) == "" {
 			t.Errorf("workspace binding %q lost its branch", b.Ref)
@@ -437,22 +428,19 @@ func TestARenamedTaskDoesNotDisturbItsLedgerRecord(t *testing.T) {
 }
 
 func TestDispatchRunsWithNoLedgerAtAll(t *testing.T) {
-	// Nothing in the loop may take a lifecycle decision from the ledger, so
+	// Nothing in a run may take a lifecycle decision from the ledger, so
 	// having none must change nothing about how a run settles.
 	q := newQueue(wf.Task{ID: "01HZ", ShortID: "abc4", Title: "Unrecorded work"})
 	r := &fakeRunner{transcript: "PR: https://a/1 — x\nDONE Landed it and covered it.\n"}
-	s := newSupervisor(q, r, &fakeProvider{}, nil)
+	s := newSupervisor(q, r, &fakeProvider{}, basicFlows(t))
 	s.Store = nil
 
-	result, err := s.RunOnce(context.Background(), "")
+	result, err := run(s, "01HZ")
 	if err != nil {
 		t.Fatalf("RunOnce() error = %v", err)
 	}
-	if !result.Applied.Closed {
-		t.Errorf("Applied = %+v, want closed", result.Applied)
-	}
-	if result.Run == "" {
-		t.Error("a run still has an id even when nothing records it")
+	if !result.Applied.Completed {
+		t.Errorf("Applied = %+v, want completed", result.Applied)
 	}
 }
 

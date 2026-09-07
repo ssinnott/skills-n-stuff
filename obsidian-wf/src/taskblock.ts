@@ -277,7 +277,7 @@ function bindingLines(bindings: WfBinding[]): string[] {
  */
 function bindingLine(b: WfBinding): string {
     let line = bindingSubject(b);
-    if (b.stateLabel) line += " — " + b.stateLabel;
+    if (b.state) line += " — " + b.state;
     if (b.host) line += " *(" + b.host + ")*";
     return line;
 }

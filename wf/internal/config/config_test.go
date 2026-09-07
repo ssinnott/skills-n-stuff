@@ -15,9 +15,6 @@ func TestLoadMissingFileUsesDefaults(t *testing.T) {
 	if cfg.Actor == "" {
 		t.Error("Actor must default to something identifying this instance")
 	}
-	if cfg.MaxConcurrent != 1 {
-		t.Errorf("MaxConcurrent = %d, want 1", cfg.MaxConcurrent)
-	}
 	if cfg.DifitCommand != "npx difit" {
 		t.Errorf("DifitCommand = %q, want the npx default", cfg.DifitCommand)
 	}
@@ -43,7 +40,7 @@ func TestLoadReadsAndExpands(t *testing.T) {
 		t.Fatalf("Load() error = %v", err)
 	}
 
-	if cfg.Actor != "wf-laptop" || cfg.MaxConcurrent != 3 {
+	if cfg.Actor != "wf-laptop" {
 		t.Errorf("scalars not read: %+v", cfg)
 	}
 	home, _ := os.UserHomeDir()

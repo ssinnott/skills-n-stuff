@@ -71,7 +71,7 @@ func TestResolveLadder(t *testing.T) {
 			// one to open.
 			name: "a superseded workspace is not the one to open",
 			bs: wf.Bindings{
-				wf.Binding{Kind: wf.KindWorkspace, Ref: mustExistingDir(t), State: wf.BindingSuperseded},
+				wf.Binding{Kind: wf.KindWorkspace, Ref: mustExistingDir(t), State: wf.BindingDisposed},
 				bind(wf.KindDoc, "n.md"),
 			},
 			ex:   Externals{Branch: "wf/x", BranchExists: true},
@@ -256,15 +256,35 @@ func TestBuildLadderResolvesFromLedgerWorkspace(t *testing.T) {
 	}
 }
 
-// A superseded workspace must not be pulled in — only the live one is.
-func TestBuildLadderIgnoresSupersededLedgerWorkspace(t *testing.T) {
+// A disposed workspace must not be pulled in — only a live one is.
+func TestBuildLadderIgnoresDisposedLedgerWorkspace(t *testing.T) {
 	dir := mustExistingDir(t)
 	task := taskWithMeta(nil)
-	local := wf.Bindings{{Kind: wf.KindWorkspace, Ref: dir, State: wf.BindingSuperseded}}
+	local := wf.Bindings{{Kind: wf.KindWorkspace, Ref: dir, State: wf.BindingDisposed}}
 
 	bs, ex := BuildLadder(context.Background(), task, local, &config.Config{Repo: "/repo", Base: "main"}, nil)
 	if _, err := Resolve(bs, ex); err == nil {
-		t.Error("Resolve() succeeded, want ErrNoTarget — a superseded workspace must not be current")
+		t.Error("Resolve() succeeded, want ErrNoTarget — a disposed workspace must not be current")
+	}
+}
+
+// The branch a run actually checked out is on its workspace binding; the
+// ladder reads that rather than recomputing one from a title a human may
+// have edited since, and a disposed checkout still knows its branch.
+func TestBuildLadderUsesTheRecordedBranch(t *testing.T) {
+	task := taskWithMeta(nil)
+	task.Title = "Renamed since the run"
+	local := wf.Bindings{{Kind: wf.KindWorkspace, Ref: mustMissingDir(t), State: wf.BindingDisposed,
+		Meta: map[string]string{wf.MetaBranch: "wf/abc4-original-title"}}}
+
+	var asked string
+	checker := func(_ context.Context, _, branch string) bool { asked = branch; return true }
+	_, ex := BuildLadder(context.Background(), task, local, &config.Config{Repo: "/repo", Base: "main"}, checker)
+	if ex.Branch != "wf/abc4-original-title" {
+		t.Errorf("Branch = %q, want the recorded branch", ex.Branch)
+	}
+	if asked != "wf/abc4-original-title" {
+		t.Errorf("BranchExists asked about %q, want the recorded branch", asked)
 	}
 }
 

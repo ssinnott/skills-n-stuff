@@ -36,17 +36,7 @@ func (a *app) cmdAttach(ctx context.Context, args []string) (int, error) {
 	if !ok {
 		return 1, fmt.Errorf("%s: no session recorded on this host", ref)
 	}
-	if session.Host != "" && session.Host != a.cfg.Actor {
-		// A session file is a fact about one machine. Handing over a path
-		// that will not resolve here reads as a broken install; saying
-		// whose it is reads as the truth.
-		return 1, fmt.Errorf("%s ran on %s — its session lives there, not here", ref, session.Host)
-	}
 
-	dir := session.Get(wf.MetaCwd)
-	if dir == "" {
-		dir, _ = os.Getwd()
-	}
 	bin := a.cfg.PiBin
 	if bin == "" {
 		bin = "pi"
@@ -54,7 +44,6 @@ func (a *app) cmdAttach(ctx context.Context, args []string) (int, error) {
 
 	// Hand the terminal to pi; wf has nothing further to do.
 	pi := exec.CommandContext(ctx, bin, wf.AttachArgs(session)...)
-	pi.Dir = dir
 	pi.Stdin, pi.Stdout, pi.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := pi.Run(); err != nil {
 		var exitErr *exec.ExitError

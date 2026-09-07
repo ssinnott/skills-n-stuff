@@ -4,10 +4,9 @@ package main
 //
 // A human creates a note; `wf bind` declares that it is a given task's own.
 // Two writes, one per side of the pair: the note's frontmatter carries the
-// task id (both `kata-issue`, naming the tracker row, and `wf-task`, the
-// durable join the Obsidian plugin renders from), and the tracker's `wf.doc`
-// metadata carries the note's path. Nothing else is written — rendering the
-// task into the note is the plugin's job now, not wf's.
+// task id under `kata-issue`, and the tracker's `wf.doc` metadata carries
+// the note's path. Nothing else is written — rendering the task into the
+// note is the plugin's job, not wf's.
 
 import (
 	"context"
@@ -22,15 +21,9 @@ import (
 )
 
 // cmdBind binds a task to a note by hand: the id into the note's
-// frontmatter, the note into the task's metadata.
-//
-// Two frontmatter fields are written, and they answer different questions.
-// `wf-task` is the durable half of the join — it is what the plugin's
-// rendering reads, what survives a rename in Obsidian, and therefore what
-// recovers the binding when a recorded path stops resolving. `kata-issue`
-// stays because it names the tracker row, which is one binding among the
-// task's many rather than the task itself; a note bound before this existed
-// keeps working, and anything reading it keeps reading it.
+// frontmatter, the note into the task's metadata. The frontmatter id is the
+// half that survives a rename in Obsidian, and is what recovers the binding
+// when a recorded path stops resolving.
 func (a *app) cmdBind(ctx context.Context, args []string) (int, error) {
 	fs, _ := newFlagSet("bind")
 	positionals, err := parseFlags(fs, args)
@@ -60,12 +53,8 @@ func (a *app) cmdBind(ctx context.Context, args []string) (int, error) {
 	if existing := note.GetField(text, note.IssueKey); existing != "" && existing != task.ID {
 		return 1, fmt.Errorf("%s is already bound to %s", notePath, existing)
 	}
-	if existing := note.GetField(text, note.TaskKey); existing != "" && existing != task.ID {
-		return 1, fmt.Errorf("%s is already bound to task %s", notePath, existing)
-	}
 
 	updated := note.SetField(text, note.IssueKey, task.ID)
-	updated = note.SetField(updated, note.TaskKey, task.ID)
 	if updated != text {
 		// Atomic: a note is a file a human is probably looking at, and a
 		// synced vault surfaces a half-written file to every device with it

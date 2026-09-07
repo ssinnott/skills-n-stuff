@@ -89,6 +89,10 @@ func newHarness(t *testing.T, agentScript string, workflows map[string]string) *
 	}
 
 	flowDir := t.TempDir()
+	if workflows == nil {
+		workflows = map[string]string{}
+	}
+	workflows["work.md"] = "---\nname: work\n---\n{{TASK_TITLE}}\n\n{{TASK_BODY}}\n"
 	for name, body := range workflows {
 		if err := os.WriteFile(filepath.Join(flowDir, name), []byte(body), 0o644); err != nil {
 			t.Fatal(err)
@@ -107,7 +111,6 @@ func newHarness(t *testing.T, agentScript string, workflows map[string]string) *
 			Vault:           vault,
 			WorktreeRoot:    filepath.Join(t.TempDir(), "worktrees"),
 			SessionRoot:     filepath.Join(t.TempDir(), "sessions"),
-			MaxConcurrent:   2,
 			LeaseTTLSeconds: 900,
 		},
 		vault:     vault,
@@ -157,6 +160,12 @@ func (h *harness) supervisor() *Supervisor {
 	}
 }
 
+// run dispatches one task by ref under a named workflow: every run is a
+// human's choice of task and recipe.
+func (h *harness) run(ctx context.Context, ref, flow string) (Result, error) {
+	return h.supervisor().RunOnce(ctx, ref, Dispatch{Workflow: flow})
+}
+
 // record reads the task's ledger entry, keyed by the tracker's own id.
 func (h *harness) record(t *testing.T, id string) wf.Record {
 	t.Helper()
@@ -188,27 +197,43 @@ func TestE2EClosesRealIssue(t *testing.T) {
 	h := newHarness(t, shipAgent, nil)
 	ctx := context.Background()
 
-	created, err := h.queue.Create(ctx, wf.CreateInput{Title: "Add the parser", Priority: 1})
+	created, err := h.queue.Create(ctx, wf.CreateInput{Title: "Add the parser"})
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
 
-	result, err := h.supervisor().RunOnce(ctx, "")
+	result, err := h.run(ctx, created.ID, "work")
 	if err != nil {
 		t.Fatalf("RunOnce() error = %v", err)
 	}
-	if !result.Applied.Closed {
-		t.Fatalf("Applied = %+v, want closed", result.Applied)
+	if !result.Applied.Completed {
+		t.Fatalf("Applied = %+v, want completed", result.Applied)
 	}
 
-	// The issue is closed in kata itself, not just in wf's head.
+	// The run completed; the task is still open in kata, waiting for a
+	// human's next move, and now carries the PR for its eventual close.
+	task, err := h.queue.Get(ctx, created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Meta[wf.StateKey] != string(wf.StateReview) {
+		t.Errorf("state = %v, want review", task.Meta[wf.StateKey])
+	}
+	if prs := wf.PRsFromMeta(task.Meta); len(prs) != 1 {
+		t.Errorf("PRs recorded = %v, want the run's PR", prs)
+	}
+
+	// And `wf close` closes it in kata itself, with that evidence.
+	if _, err := wf.Close(ctx, h.queue, task, ""); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
 	ready, err := h.queue.Ready(ctx, 20)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, r := range ready {
 		if r.ID == created.ID {
-			t.Error("the issue is still ready after a successful run")
+			t.Error("the issue is still ready after a close")
 		}
 	}
 
@@ -234,10 +259,6 @@ func TestE2EClosesRealIssue(t *testing.T) {
 	if _, held := wf.ParseLease(meta[wf.LeaseKey]); held {
 		t.Error("the lease outlived the run")
 	}
-	task, err := h.queue.Get(ctx, created.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
 	if task.Owner != "" {
 		t.Errorf("Owner = %q after the run, want empty", task.Owner)
 	}
@@ -259,20 +280,17 @@ func TestE2EBindsArtifactIntoVault(t *testing.T) {
 	})
 	ctx := context.Background()
 
-	created, err := h.queue.Create(ctx, wf.CreateInput{
-		Title:  "How does kata store issues",
-		Labels: []string{"research"},
-	})
+	created, err := h.queue.Create(ctx, wf.CreateInput{Title: "How does kata store issues"})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	result, err := h.supervisor().RunOnce(ctx, "")
+	result, err := h.run(ctx, created.ID, "research")
 	if err != nil {
 		t.Fatalf("RunOnce() error = %v", err)
 	}
-	if !result.Applied.Closed {
-		t.Fatalf("Applied = %+v, want closed", result.Applied)
+	if !result.Applied.Completed {
+		t.Fatalf("Applied = %+v, want completed", result.Applied)
 	}
 	if len(result.Applied.Bound) != 1 {
 		t.Fatalf("Bound = %+v, want one document", result.Applied.Bound)
@@ -299,6 +317,9 @@ func TestE2EBindsArtifactIntoVault(t *testing.T) {
 	if meta[wf.DocKey] != result.Applied.Bound[0].VaultPath {
 		t.Errorf("task metadata = %v, want the vault path", meta[wf.DocKey])
 	}
+	if docs := wf.DocsFromMeta(meta); len(docs) != 1 || docs[0] != result.Applied.Bound[0].VaultPath {
+		t.Errorf("documents recorded = %v, want the bound one", docs)
+	}
 
 	// A workflow with no workspace still ran; nothing was left behind.
 	entries, err := os.ReadDir(h.cfg.WorktreeRoot)
@@ -321,11 +342,11 @@ func TestE2EEscalatesAndKeepsWorktree(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := h.supervisor().RunOnce(ctx, "")
+	result, err := h.run(ctx, created.ID, "work")
 	if err != nil {
 		t.Fatalf("RunOnce() error = %v", err)
 	}
-	if !result.Applied.Escalated || result.Applied.Closed {
+	if !result.Applied.Escalated || result.Applied.Completed {
 		t.Fatalf("Applied = %+v, want escalated", result.Applied)
 	}
 
@@ -366,22 +387,23 @@ func TestE2ESpawnsLinkedFollowOn(t *testing.T) {
 	h := newHarness(t, followOnAgent, nil)
 	ctx := context.Background()
 
-	if _, err := h.queue.Create(ctx, wf.CreateInput{Title: "Original work"}); err != nil {
+	created, err := h.queue.Create(ctx, wf.CreateInput{Title: "Original work"})
+	if err != nil {
 		t.Fatal(err)
 	}
 
-	result, err := h.supervisor().RunOnce(ctx, "")
+	result, err := h.run(ctx, created.ID, "work")
 	if err != nil {
 		t.Fatalf("RunOnce() error = %v", err)
 	}
-	if !result.Applied.Closed {
-		t.Fatalf("Applied = %+v, want closed", result.Applied)
+	if !result.Applied.Completed {
+		t.Fatalf("Applied = %+v, want completed", result.Applied)
 	}
 	if len(result.Applied.Created) != 1 {
 		t.Fatalf("Created = %v, want one follow-on task", result.Applied.Created)
 	}
 
-	// The follow-on is real, open, and carries its origin.
+	// The follow-on is real and open.
 	ready, err := h.queue.Ready(ctx, 20)
 	if err != nil {
 		t.Fatal(err)
@@ -395,20 +417,16 @@ func TestE2ESpawnsLinkedFollowOn(t *testing.T) {
 	if followOn == nil {
 		t.Fatalf("follow-on task is not in the queue: %+v", ready)
 	}
-	if followOn.Meta["wf.origin"] == nil {
-		t.Errorf("follow-on lacks its origin: %v", followOn.Meta)
-	}
 }
 
 const bareDoneAgent = `#!/bin/sh
 echo "DONE"
 `
 
-func TestE2EEvidenceFreeDoneEscalates(t *testing.T) {
-	// A completion with nothing to show for it is not a completion. kata
-	// refuses such a close outright, and wf agrees: the alternative would be
-	// manufacturing evidence, which is the one thing that would make a
-	// closed task meaningless.
+func TestE2EOutputFreeDoneEscalates(t *testing.T) {
+	// A run with nothing to show for it is not complete: the alternative
+	// would be manufacturing output, which is the one thing that would make
+	// a completed run meaningless.
 	h := newHarness(t, bareDoneAgent, nil)
 	ctx := context.Background()
 
@@ -417,12 +435,12 @@ func TestE2EEvidenceFreeDoneEscalates(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := h.supervisor().RunOnce(ctx, "")
+	result, err := h.run(ctx, created.ID, "work")
 	if err != nil {
 		t.Fatalf("RunOnce() error = %v", err)
 	}
-	if result.Applied.Closed {
-		t.Error("a DONE with no evidence must not close the task")
+	if result.Applied.Completed {
+		t.Error("a DONE with nothing to show must not complete")
 	}
 	if !result.Applied.Escalated {
 		t.Errorf("Applied = %+v, want escalated", result.Applied)
@@ -442,60 +460,31 @@ echo "PR: https://example.com/pr/3 — The change"
 echo "DONE"
 `
 
-func TestE2ETerseDoneWithEvidenceCloses(t *testing.T) {
-	// kata also refuses a close message under 40 characters. An agent that
-	// signs off with a bare DONE but did real work must still close, with
+func TestE2ETerseDoneStillCloses(t *testing.T) {
+	// kata refuses a close message under 40 characters. A task whose run
+	// signed off with a bare DONE but did real work must still close, with
 	// the substance composed from what wf actually knows.
 	h := newHarness(t, terseAgent, nil)
 	ctx := context.Background()
 
-	if _, err := h.queue.Create(ctx, wf.CreateInput{Title: "Terse but evidenced work"}); err != nil {
+	created, err := h.queue.Create(ctx, wf.CreateInput{Title: "Terse but evidenced work"})
+	if err != nil {
 		t.Fatal(err)
 	}
 
-	result, err := h.supervisor().RunOnce(ctx, "")
+	result, err := h.run(ctx, created.ID, "work")
 	if err != nil {
 		t.Fatalf("RunOnce() error = %v", err)
 	}
-	if !result.Applied.Closed {
-		t.Errorf("Applied = %+v, want closed despite the terse message", result.Applied)
+	if !result.Applied.Completed {
+		t.Fatalf("Applied = %+v, want completed despite the terse message", result.Applied)
 	}
-}
-
-func TestE2EConcurrentRunsDoNotCollide(t *testing.T) {
-	h := newHarness(t, shipAgent, nil)
-	ctx := context.Background()
-
-	for _, title := range []string{"First task", "Second task", "Third task", "Fourth task"} {
-		if _, err := h.queue.Create(ctx, wf.CreateInput{Title: title}); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	results, err := h.supervisor().Run(ctx, 2)
-	if err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if len(results) != 4 {
-		t.Fatalf("dispatched %d tasks, want 4", len(results))
-	}
-
-	// Every task closed exactly once, and each got its own worktree and
-	// session — a shared checkout would have shown up as a git failure.
-	ready, err := h.queue.Ready(ctx, 20)
+	task, err := h.queue.Get(ctx, created.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(ready) != 0 {
-		t.Errorf("ready = %+v, want an empty queue", ready)
-	}
-
-	seen := map[string]bool{}
-	for _, r := range results {
-		if seen[r.Session] {
-			t.Errorf("two tasks shared session %s", r.Session)
-		}
-		seen[r.Session] = true
+	if _, err := wf.Close(ctx, h.queue, task, ""); err != nil {
+		t.Errorf("Close() error = %v, want a message composed from the evidence", err)
 	}
 }
 
@@ -519,7 +508,7 @@ func TestE2ERunSurvivesACrashedAgent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := h.supervisor().RunOnce(ctx, "")
+	result, err := h.run(ctx, created.ID, "work")
 	if err != nil {
 		t.Fatalf("RunOnce() error = %v", err)
 	}
@@ -532,14 +521,8 @@ func TestE2ERunSurvivesACrashedAgent(t *testing.T) {
 		t.Fatalf("runs = %+v, want the dead run recorded", rec.Runs)
 	}
 	run := rec.Runs[0]
-	if run.ID != result.Run {
-		t.Errorf("run id = %q, want %q", run.ID, result.Run)
-	}
 	if !run.Done() || run.Outcome != wf.SessionEscalated {
 		t.Errorf("run = %+v, want settled as escalated", run)
-	}
-	if run.Host != h.cfg.Actor {
-		t.Errorf("run host = %q, want %q", run.Host, h.cfg.Actor)
 	}
 
 	// Its session file is on disk and bound, so `wf attach` still works.
@@ -571,18 +554,15 @@ func TestE2ERunSurvivesACrashedAgent(t *testing.T) {
 	if branch == "" {
 		t.Fatal("the workspace binding did not record its branch")
 	}
-	if !workspace.BranchExists(ctx, "", h.repo, branch) {
+	if !workspace.BranchExists(ctx, h.repo, branch) {
 		t.Errorf("recorded branch %q is not a ref in the repo", branch)
-	}
-	if space.Host != h.cfg.Actor {
-		t.Errorf("workspace host = %q, want %q", space.Host, h.cfg.Actor)
 	}
 }
 
-func TestE2ERerunSupersedesWithoutDestroyingTheFirstCheckout(t *testing.T) {
-	// The bug the whole design exists to fix, against real git: a re-run used
-	// to overwrite the one workspace key, and with it the checkout an
-	// escalated run had been deliberately kept on disk to be inspected.
+func TestE2ERerunContinuesInTheKeptCheckout(t *testing.T) {
+	// Against real kata and real git: an escalated run keeps its checkout,
+	// and the re-run a human kicks off continues in it, completes, and
+	// disposes of it — leaving the branch for the task's next workflow.
 	h := newHarness(t, stuckAgent, nil)
 	ctx := context.Background()
 
@@ -591,7 +571,7 @@ func TestE2ERerunSupersedesWithoutDestroyingTheFirstCheckout(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	first, err := h.supervisor().RunOnce(ctx, "")
+	first, err := h.run(ctx, created.ID, "work")
 	if err != nil {
 		t.Fatalf("first RunOnce() error = %v", err)
 	}
@@ -604,66 +584,33 @@ func TestE2ERerunSupersedesWithoutDestroyingTheFirstCheckout(t *testing.T) {
 		t.Fatal("the escalated run recorded no checkout")
 	}
 
-	// Re-dispatch by ref, the way `wf run --ref` does: the task is flagged
-	// for a human, so the ready queue will not offer it up again.
 	h.setAgent(t, shipAgent)
-	second, err := h.supervisor().RunOnce(ctx, created.ID)
+	second, err := h.run(ctx, created.ID, "work")
 	if err != nil {
 		t.Fatalf("second RunOnce() error = %v", err)
 	}
-	if !second.Applied.Closed {
-		t.Fatalf("Applied = %+v, want the re-run to close", second.Applied)
-	}
-	if first.Run == second.Run {
-		t.Fatal("a re-run must be its own run")
+	if !second.Applied.Completed {
+		t.Fatalf("Applied = %+v, want the re-run completed", second.Applied)
 	}
 
 	rec := h.record(t, created.ID)
 	if len(rec.Runs) != 2 {
 		t.Fatalf("runs = %+v, want two", rec.Runs)
 	}
-
 	spaces := rec.Bindings.ByKind(wf.KindWorkspace)
-	if len(spaces) != 2 {
-		t.Fatalf("workspace bindings = %+v, want one per run", spaces)
+	if len(spaces) != 1 || spaces[0].Ref != kept.Ref {
+		t.Fatalf("workspace bindings = %+v, want the one continued checkout %q", spaces, kept.Ref)
 	}
-	byRun := map[string]wf.Binding{}
-	for _, b := range spaces {
-		byRun[b.Via] = b
+	if spaces[0].Via != rec.Runs[1].ID || spaces[0].State != wf.BindingDisposed {
+		t.Errorf("checkout = %+v, want it disposed by the re-run", spaces[0])
 	}
-
-	old, ok := byRun[first.Run]
-	if !ok {
-		t.Fatalf("the first run's checkout is no longer recorded: %+v", spaces)
+	if _, err := os.Stat(kept.Ref); !os.IsNotExist(err) {
+		t.Errorf("a completed run should have removed its checkout: %v", err)
 	}
-	if old.Ref != kept.Ref {
-		t.Errorf("first checkout ref moved from %q to %q", kept.Ref, old.Ref)
-	}
-	if old.State != wf.BindingSuperseded {
-		t.Errorf("first checkout state = %q, want superseded", old.State)
-	}
-	// The evidence itself: still on disk, still on its own branch.
-	if _, err := os.Stat(old.Ref); err != nil {
-		t.Errorf("the escalated run's checkout was destroyed: %v", err)
-	}
-	if branch := old.Get(wf.MetaBranch); branch == "" {
-		t.Error("the first checkout lost its branch")
-	} else if !workspace.BranchExists(ctx, "", h.repo, branch) {
-		t.Errorf("the first run's branch %q was deleted by the re-run", branch)
-	}
-
-	fresh, ok := byRun[second.Run]
-	if !ok {
-		t.Fatalf("the re-run's checkout was not recorded: %+v", spaces)
-	}
-	if fresh.Ref == old.Ref {
-		t.Fatal("the two runs shared a checkout")
-	}
-	if fresh.State != wf.BindingDisposed {
-		t.Errorf("second checkout state = %q, want disposed after a clean close", fresh.State)
-	}
-	if _, err := os.Stat(fresh.Ref); !os.IsNotExist(err) {
-		t.Errorf("a cleanly closed run should have removed its checkout: %v", err)
+	if branch := kept.Get(wf.MetaBranch); branch == "" {
+		t.Error("the checkout recorded no branch")
+	} else if !workspace.BranchExists(ctx, h.repo, branch) {
+		t.Errorf("branch %q was deleted with the checkout", branch)
 	}
 }
 
@@ -686,37 +633,32 @@ func TestE2EBindingsCarryTheirRunID(t *testing.T) {
 	})
 	ctx := context.Background()
 
-	created, err := h.queue.Create(ctx, wf.CreateInput{
-		Title:  "Add the parser",
-		Labels: []string{"plan"},
-	})
+	created, err := h.queue.Create(ctx, wf.CreateInput{Title: "Add the parser"})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	result, err := h.supervisor().RunOnce(ctx, "")
+	result, err := h.run(ctx, created.ID, "plan")
 	if err != nil {
 		t.Fatalf("RunOnce() error = %v", err)
 	}
-	if !result.Applied.Closed {
-		t.Fatalf("Applied = %+v, want closed", result.Applied)
+	if !result.Applied.Completed {
+		t.Fatalf("Applied = %+v, want completed", result.Applied)
 	}
 
 	// Only what is machine-local lands on the ledger: a workspace and a
 	// session. PRs, issues, documents and the repo are shareable and live
 	// only on the tracker, checked below.
 	rec := h.record(t, created.ID)
-	produced := rec.Produced(result.Run)
+	runID := rec.Runs[0].ID
+	produced := rec.Bindings.From(runID)
 	byKind := map[wf.Kind]wf.Binding{}
 	for _, b := range produced {
-		if b.Via != result.Run {
-			t.Fatalf("Produced returned a binding from another run: %+v", b)
-		}
 		byKind[b.Kind] = b
 	}
 	for _, kind := range []wf.Kind{wf.KindWorkspace, wf.KindSession} {
 		if _, ok := byKind[kind]; !ok {
-			t.Errorf("no %s binding tagged with run %s: %+v", kind, result.Run, produced)
+			t.Errorf("no %s binding tagged with run %s: %+v", kind, runID, produced)
 		}
 	}
 	for _, kind := range []wf.Kind{wf.KindPR, wf.KindIssue, wf.KindDoc, wf.KindRepo} {
@@ -758,8 +700,8 @@ func TestE2EBindingsCarryTheirRunID(t *testing.T) {
 	// The document binding names where the file actually ended up, not
 	// where the agent wrote it inside a checkout that is now gone.
 	doc, ok := bindings.Current(wf.KindDoc)
-	if !ok || doc.Get(wf.MetaStore) != "vault" {
-		t.Errorf("LoadBindings doc = %+v, want it marked as living in the vault", doc)
+	if !ok {
+		t.Fatalf("LoadBindings doc = %+v, want the bound document", doc)
 	}
 	if _, err := os.Stat(filepath.Join(h.vault, doc.Ref)); err != nil {
 		t.Errorf("doc binding does not point at the bound document: %v", err)

@@ -18,16 +18,23 @@ import (
 
 // --- fakes ---------------------------------------------------------------
 
+// basicLabel routes a task to the one workflow every test has loaded
+// unless it says otherwise: a run needs a recipe, and nothing here is about
+// which one.
+const basicLabel = "work"
+
 type fakeQueue struct {
 	mu       sync.Mutex
 	tasks    map[string]*wf.Task
-	order    []string
 	comments []string
 	closed   map[string]wf.CloseResult
 	claims   []string
 	releases []string
+	created  []wf.CreateInput
 }
 
+// newQueue holds the given tasks. A task with no labels is routed to the
+// basic workflow, so a test that is not about selection need not say.
 func newQueue(tasks ...wf.Task) *fakeQueue {
 	q := &fakeQueue{tasks: map[string]*wf.Task{}, closed: map[string]wf.CloseResult{}}
 	for i := range tasks {
@@ -35,26 +42,23 @@ func newQueue(tasks ...wf.Task) *fakeQueue {
 		if t.Meta == nil {
 			t.Meta = map[string]any{}
 		}
+		if len(t.Labels) == 0 {
+			t.Labels = []string{basicLabel}
+		}
 		q.tasks[t.ID] = &t
-		q.order = append(q.order, t.ID)
 	}
 	return q
 }
-
-func (q *fakeQueue) Name() string { return "fake" }
 
 func (q *fakeQueue) Ready(_ context.Context, limit int) ([]wf.Task, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	var out []wf.Task
-	for _, id := range q.order {
-		if _, done := q.closed[id]; done {
+	for _, t := range q.tasks {
+		if _, done := q.closed[t.ID]; done || len(out) >= limit {
 			continue
 		}
-		if len(out) >= limit {
-			break
-		}
-		out = append(out, *q.tasks[id])
+		out = append(out, *t)
 	}
 	return out, nil
 }
@@ -91,7 +95,7 @@ func (q *fakeQueue) Comment(_ context.Context, _, body string) error {
 	return nil
 }
 
-func (q *fakeQueue) Close(_ context.Context, ref string, r wf.CloseResult, _ string) error {
+func (q *fakeQueue) Close(_ context.Context, ref string, r wf.CloseResult) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	q.closed[ref] = r
@@ -99,6 +103,9 @@ func (q *fakeQueue) Close(_ context.Context, ref string, r wf.CloseResult, _ str
 }
 
 func (q *fakeQueue) Create(_ context.Context, in wf.CreateInput) (wf.Task, error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.created = append(q.created, in)
 	return wf.Task{ID: "new", ShortID: "new1", Title: in.Title}, nil
 }
 
@@ -120,18 +127,6 @@ func (q *fakeQueue) UnsetMeta(_ context.Context, ref, key string) error {
 	return nil
 }
 
-func (q *fakeQueue) GetMeta(_ context.Context, ref string) (map[string]any, error) {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	out := map[string]any{}
-	if t, ok := q.tasks[ref]; ok {
-		for k, v := range t.Meta {
-			out[k] = v
-		}
-	}
-	return out, nil
-}
-
 func (q *fakeQueue) meta(ref, key string) any {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -142,25 +137,17 @@ type fakeRun struct {
 	transcript string
 	err        error
 	path       string
-	cwd        string
 	release    chan struct{}
-	owner      *fakeRunner
 }
 
 func (r *fakeRun) SessionID() string   { return "sess-" + r.path }
 func (r *fakeRun) SessionPath() string { return r.path }
-func (r *fakeRun) Cwd() string         { return r.cwd }
-func (r *fakeRun) Abort() error        { return nil }
 
 func (r *fakeRun) Wait(context.Context) (wf.RunResult, error) {
 	if r.release != nil {
 		<-r.release
 	}
-	r.owner.finish()
-	if r.err != nil {
-		return wf.RunResult{TranscriptTail: r.transcript}, r.err
-	}
-	return wf.RunResult{OK: true, TranscriptTail: r.transcript}, nil
+	return wf.RunResult{TranscriptTail: r.transcript}, r.err
 }
 
 type fakeRunner struct {
@@ -172,51 +159,31 @@ type fakeRunner struct {
 	models     []string
 	cwds       []string
 	release    chan struct{}
-	concurrent int
-	maxSeen    int
 }
-
-func (r *fakeRunner) Name() string { return "fake" }
 
 func (r *fakeRunner) Start(_ context.Context, opts wf.RunOptions) (wf.RunHandle, error) {
 	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.prompts = append(r.prompts, opts.Prompt)
 	r.profiles = append(r.profiles, opts.ProfileDir)
 	r.models = append(r.models, opts.Model)
 	r.cwds = append(r.cwds, opts.Cwd)
-	r.concurrent++
-	if r.concurrent > r.maxSeen {
-		r.maxSeen = r.concurrent
-	}
-	n := len(r.prompts)
-	r.mu.Unlock()
-
 	return &fakeRun{
 		transcript: r.transcript,
 		err:        r.err,
-		path:       fmt.Sprintf("/sessions/run-%d.jsonl", n),
-		cwd:        opts.Cwd,
+		path:       fmt.Sprintf("/sessions/run-%d.jsonl", len(r.prompts)),
 		release:    r.release,
-		owner:      r,
 	}, nil
-}
-
-func (r *fakeRunner) finish() {
-	r.mu.Lock()
-	r.concurrent--
-	r.mu.Unlock()
 }
 
 type fakeWorkspace struct {
 	path     string
-	repo     string
 	branch   string
 	disposed bool
 	kept     bool
 }
 
 func (w *fakeWorkspace) Path() string   { return w.path }
-func (w *fakeWorkspace) Repo() string   { return w.repo }
 func (w *fakeWorkspace) Branch() string { return w.branch }
 func (w *fakeWorkspace) Keep()          { w.kept = true }
 func (w *fakeWorkspace) Dispose(context.Context) error {
@@ -227,32 +194,49 @@ func (w *fakeWorkspace) Dispose(context.Context) error {
 	return nil
 }
 
+// fakeProvider behaves the way the real one does: a run handed a branch
+// that a kept checkout still holds continues in that checkout; a run
+// handed a branch nothing holds gets a new directory on that branch; a run
+// handed nothing gets a fresh directory and a fresh branch.
 type fakeProvider struct {
 	mu     sync.Mutex
 	runs   int
 	spaces []*fakeWorkspace
+	// hints records the branch each Create was handed.
+	hints []string
 }
 
-func (p *fakeProvider) Name() string { return "fake" }
-
-// Create hands out a distinct checkout per call, the way a real provider
-// does: a second run against one task gets its own directory and its own
-// branch, which is what makes superseding observable.
-func (p *fakeProvider) Create(_ context.Context, task wf.Task) (wf.Workspace, error) {
+func (p *fakeProvider) Create(_ context.Context, task wf.Task, branch string) (wf.Workspace, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.hints = append(p.hints, branch)
 	p.runs++
+	if branch != "" {
+		for _, space := range p.spaces {
+			if space.branch == branch && space.kept && !space.disposed {
+				space.kept = false
+				return space, nil
+			}
+		}
+	}
 	suffix := ""
 	if p.runs > 1 {
 		suffix = fmt.Sprintf("-%d", p.runs)
 	}
-	space := &fakeWorkspace{
-		path:   "/work/" + task.ShortID + suffix,
-		repo:   "/repo",
-		branch: "wf/" + task.ShortID + suffix,
+	space := &fakeWorkspace{path: "/work/" + task.ShortID + suffix, branch: branch}
+	if space.branch == "" {
+		space.branch = "wf/" + task.ShortID + suffix
 	}
 	p.spaces = append(p.spaces, space)
 	return space, nil
+}
+
+// basicFlows is the one recipe a test that is not about workflows needs.
+func basicFlows(t *testing.T) *workflow.Set {
+	t.Helper()
+	return loadFlows(t, map[string]string{
+		"work.md": "---\nname: work\nlabels: " + basicLabel + "\n---\n{{TASK_TITLE}}\n\n{{TASK_BODY}}\n",
+	})
 }
 
 func newSupervisor(q *fakeQueue, r *fakeRunner, p *fakeProvider, flows *workflow.Set) *Supervisor {
@@ -260,7 +244,7 @@ func newSupervisor(q *fakeQueue, r *fakeRunner, p *fakeProvider, flows *workflow
 		Queue:      q,
 		Runner:     r,
 		Workflows:  flows,
-		Config:     &config.Config{Actor: "wf-test", MaxConcurrent: 1, LeaseTTLSeconds: 900},
+		Config:     &config.Config{Actor: "wf-test", LeaseTTLSeconds: 900},
 		Workspaces: func(workflow.Workflow) wf.WorkspaceProvider { return p },
 	}
 }
@@ -280,34 +264,44 @@ func loadFlows(t *testing.T, sources map[string]string) *workflow.Set {
 	return set
 }
 
+// run dispatches one task by ref under whatever its labels select.
+func run(s *Supervisor, ref string) (Result, error) {
+	return s.RunOnce(context.Background(), ref, Dispatch{})
+}
+
 // --- tests ---------------------------------------------------------------
 
-func TestRunOnceClosesOnSuccess(t *testing.T) {
+func TestRunOnceCompletesAndLeavesTheTaskOpen(t *testing.T) {
 	q := newQueue(wf.Task{ID: "01HZ", ShortID: "abc4", Title: "Add the parser"})
 	r := &fakeRunner{transcript: "PR: https://a/1 — Add it\nDONE Shipped\n"}
 	p := &fakeProvider{}
-	s := newSupervisor(q, r, p, nil)
+	s := newSupervisor(q, r, p, basicFlows(t))
 
-	result, err := s.RunOnce(context.Background(), "")
+	result, err := run(s, "01HZ")
 	if err != nil {
 		t.Fatalf("RunOnce() error = %v", err)
 	}
 
-	if !result.Applied.Closed {
-		t.Errorf("Applied = %+v, want closed", result.Applied)
+	if !result.Applied.Completed || result.Applied.Escalated {
+		t.Errorf("Applied = %+v, want completed", result.Applied)
 	}
-	if closed, ok := q.closed["01HZ"]; !ok || len(closed.PRs) != 1 {
-		t.Errorf("task not closed with its PR evidence: %+v", closed)
+	// A run never closes the task: it is one step of a longer unit of
+	// work, and a human closes that. The task waits in review.
+	if _, closed := q.closed["01HZ"]; closed {
+		t.Error("a run must not close the task")
 	}
-	// The lease is always released, and the workspace disposed on success.
+	if q.meta("01HZ", wf.StateKey) != string(wf.StateReview) {
+		t.Errorf("state = %v, want review", q.meta("01HZ", wf.StateKey))
+	}
+	if prs := wf.PRsFromMeta(q.tasks["01HZ"].Meta); len(prs) != 1 {
+		t.Errorf("PR not recorded on the task for a later close: %v", prs)
+	}
+	// The lease is always released, and the workspace disposed on completion.
 	if len(q.releases) != 1 {
 		t.Errorf("releases = %v, want exactly one", q.releases)
 	}
 	if !p.spaces[0].disposed {
-		t.Error("a clean run should dispose its worktree")
-	}
-	if result.Session == "" {
-		t.Error("the run's session must be reported")
+		t.Error("a completed run should dispose its worktree")
 	}
 }
 
@@ -315,18 +309,15 @@ func TestRunOnceEscalatesWithoutDone(t *testing.T) {
 	q := newQueue(wf.Task{ID: "01HZ", ShortID: "abc4", Title: "Add the parser"})
 	r := &fakeRunner{transcript: "I got confused and stopped.\n"}
 	p := &fakeProvider{}
-	s := newSupervisor(q, r, p, nil)
+	s := newSupervisor(q, r, p, basicFlows(t))
 
-	result, err := s.RunOnce(context.Background(), "")
+	result, err := run(s, "01HZ")
 	if err != nil {
 		t.Fatalf("RunOnce() error = %v", err)
 	}
 
-	if !result.Applied.Escalated || result.Applied.Closed {
+	if !result.Applied.Escalated || result.Applied.Completed {
 		t.Errorf("Applied = %+v, want escalated", result.Applied)
-	}
-	if _, closed := q.closed["01HZ"]; closed {
-		t.Error("an incomplete run must not close the task")
 	}
 	if q.meta("01HZ", wf.AttentionKey) != "needs-human" {
 		t.Error("escalated task must be flagged for a human")
@@ -343,9 +334,9 @@ func TestRunOnceEscalatesWithoutDone(t *testing.T) {
 func TestRunOnceEscalatesOnAgentFailure(t *testing.T) {
 	q := newQueue(wf.Task{ID: "01HZ", ShortID: "abc4", Title: "Add the parser"})
 	r := &fakeRunner{transcript: "boom\n", err: errors.New("process died")}
-	s := newSupervisor(q, r, &fakeProvider{}, nil)
+	s := newSupervisor(q, r, &fakeProvider{}, basicFlows(t))
 
-	result, err := s.RunOnce(context.Background(), "")
+	result, err := run(s, "01HZ")
 	if err != nil {
 		t.Fatalf("RunOnce() error = %v", err)
 	}
@@ -361,13 +352,13 @@ func TestSessionIsBoundBeforeTheRunFinishes(t *testing.T) {
 	q := newQueue(wf.Task{ID: "01HZ", ShortID: "abc4", Title: "Slow work"})
 	release := make(chan struct{})
 	r := &fakeRunner{transcript: "DONE\n", release: release}
-	s := newSupervisor(q, r, &fakeProvider{}, nil)
+	s := newSupervisor(q, r, &fakeProvider{}, basicFlows(t))
 	ledger := withLedger(t, s)
 
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		if _, err := s.RunOnce(context.Background(), ""); err != nil {
+		if _, err := run(s, "01HZ"); err != nil {
 			t.Errorf("RunOnce() error = %v", err)
 		}
 	}()
@@ -397,12 +388,12 @@ func TestLeaseHeldDuringRunAndReleasedAfter(t *testing.T) {
 	q := newQueue(wf.Task{ID: "01HZ", ShortID: "abc4", Title: "Work"})
 	release := make(chan struct{})
 	r := &fakeRunner{transcript: "DONE\n", release: release}
-	s := newSupervisor(q, r, &fakeProvider{}, nil)
+	s := newSupervisor(q, r, &fakeProvider{}, basicFlows(t))
 
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_, _ = s.RunOnce(context.Background(), "")
+		_, _ = run(s, "01HZ")
 	}()
 
 	deadline := time.After(2 * time.Second)
@@ -416,34 +407,15 @@ func TestLeaseHeldDuringRunAndReleasedAfter(t *testing.T) {
 		case <-time.After(5 * time.Millisecond):
 		}
 	}
+	if q.meta("01HZ", wf.StateKey) != string(wf.StateRunning) {
+		t.Errorf("state during the run = %v, want running", q.meta("01HZ", wf.StateKey))
+	}
 
 	close(release)
 	<-done
 
 	if _, held := wf.ParseLease(q.meta("01HZ", wf.LeaseKey)); held {
 		t.Error("the lease must be gone once the run settles")
-	}
-}
-
-func TestRunOnceSkipsLeasedTasks(t *testing.T) {
-	lease := wf.NewLease("someone-else", 15*time.Minute, time.Now())
-	encoded, err := lease.Encode()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	held := wf.Task{ID: "01A", ShortID: "aaa1", Title: "Taken", Meta: map[string]any{wf.LeaseKey: encoded}}
-	free := wf.Task{ID: "01B", ShortID: "bbb2", Title: "Available"}
-	q := newQueue(held, free)
-	r := &fakeRunner{transcript: "DONE\n"}
-	s := newSupervisor(q, r, &fakeProvider{}, nil)
-
-	result, err := s.RunOnce(context.Background(), "")
-	if err != nil {
-		t.Fatalf("RunOnce() error = %v", err)
-	}
-	if result.Task.ID != "01B" {
-		t.Errorf("dispatched %s, want the unleased task", result.Task.ID)
 	}
 }
 
@@ -455,10 +427,10 @@ func TestRunOnceReclaimsStaleLease(t *testing.T) {
 	}
 
 	q := newQueue(wf.Task{ID: "01HZ", ShortID: "abc4", Title: "Abandoned", Meta: map[string]any{wf.LeaseKey: encoded}})
-	s := newSupervisor(q, &fakeRunner{transcript: "DONE\n"}, &fakeProvider{}, nil)
+	s := newSupervisor(q, &fakeRunner{transcript: "DONE\n"}, &fakeProvider{}, basicFlows(t))
 
-	// A killed worker must not hold its task forever.
-	if _, err := s.RunOnce(context.Background(), ""); err != nil {
+	// A killed wf must not hold its task forever.
+	if _, err := run(s, "01HZ"); err != nil {
 		t.Fatalf("RunOnce() error = %v, want the stale lease reclaimed", err)
 	}
 }
@@ -467,17 +439,48 @@ func TestRunOnceRefusesALeasedRef(t *testing.T) {
 	lease := wf.NewLease("someone-else", 15*time.Minute, time.Now())
 	encoded, _ := lease.Encode()
 	q := newQueue(wf.Task{ID: "01HZ", ShortID: "abc4", Title: "Taken", Meta: map[string]any{wf.LeaseKey: encoded}})
-	s := newSupervisor(q, &fakeRunner{transcript: "DONE\n"}, &fakeProvider{}, nil)
+	r := &fakeRunner{transcript: "DONE\n"}
+	s := newSupervisor(q, r, &fakeProvider{}, basicFlows(t))
 
-	if _, err := s.RunOnce(context.Background(), "01HZ"); err == nil {
+	if _, err := run(s, "01HZ"); err == nil {
 		t.Error("targeting a live-leased task must fail rather than steal it")
+	}
+	if len(r.prompts) != 0 {
+		t.Error("no agent should have been started")
 	}
 }
 
-func TestRunOnceNothingReady(t *testing.T) {
-	s := newSupervisor(newQueue(), &fakeRunner{}, &fakeProvider{}, nil)
-	if _, err := s.RunOnce(context.Background(), ""); !errors.Is(err, ErrNothingReady) {
-		t.Errorf("RunOnce() error = %v, want ErrNothingReady", err)
+func TestRunOnceRequiresARef(t *testing.T) {
+	// Every run is a human's choice of task; there is no queue to pick from.
+	r := &fakeRunner{transcript: "DONE\n"}
+	s := newSupervisor(newQueue(wf.Task{ID: "01HZ", ShortID: "abc4", Title: "Work"}), r, &fakeProvider{}, basicFlows(t))
+	if _, err := run(s, ""); err == nil {
+		t.Fatal("RunOnce() with no ref must fail")
+	}
+	if len(r.prompts) != 0 {
+		t.Error("no agent should have been started")
+	}
+}
+
+func TestRunOnceRunsATaskAwaitingAHuman(t *testing.T) {
+	// A task flagged needs-human is waiting for exactly this: a human
+	// deciding to run it again. The flag clears once the run starts.
+	q := newQueue(wf.Task{
+		ID: "01HZ", ShortID: "abc4", Title: "Was stuck",
+		Meta: map[string]any{wf.AttentionKey: "needs-human", wf.StateKey: string(wf.StateNeedsHuman)},
+	})
+	r := &fakeRunner{transcript: "PR: https://a/1 — x\nDONE Landed it.\n"}
+	s := newSupervisor(q, r, &fakeProvider{}, basicFlows(t))
+
+	result, err := run(s, "01HZ")
+	if err != nil {
+		t.Fatalf("RunOnce() error = %v", err)
+	}
+	if !result.Applied.Completed {
+		t.Errorf("Applied = %+v, want completed", result.Applied)
+	}
+	if attention := q.meta("01HZ", wf.AttentionKey); attention != nil {
+		t.Errorf("attention = %v, want cleared by a completed run", attention)
 	}
 }
 
@@ -487,14 +490,14 @@ func TestWorkflowSelectionDrivesPromptAndProfile(t *testing.T) {
 	})
 
 	q := newQueue(wf.Task{ID: "01HZ", ShortID: "abc4", Title: "Kata internals", Labels: []string{"research"}})
-	r := &fakeRunner{transcript: "DONE\n"}
+	r := &fakeRunner{transcript: "DOC: notes.md — Notes\nDONE\n"}
 	p := &fakeProvider{}
 	s := newSupervisor(q, r, p, flows)
 	s.Config.Profiles = map[string]string{"writer": "/profiles/writer"}
 	s.Config.DefaultModel = "claude-sonnet-5"
 	s.Config.Vault = "/vault"
 
-	if _, err := s.RunOnce(context.Background(), ""); err != nil {
+	if _, err := run(s, "01HZ"); err != nil {
 		t.Fatalf("RunOnce() error = %v", err)
 	}
 
@@ -533,7 +536,7 @@ func TestWorkflowWithNoModelFallsBackToConfigDefault(t *testing.T) {
 	s.Config.DefaultModel = "claude-sonnet-5"
 	s.Config.Vault = "/vault"
 
-	if _, err := s.RunOnce(context.Background(), ""); err != nil {
+	if _, err := run(s, "01HZ"); err != nil {
 		t.Fatalf("RunOnce() error = %v", err)
 	}
 	if r.models[0] != "claude-sonnet-5" {
@@ -541,7 +544,10 @@ func TestWorkflowWithNoModelFallsBackToConfigDefault(t *testing.T) {
 	}
 }
 
-func TestUnknownWorkflowEscalatesRatherThanRunning(t *testing.T) {
+func TestUnknownWorkflowFailsWithoutRunning(t *testing.T) {
+	// A human is at the terminal for every run, so a workflow that is not
+	// loaded is their error to see, not the task's to carry: no comment,
+	// no needs-human flag, no default recipe run in its place.
 	flows := loadFlows(t, map[string]string{
 		"research.md": "---\nname: research\nlabels: research\n---\nResearch {{TASK_TITLE}}\n",
 	})
@@ -553,127 +559,56 @@ func TestUnknownWorkflowEscalatesRatherThanRunning(t *testing.T) {
 	r := &fakeRunner{transcript: "DONE\n"}
 	s := newSupervisor(q, r, &fakeProvider{}, flows)
 
-	if _, err := s.RunOnce(context.Background(), ""); err == nil {
-		t.Error("a task naming an unknown workflow must not run under a default")
+	if _, err := run(s, "01HZ"); err == nil || !strings.Contains(err.Error(), "does-not-exist") {
+		t.Errorf("RunOnce() error = %v, want it to name the missing workflow", err)
 	}
 	if len(r.prompts) != 0 {
 		t.Error("no agent should have been started")
 	}
-	if q.meta("01HZ", wf.AttentionKey) != "needs-human" {
-		t.Error("the task should be flagged for a human")
+	if attention := q.meta("01HZ", wf.AttentionKey); attention != nil {
+		t.Errorf("attention = %v, want the task left alone", attention)
+	}
+	if len(q.comments) != 0 {
+		t.Errorf("comments = %v, want none", q.comments)
 	}
 }
 
-func TestRunRespectsConcurrencyCap(t *testing.T) {
-	var tasks []wf.Task
-	for i := 0; i < 6; i++ {
-		tasks = append(tasks, wf.Task{
-			ID:      fmt.Sprintf("id-%d", i),
-			ShortID: fmt.Sprintf("t%d", i),
-			Title:   fmt.Sprintf("Task %d", i),
-		})
-	}
+func TestNoSelectableWorkflowFails(t *testing.T) {
+	// Nothing routes this task and nobody named a recipe: refuse, and say
+	// how to fix it, rather than run some default quietly.
+	q := newQueue(wf.Task{ID: "01HZ", ShortID: "abc4", Title: "Unrouted", Labels: []string{"nothing-routes-this"}})
+	r := &fakeRunner{transcript: "DONE\n"}
+	s := newSupervisor(q, r, &fakeProvider{}, basicFlows(t))
 
-	q := newQueue(tasks...)
-	r := &fakeRunner{transcript: "PR: https://a/1 — Did it\nDONE Landed the change and verified it.\n"}
-	s := newSupervisor(q, r, &fakeProvider{}, nil)
-
-	results, err := s.Run(context.Background(), 2)
-	if err != nil {
-		t.Fatalf("Run() error = %v", err)
+	_, err := run(s, "01HZ")
+	if err == nil || !strings.Contains(err.Error(), "--workflow") {
+		t.Errorf("RunOnce() error = %v, want a hint to pass --workflow", err)
 	}
-	if len(results) != 6 {
-		t.Errorf("dispatched %d tasks, want 6", len(results))
-	}
-	if r.maxSeen > 2 {
-		t.Errorf("ran %d agents at once, want at most 2", r.maxSeen)
-	}
-	for _, task := range tasks {
-		if _, ok := q.closed[task.ID]; !ok {
-			t.Errorf("%s was never closed", task.ShortID)
-		}
+	if len(r.prompts) != 0 {
+		t.Error("no agent should have been started")
 	}
 }
 
-func TestRunStopsWhenQueueDrains(t *testing.T) {
-	q := newQueue(wf.Task{ID: "01HZ", ShortID: "abc4", Title: "Only task"})
-	s := newSupervisor(q, &fakeRunner{transcript: "PR: https://a/1 — x\nDONE Landed it.\n"}, &fakeProvider{}, nil)
+func TestALaterRunIsHandedTheEarlierRunsBranch(t *testing.T) {
+	// A task runs under several workflows over its life, and the fix step
+	// has to land on the branch the earlier step pushed a PR from.
+	q := newQueue(wf.Task{ID: "01HZ", ShortID: "abc4", Title: "Fix the bug"})
+	r := &fakeRunner{transcript: "PR: https://a/1 — The fix\nDONE Opened the PR.\n"}
+	p := &fakeProvider{}
+	s := newSupervisor(q, r, p, basicFlows(t))
+	withLedger(t, s)
 
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		if _, err := s.Run(context.Background(), 2); err != nil {
-			t.Errorf("Run() error = %v", err)
-		}
-	}()
-
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("Run() did not return once the queue drained")
+	if _, err := run(s, "01HZ"); err != nil {
+		t.Fatalf("first RunOnce() error = %v", err)
 	}
-}
-
-func TestRunDoesNotRetryEscalatedTasks(t *testing.T) {
-	// An escalated task stays open and its lease is released, so without an
-	// attempted-set the drain loop picks it straight back up — forever.
-	q := newQueue(wf.Task{ID: "01HZ", ShortID: "abc4", Title: "Stuck work"})
-	r := &fakeRunner{transcript: "I got confused.\n"}
-	s := newSupervisor(q, r, &fakeProvider{}, nil)
-
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		if _, err := s.Run(context.Background(), 1); err != nil {
-			t.Errorf("Run() error = %v", err)
-		}
-	}()
-
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("Run() spun on an escalated task instead of moving on")
+	if _, err := run(s, "01HZ"); err != nil {
+		t.Fatalf("second RunOnce() error = %v", err)
 	}
 
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if len(r.prompts) != 1 {
-		t.Errorf("the task was dispatched %d times, want once", len(r.prompts))
+	if len(p.hints) != 2 || p.hints[0] != "" {
+		t.Fatalf("branch hints = %v, want none for the first run", p.hints)
 	}
-}
-
-func TestRunSkipsTasksAwaitingAHuman(t *testing.T) {
-	// A task already flagged for a human is not ours to retry.
-	q := newQueue(wf.Task{
-		ID: "01HZ", ShortID: "abc4", Title: "Waiting on a person",
-		Meta: map[string]any{wf.AttentionKey: "needs-human"},
-	})
-	r := &fakeRunner{transcript: "PR: https://a/1 — x\nDONE Landed it.\n"}
-	s := newSupervisor(q, r, &fakeProvider{}, nil)
-
-	results, err := s.Run(context.Background(), 1)
-	if err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if len(results) != 0 || len(r.prompts) != 0 {
-		t.Errorf("dispatched a task awaiting a human: %d results, %d runs", len(results), len(r.prompts))
-	}
-}
-
-func TestPickPrefersHigherPriority(t *testing.T) {
-	// kata returns ready newest-first; which ready task to run is wf's call.
-	q := newQueue(
-		wf.Task{ID: "low", ShortID: "low1", Title: "Low priority", Priority: 4},
-		wf.Task{ID: "high", ShortID: "hi1", Title: "High priority", Priority: 0},
-		wf.Task{ID: "mid", ShortID: "mid1", Title: "Middling", Priority: 2},
-	)
-	s := newSupervisor(q, &fakeRunner{transcript: "PR: https://a/1 — x\nDONE Landed it.\n"}, &fakeProvider{}, nil)
-
-	result, err := s.RunOnce(context.Background(), "")
-	if err != nil {
-		t.Fatalf("RunOnce() error = %v", err)
-	}
-	if result.Task.ID != "high" {
-		t.Errorf("dispatched %q, want the priority-0 task", result.Task.ID)
+	if p.hints[1] != p.spaces[0].branch {
+		t.Errorf("second run was handed %q, want the first run's branch %q", p.hints[1], p.spaces[0].branch)
 	}
 }

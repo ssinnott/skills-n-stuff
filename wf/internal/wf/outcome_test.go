@@ -104,31 +104,29 @@ func TestIsComplete(t *testing.T) {
 	}
 }
 
-func TestToCloseResult(t *testing.T) {
-	outcomes := ParseOutcomes(
-		"PR: https://a/1 — First\n" +
-			"PR: https://a/2 — Second\n" +
-			"DOC: notes/plan.md — Plan\n" +
-			"DONE Wrote it up — review: notes/plan.md\n",
-	)
-	got := ToCloseResult(outcomes)
-
-	if got.Message != "Wrote it up" {
-		t.Errorf("Message = %q, want %q", got.Message, "Wrote it up")
+func TestHasOutput(t *testing.T) {
+	cases := map[string]bool{
+		"PR: https://a/1 — First\nDONE\n":            true,
+		"DOC: notes/plan.md — Plan\nDONE\n":          true,
+		"ISSUE: https://a/i1 — Filed\nDONE\n":        true,
+		"DONE Wrote it up — review: notes/plan.md\n": true,
+		"DONE\n":                             false,
+		"REPO: /src/app\nNEXT: more\nDONE\n": false,
 	}
-	if want := []string{"https://a/1", "https://a/2"}; !reflect.DeepEqual(got.PRs, want) {
-		t.Errorf("PRs = %v, want %v", got.PRs, want)
-	}
-	// A document named by both DOC and DONE is one artifact, not two.
-	if want := []string{"notes/plan.md"}; !reflect.DeepEqual(got.Docs, want) {
-		t.Errorf("Docs = %v, want %v", got.Docs, want)
+	for transcript, want := range cases {
+		if got := HasOutput(ParseOutcomes(transcript)); got != want {
+			t.Errorf("HasOutput(%q) = %v, want %v", transcript, got, want)
+		}
 	}
 }
 
-func TestToCloseResultDefaultMessage(t *testing.T) {
-	got := ToCloseResult(ParseOutcomes("DONE\n"))
-	if got.Message == "" {
-		t.Error("close message must never be empty — kata requires one")
+func TestDocPathsFoldsDocAndReview(t *testing.T) {
+	outcomes := ParseOutcomes(
+		"DOC: notes/plan.md — Plan\nDOC: notes/other.md — Other\nDONE Wrote it up — review: notes/plan.md\n",
+	)
+	// A document named by both DOC and DONE is one artifact, not two.
+	if want := []string{"notes/plan.md", "notes/other.md"}; !reflect.DeepEqual(DocPaths(outcomes), want) {
+		t.Errorf("DocPaths = %v, want %v", DocPaths(outcomes), want)
 	}
 }
 
