@@ -7,10 +7,7 @@ import (
 )
 
 // Binding a pi session to a task: written at spawn, before the agent has
-// produced anything, so a crashed or hung run is still attachable. The
-// write lives in the supervisor (recordSession, in
-// internal/supervisor/ledger.go) since a session is machine-local. This
-// file only carries the shape and what a caller does with one.
+// produced anything, so a crashed or hung run is still attachable. The write itself lives in the supervisor, since a session is machine-local.
 
 // SessionOutcome is how a run settled.
 type SessionOutcome string
@@ -32,16 +29,12 @@ type SessionBinding struct {
 	Outcome SessionOutcome `json:"outcome,omitempty"`
 }
 
-// AttachArgs is the argv for reattaching to a session binding. The file
-// path is used rather than the bare id because pi organizes sessions by
-// working directory, and one task can have run in several worktrees.
+// AttachArgs is the argv for reattaching to a session binding, by file path rather than bare id since pi organizes sessions by working directory.
 func AttachArgs(session Binding) []string {
 	return []string{"--session", session.Ref}
 }
 
-// SeedPreamble opens a worker's prompt. The agent is told its ref so it can
-// read context and comment progress itself — but wf keeps claim, close and
-// lease transitions, so there is exactly one writer for the lifecycle.
+// SeedPreamble opens a worker's prompt: the agent may read and comment, but wf alone owns claim, close and lease transitions.
 func SeedPreamble(ref, title string) string {
 	return strings.Join([]string{
 		fmt.Sprintf("You are working on tracker issue %s: %s", ref, title),

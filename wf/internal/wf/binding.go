@@ -1,12 +1,6 @@
 package wf
 
-// The task object: an identity, a history of runs, and the typed bindings
-// those runs produced. See DESIGN-task.md.
-//
-// Two rules shape the vocabulary: names describe roles, never products (a
-// session's runner is "pi" as a *value*, not a key); and every kind is
-// plural, since a re-run that overwrote its predecessor's checkout would
-// destroy the evidence an escalation was kept for.
+// The task object: an identity, a history of runs, and the typed bindings those runs produced. See DESIGN-task.md.
 
 import "time"
 
@@ -18,24 +12,19 @@ const (
 	KindRepo Kind = "repo"
 	// KindWorkspace is an isolated checkout — a git worktree today.
 	KindWorkspace Kind = "workspace"
-	// KindSession is one agent session, bound at spawn so a crashed or
-	// hung run is still attachable.
+	// KindSession is one agent session, bound at spawn for attach-ability.
 	KindSession Kind = "session"
 	// KindPR is a pull request the work opened.
 	KindPR Kind = "pr"
 	// KindDoc is a document the work produced.
 	KindDoc Kind = "doc"
-	// KindIssue is an issue the work *filed* — a record of work moving
-	// elsewhere, which is why it never counts as this task's evidence.
+	// KindIssue is an issue the work *filed*; it never counts as this task's evidence.
 	KindIssue Kind = "issue"
 	// KindTask is another task: a NEXT follow-on, or its parent.
 	KindTask Kind = "task"
 )
 
-// MachineLocal reports whether a kind's Ref only resolves on the host that
-// recorded it: a worktree path or session file, not a PR URL or tracker id.
-// Bindings of these kinds carry Host, so two hosts against one queue do not
-// overwrite each other's answer to "where is the checkout."
+// MachineLocal reports whether a kind's Ref only resolves on the recording host.
 func (k Kind) MachineLocal() bool {
 	switch k {
 	case KindWorkspace, KindSession:
@@ -44,12 +33,7 @@ func (k Kind) MachineLocal() bool {
 	return false
 }
 
-// MachineLocal reports whether this particular binding's Ref only resolves
-// on the host that recorded it. Kind alone gets documents wrong: a bound
-// document (MetaStore set) is vault-relative and portable, while one a
-// workflow did not bind stays wherever the agent wrote it, usually a
-// worktree disposed moments later. Prefer this over Kind.MachineLocal when
-// you hold a whole binding.
+// MachineLocal reports whether this binding's Ref only resolves on this host; prefer it over Kind.MachineLocal since a bound document is vault-relative.
 func (b Binding) MachineLocal() bool {
 	if b.Kind == KindDoc {
 		return b.Get(MetaStore) == ""
@@ -57,9 +41,7 @@ func (b Binding) MachineLocal() bool {
 	return b.Kind.MachineLocal()
 }
 
-// BindingState is one binding's own lifecycle — never the task's. A task's
-// progress is WorkState (see task.go); these say whether the thing a
-// binding points at is still there and still current.
+// BindingState is one binding's own lifecycle — never the task's (WorkState).
 type BindingState string
 
 const (
@@ -67,58 +49,45 @@ const (
 	BindingUnknown BindingState = ""
 	// BindingLive means the referent exists and is current.
 	BindingLive BindingState = "live"
-	// BindingDisposed means it was deliberately torn down (a worktree
-	// removed after a clean close).
+	// BindingDisposed means it was deliberately torn down.
 	BindingDisposed BindingState = "disposed"
-	// BindingSuperseded means a later run replaced it. The referent may
-	// still exist; it is simply no longer the one to look at.
+	// BindingSuperseded means a later run replaced it; the referent may still exist.
 	BindingSuperseded BindingState = "superseded"
 	// BindingMerged applies to a pull request that landed.
 	BindingMerged BindingState = "merged"
 	// BindingClosed applies to a PR or issue closed without landing.
 	BindingClosed BindingState = "closed"
-	// BindingMissing means the referent was expected and is gone — a
-	// worktree deleted behind wf's back. Distinct from Disposed, which wf
-	// did on purpose.
+	// BindingMissing means the referent is unexpectedly gone, unlike Disposed.
 	BindingMissing BindingState = "missing"
 )
 
-// Metadata keys carried in a Binding's Meta map. Kind-specific, flat, and
-// all strings: a binding is a reference plus a lifecycle, never content.
+// Metadata keys carried in a Binding's Meta map: kind-specific, flat strings.
 const (
-	// MetaBranch is the branch a workspace checked out. Recorded by the
-	// run that created it rather than derived from the task's title,
-	// which is a field a human is free to edit.
+	// MetaBranch is the branch a workspace checked out, recorded by the run.
 	MetaBranch = "branch"
 	// MetaBase is the branch a workspace's diff is taken against.
 	MetaBase = "base"
 	// MetaRepo is the repository a workspace or PR belongs to.
 	MetaRepo = "repo"
-	// MetaRunner is which agent ran a session — "pi" is a value here.
+	// MetaRunner is which agent ran a session.
 	MetaRunner = "runner"
-	// MetaSessionID is a session's own id, for display and the runner's
-	// session browser. Ref holds the path, which is what reattaching uses.
+	// MetaSessionID is a session's own id, for display; Ref holds the path.
 	MetaSessionID = "session_id"
 	// MetaCwd is the directory a session ran in.
 	MetaCwd = "cwd"
-	// MetaStore is where a document lives — "vault" is a value here.
+	// MetaStore is where a document lives.
 	MetaStore = "store"
-	// StoreVault is MetaStore's value for a document in the Obsidian vault.
-	// A constant because three packages now compare against it, and a typo
-	// in any of them would silently mean "not in the vault".
+	// StoreVault is MetaStore's value for a vault document. A constant because three packages compare against it, and a typo would silently mean "not in the vault".
 	StoreVault = "vault"
 	// MetaPort is the port a review pane bound.
 	MetaPort = "port"
 	// MetaPID is the process id of a review pane.
 	MetaPID = "pid"
-	// MetaRelation is how a task binding relates: RelationParent or
-	// RelationNext.
+	// MetaRelation is how a task binding relates: RelationParent or RelationNext.
 	MetaRelation = "relation"
 )
 
-// The values MetaRelation takes on a KindTask binding. Named rather than
-// spelled out at each call site because both ends of a NEXT edge have to
-// agree on the word, and they are written by different code paths.
+// The values MetaRelation takes on a KindTask binding.
 const (
 	// RelationNext is follow-on work this task spawned.
 	RelationNext = "next"
@@ -129,25 +98,19 @@ const (
 // Binding is one typed, stateful reference hanging off a task.
 type Binding struct {
 	Kind Kind `json:"kind"`
-	// Ref is the thing itself: a path, a URL, a tracker id. Unique within
-	// a kind for a given task.
+	// Ref is the thing itself, unique within a kind for a given task.
 	Ref string `json:"ref"`
-	// Label is human-facing text — a PR title, a document title.
+	// Label is human-facing text.
 	Label string `json:"label,omitempty"`
 	// State is the referent's lifecycle, refreshed rather than assumed.
 	State BindingState `json:"state,omitempty"`
 	// At is when this binding was recorded.
 	At time.Time `json:"at"`
-	// Via is the id of the run that produced it. Empty means the task's
-	// own — an adopted PR, a note bound by hand — which is the honest
-	// record rather than a missing one.
+	// Via is the id of the run that produced it; empty means the task's own.
 	Via string `json:"via,omitempty"`
-	// Host is the actor that owns Ref, set only when the referent is
-	// machine-local. A worktree path is meaningless on another machine,
-	// and saying so beats handing over a path that will not resolve.
+	// Host is the actor that owns Ref, set only when the referent is machine-local.
 	Host string `json:"host,omitempty"`
-	// Meta carries kind-specific detail. Flat and stringly-typed on
-	// purpose: this is a reference, not a document.
+	// Meta carries kind-specific detail, flat and stringly-typed.
 	Meta map[string]string `json:"meta,omitempty"`
 }
 
@@ -159,14 +122,7 @@ func (b Binding) Get(key string) string {
 	return b.Meta[key]
 }
 
-// StateLabel is the word a human should see for this binding's state: the
-// vocabulary is shared across kinds but the natural word is not (a live PR
-// reads as "open", not "live"). Centralized here so `wf show`, the Obsidian
-// task block and `--json` consumers don't each pick their own word and
-// drift.
-//
-// An empty result means nothing is known; callers should render no state
-// rather than inventing one.
+// StateLabel is the human word for this state (a live PR reads as "open").
 func (b Binding) StateLabel() string {
 	if b.State == BindingUnknown {
 		return ""
@@ -180,8 +136,7 @@ func (b Binding) StateLabel() string {
 	return string(b.State)
 }
 
-// IsLive reports whether the referent is current. Unknown counts as live:
-// a binding nothing has checked yet should not be hidden, only unproven.
+// IsLive reports whether the referent is current. Unknown counts as live.
 func (b Binding) IsLive() bool {
 	return b.State == BindingLive || b.State == BindingUnknown
 }
@@ -211,9 +166,7 @@ func (bs Bindings) Live(k Kind) Bindings {
 	return out
 }
 
-// Current returns the newest live binding of a kind — the one a caller
-// asking for "the worktree" or "the session" means.
-//
+// Current returns the newest live binding of a kind.
 // Ties go to the last recorded: bindings recovered from flat metadata share
 // a zero timestamp, so every one of them ties and Current returns whichever
 // was read last. That is right for a worktree (a re-run's checkout is the
@@ -254,9 +207,7 @@ func (bs Bindings) From(runID string) Bindings {
 	return out
 }
 
-// Upsert adds a binding, replacing any existing one with the same kind and
-// ref. Recording the same PR twice is one binding with a refreshed state,
-// not two rows.
+// Upsert adds a binding, replacing any existing one with the same kind and ref.
 func (bs Bindings) Upsert(b Binding) Bindings {
 	for i, existing := range bs {
 		if existing.Kind == b.Kind && existing.Ref == b.Ref {
@@ -268,9 +219,7 @@ func (bs Bindings) Upsert(b Binding) Bindings {
 }
 
 // Supersede marks every live binding of a kind as replaced, except those
-// produced by the named run. This is how a second run takes over a kind
-// without destroying what the first one left: the old checkout stays on
-// disk and stays findable, it just stops being current.
+// produced by the named run.
 func (bs Bindings) Supersede(k Kind, exceptRun string) Bindings {
 	for i, b := range bs {
 		if b.Kind != k || !b.IsLive() {
@@ -284,15 +233,10 @@ func (bs Bindings) Supersede(k Kind, exceptRun string) Bindings {
 	return bs
 }
 
-// Run is one dispatch of a workflow against a task. Runs are the middle
-// layer: a task holds runs, a run holds the bindings it produced, and that
-// edge is what makes a workflow's output bind back to the task rather than
-// into a flat pile.
+// Run is one dispatch of a workflow against a task. See DESIGN-task.md.
 type Run struct {
 	ID string `json:"id"`
-	// Workflow, Profile and Model are how this run was dispatched. They
-	// live on the run rather than the task because a task re-run under a
-	// different recipe or model has a history, not an overwritten field.
+	// Workflow, Profile and Model are how this run was dispatched.
 	Workflow string `json:"workflow,omitempty"`
 	Profile  string `json:"profile,omitempty"`
 	Model    string `json:"model,omitempty"`
@@ -307,13 +251,9 @@ type Run struct {
 // Done reports whether the run has settled.
 func (r Run) Done() bool { return r.Ended != nil }
 
-// Record is wf's own ledger record: runs and machine-local bindings, keyed
-// by the tracker's own id (kata mints the identity; wf mints nothing — see
-// DESIGN-slim.md). The tracker still owns work state; a Record never
-// mirrors it.
+// Record is wf's own ledger record: runs and machine-local bindings, keyed by the tracker's own id. See DESIGN-slim.md. It never mirrors work state.
 type Record struct {
-	// ID is the tracker's own id (a ULID on kata). The file this record
-	// lives in is named after it.
+	// ID is the tracker's own id (a ULID on kata).
 	ID       string    `json:"id"`
 	Created  time.Time `json:"created"`
 	Updated  time.Time `json:"updated,omitempty"`

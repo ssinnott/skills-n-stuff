@@ -1,25 +1,7 @@
 // Package store is wf's local task ledger: a per-host cache of runs and
-// machine-local bindings, keyed by the tracker's own id.
-//
-// A binding points at something that lives on one machine — a checkout, a
-// session file, a browser origin — and is exactly as durable as the thing it
-// points at. That is why the ledger is local and the tracker is not: a
-// worktree path is meaningless on another host, so co-locating the record
-// with the artifact is correctness rather than convenience. The tracker keeps
-// title, priority and open/closed; wf keeps provenance and everything
-// machine-local. There is one id space — kata's ULID — and a record's ID is
-// always a real tracker row's id. See DESIGN-slim.md.
-//
-// This is review.json grown up. That file is already a local per-ref binding
-// ledger written beside wf's config, and it set the tolerance this package
-// inherits: a missing ledger is an empty store, never an error, because a
-// lost ledger costs history and convenience but never work. Nothing in the
-// run loop may take a lifecycle decision from it alone.
-//
-// The interface is narrow on purpose. DESIGN-task.md defers SQLite as a
-// derived index rather than as the record, and that deferral is only real if
-// swapping the implementation costs nothing at the call sites — so callers
-// depend on Store, never on FileStore.
+// machine-local bindings, keyed by the tracker's own id. A missing ledger
+// reads as an empty store, never an error. Callers depend on Store, never on
+// FileStore. See DESIGN-slim.md.
 package store
 
 import (
@@ -30,56 +12,27 @@ import (
 	"github.com/ssinnott/skills-n-stuff/wf/internal/wf"
 )
 
-// Store is the whole of what a ledger has to do. Deliberately four verbs and
-// no transaction: anything wider would leak the file layout into callers and
-// make the SQLite escape hatch a rewrite instead of a swap.
+// Store is the whole of what a ledger has to do: four verbs, no transaction.
 type Store interface {
-	// Load returns one record by the tracker's id. A record that is not
-	// there is a *NotFoundError — an answer, since work with no ledger
-	// entry is ordinary — rather than a failure.
+	// Load returns one record by the tracker's id; a record not there is a *NotFoundError.
 	Load(id string) (wf.Record, error)
-	// Save writes a record whole, stamping Updated. The id is the
-	// caller's; this package never mints one.
+	// Save writes a record whole, stamping Updated; the id is the caller's.
 	Save(rec wf.Record) error
-	// Update is read-modify-write on one record, which Load plus Save
-	// cannot be: the gap between them is a lost update, and recording a
-	// run's bindings is inherently load-mutate-save. fn receives the
-	// record to mutate in place; returning an error from it abandons the
-	// write and hands that error back unwrapped, so a caller can signal
-	// "nothing to do" with a sentinel of its own.
-	//
-	// It is an upsert. A record that is not there yet arrives as a zero
-	// Record with its ID and Created filled in, because the alternative —
-	// load, notice the absence, save — is the same race in a different
-	// shape. A caller that means "only if it exists" tests the record it
-	// was handed and returns an error.
-	//
-	// What it guarantees: within this process, no two Updates and no
-	// Update and Save interleave on the same id. What it does not: any
-	// ordering against another process. See the lock comment in file.go —
-	// two `wf` invocations share no mutex, and the honest failure there is
-	// a lost update, never a corrupt record.
+	// Update is read-modify-write on one record: an upsert, since a missing record arrives as a zero Record. See the lock comment in file.go for its guarantees.
 	Update(id string, fn func(*wf.Record) error) error
-	// List returns every readable record. One that cannot be read is
-	// skipped and named in a *SkipError, so losing a single record never
-	// costs the others — see that type for why the error rides along with
-	// the results instead of replacing them.
+	// List returns every readable record; an unreadable one is skipped and named in a *SkipError.
 	List() ([]wf.Record, error)
-	// Delete removes a record. Removing one that is already gone is not an
-	// error: deleting twice must not fail the second time.
+	// Delete removes a record. Removing one already gone is not an error.
 	Delete(id string) error
 }
 
-// ErrNotFound is what a missing record unwraps to, so callers test with
-// errors.Is instead of matching on message text.
+// ErrNotFound is what a missing record unwraps to, for errors.Is.
 var ErrNotFound = errors.New("task not found")
 
-// ErrInvalidID rejects an id that cannot safely name a file. The store mints
-// no ids, but it does refuse to let one walk out of its own directory.
+// ErrInvalidID rejects an id that cannot safely name a file.
 var ErrInvalidID = errors.New("invalid task id")
 
-// NotFoundError names the ref that found nothing, which is the part a human
-// reading the message needs.
+// NotFoundError names the ref that found nothing.
 type NotFoundError struct{ Ref string }
 
 func (e *NotFoundError) Error() string { return fmt.Sprintf("task %q: %s", e.Ref, ErrNotFound) }
@@ -93,12 +46,7 @@ type SkippedFile struct {
 	Err  error
 }
 
-// SkipError reports the entries List could not read. It is returned
-// alongside the records that did read, which is unusual for Go and
-// deliberate: the requirement is that one corrupt file must not cost the
-// others, so discarding good records in order to report a bad one would
-// defeat the point. A caller that wants tolerance uses the records and
-// ignores the error; a caller that wants to complain has the filenames.
+// SkipError reports the entries List could not read, alongside the records that did read.
 type SkipError struct{ Skipped []SkippedFile }
 
 func (e *SkipError) Error() string {
@@ -109,8 +57,7 @@ func (e *SkipError) Error() string {
 	return fmt.Sprintf("skipped %d unreadable task file(s): %s", len(e.Skipped), strings.Join(parts, "; "))
 }
 
-// Paths lists the files that were skipped, for a caller that wants to name
-// them without formatting the whole error.
+// Paths lists the files that were skipped, without the formatted error.
 func (e *SkipError) Paths() []string {
 	out := make([]string, 0, len(e.Skipped))
 	for _, s := range e.Skipped {

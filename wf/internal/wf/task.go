@@ -1,13 +1,11 @@
 // Package wf holds the core domain: the task model, the outcome protocol,
 // leases, session binding, and the three seams (queue, runner, workspace).
-// Leases and the work-state vocabulary below live here rather than on the
-// Queue interface, since no tracker in scope implements them. See
-// DESIGN.md.
+// See DESIGN.md.
 package wf
 
 import "context"
 
-// WorkState is wf's own vocabulary. Backends map it; none of them own it.
+// WorkState is wf's own vocabulary; backends map it, none own it.
 type WorkState string
 
 const (
@@ -32,8 +30,7 @@ type Task struct {
 	Labels   []string
 	Owner    string
 	Meta     map[string]any
-	// Rev is an opaque revision for optimistic concurrency, when the
-	// backend offers one.
+	// Rev is an opaque revision for optimistic concurrency, when offered.
 	Rev string
 }
 
@@ -42,19 +39,17 @@ type CloseResult struct {
 	Message string
 	PRs     []string
 	Commits []string
-	// Docs are paths of produced documents, recorded as review evidence.
+	// Docs are paths of produced documents.
 	Docs  []string
 	Tests []string
 }
 
-// HasEvidence reports whether the run left any trace of the work. A close
-// without one is refused — see Apply.
+// HasEvidence reports whether the run left any trace; a close without one is refused.
 func (r CloseResult) HasEvidence() bool {
 	return len(r.PRs) > 0 || len(r.Commits) > 0 || len(r.Docs) > 0 || len(r.Tests) > 0
 }
 
-// CreateInput describes a task to file, including the links that make
-// NEXT and ISSUE outcomes schedulable rather than merely recorded.
+// CreateInput describes a task to file.
 type CreateInput struct {
 	Title          string
 	Body           string
@@ -74,13 +69,10 @@ type SetMetaOptions struct {
 	IfMatch string
 }
 
-// Queue is the tracker seam. Seven verbs plus metadata access is the whole
-// contract, which is only possible because the outcome protocol defines
-// what applying a result means independent of any tracker.
+// Queue is the tracker seam: seven verbs plus metadata access.
 type Queue interface {
 	Name() string
-	// Ready returns open, unblocked, actionable work — the backend's own
-	// definition of ready, which wf trusts rather than recomputing.
+	// Ready returns open, unblocked, actionable work.
 	Ready(ctx context.Context, limit int) ([]Task, error)
 	Get(ctx context.Context, ref string) (Task, error)
 	Claim(ctx context.Context, ref, actor string) error
@@ -93,28 +85,18 @@ type Queue interface {
 	GetMeta(ctx context.Context, ref string) (map[string]any, error)
 }
 
-// Workspace is an isolated checkout for one task. One worktree per task:
-// two agents in one checkout is the failure that costs an afternoon.
-//
-// Repo and Branch are on the interface because a run has to *record* them,
-// not merely use them. Without Branch the only way back to a checkout's
-// branch was workspace.WorktreeName re-deriving it from the task's title —
-// so renaming a task in the tracker orphaned the branch a run had already
-// created, and `wf review` went looking for a ref that no longer answered
-// to that name. A fact a run established belongs on the binding it
-// produced, not recomputed from a field a human is free to edit.
+// Workspace is an isolated checkout for one task: one worktree per task. Repo
+// and Branch are on the interface because a run has to *record* them, not recompute them later from a title a human is free to edit.
 type Workspace interface {
 	Path() string
 	// Repo is the repository this checkout came from.
 	Repo() string
-	// Branch is the ref the checkout is on. Empty is honest for a
-	// provider that has no branch of its own to name.
+	// Branch is the ref the checkout is on; empty for a provider with none.
 	Branch() string
 	Dispose(ctx context.Context) error
 }
 
-// WorkspaceProvider builds workspaces. Worktree is the only implementation
-// that ships; docker and ssh are why this is an interface.
+// WorkspaceProvider builds workspaces.
 type WorkspaceProvider interface {
 	Name() string
 	Create(ctx context.Context, task Task) (Workspace, error)
@@ -124,11 +106,9 @@ type WorkspaceProvider interface {
 type RunOptions struct {
 	Cwd    string
 	Prompt string
-	// TaskRef names the session file on disk, so a directory of sessions
-	// is readable without consulting the tracker.
+	// TaskRef names the session file on disk.
 	TaskRef string
-	// ProfileDir becomes PI_CODING_AGENT_DIR, selecting the worker's
-	// package and skill set.
+	// ProfileDir becomes PI_CODING_AGENT_DIR, selecting the worker's skills.
 	ProfileDir string
 	// Model becomes pi's --model value; empty runs pi's own default.
 	Model string
@@ -142,9 +122,7 @@ type RunResult struct {
 	TranscriptTail string
 }
 
-// RunHandle is a live run. SessionPath is the field that matters most:
-// it is what `wf attach` reopens, and it is recorded before the agent
-// produces anything.
+// RunHandle is a live run; SessionPath is recorded before the agent produces anything.
 type RunHandle interface {
 	SessionID() string
 	SessionPath() string
@@ -153,7 +131,7 @@ type RunHandle interface {
 	Abort() error
 }
 
-// Runner is the agent seam. pi is the only implementation that ships.
+// Runner is the agent seam.
 type Runner interface {
 	Name() string
 	Start(ctx context.Context, opts RunOptions) (RunHandle, error)
